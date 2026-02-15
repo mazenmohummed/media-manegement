@@ -8,7 +8,8 @@ const SERVICE_TYPES = [
 
 interface ServiceDetail {
   employee: string;
-  date: string;
+  startDate: string; // Added
+  endDate: string;   // Added
   isFreelancer: boolean;
   salary: string;
 }
@@ -24,8 +25,6 @@ export default function NewProjectPage() {
   const [projectName, setProjectName] = useState("");
   const [clientName, setClientName] = useState("");
   const [selectedServices, setSelectedServices] = useState<Record<string, ServiceDetail>>({});
-  
-  // State for the list of projects
   const [projectsList, setProjectsList] = useState<Project[]>([]);
 
   const toggleService = (service: string) => {
@@ -34,7 +33,14 @@ export default function NewProjectPage() {
       if (newServices[service]) {
         delete newServices[service];
       } else {
-        newServices[service] = { employee: "", date: "", isFreelancer: false, salary: "" };
+        // Initialize with startDate and endDate
+        newServices[service] = { 
+          employee: "", 
+          startDate: "", 
+          endDate: "", 
+          isFreelancer: false, 
+          salary: "" 
+        };
       }
       return newServices;
     });
@@ -65,7 +71,6 @@ export default function NewProjectPage() {
       <h1 className="text-3xl font-bold mb-8 text-gray-800">Project Management</h1>
 
       <div className="grid grid-cols-1 gap-12">
-        {/* --- FORM SECTION --- */}
         <form onSubmit={handleSubmit} className="space-y-6 bg-white p-6 rounded-xl shadow-sm border border-gray-100">
           <h2 className="text-xl font-semibold text-blue-600">Create New Project</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -129,6 +134,26 @@ export default function NewProjectPage() {
                   />
                 </div>
 
+                {/* Date Range Inputs */}
+                <div className="flex items-center gap-2">
+                  <div className="flex flex-col">
+                    <label className="text-[10px] text-gray-400 uppercase">Start Date</label>
+                    <input 
+                      type="date" 
+                      className="p-1.5 text-xs border rounded"
+                      onChange={(e) => updateServiceDetail(service, "startDate", e.target.value)}
+                    />
+                  </div>
+                  <div className="flex flex-col">
+                    <label className="text-[10px] text-gray-400 uppercase">End Date</label>
+                    <input 
+                      type="date" 
+                      className="p-1.5 text-xs border rounded"
+                      onChange={(e) => updateServiceDetail(service, "endDate", e.target.value)}
+                    />
+                  </div>
+                </div>
+
                 <div className="flex items-center gap-2">
                   <input 
                     type="checkbox"
@@ -140,23 +165,15 @@ export default function NewProjectPage() {
                 </div>
 
                 {selectedServices[service].isFreelancer && (
-                  <div className="w-full md:w-32 animate-in fade-in slide-in-from-left-2">
+                  <div className="w-full md:w-24">
                     <input 
                       type="number" 
-                      placeholder="Salary ($)"
+                      placeholder="Salary"
                       className="w-full p-2 text-sm border border-green-300 rounded bg-green-50"
                       onChange={(e) => updateServiceDetail(service, "salary", e.target.value)}
                     />
                   </div>
                 )}
-
-                <div>
-                  <input 
-                    type="date" 
-                    className="p-2 text-sm border rounded"
-                    onChange={(e) => updateServiceDetail(service, "date", e.target.value)}
-                  />
-                </div>
               </div>
             ))}
           </div>
@@ -179,7 +196,7 @@ export default function NewProjectPage() {
               <thead>
                 <tr className="bg-gray-100 text-gray-600 text-xs uppercase tracking-wider">
                   <th className="p-4 border-b">Project / Client</th>
-                  <th className="p-4 border-b">Services & Assignees</th>
+                  <th className="p-4 border-b">Services, Timeline & Assignees</th>
                   <th className="p-4 border-b">Total Freelance Cost</th>
                 </tr>
               </thead>
@@ -196,21 +213,24 @@ export default function NewProjectPage() {
                   
                   return (
                     <tr key={project.id} className="hover:bg-gray-50 transition-colors">
-                      <td className="p-4">
+                      <td className="p-4 align-top">
                         <div className="font-bold text-gray-800">{project.projectName}</div>
                         <div className="text-sm text-gray-500">{project.clientName}</div>
                       </td>
                       <td className="p-4">
                         <div className="flex flex-wrap gap-2">
                           {Object.entries(project.services).map(([name, detail]) => (
-                            <span key={name} className="inline-flex flex-col px-2 py-1 rounded bg-blue-50 border border-blue-100">
-                              <span className="text-[10px] font-bold text-blue-600">{name}</span>
-                              <span className="text-xs text-gray-700">{detail.employee || "Unassigned"}</span>
+                            <span key={name} className="inline-flex flex-col px-3 py-2 rounded bg-blue-50 border border-blue-100 min-w-[140px]">
+                              <span className="text-[10px] font-bold text-blue-600 uppercase">{name}</span>
+                              <span className="text-xs font-semibold text-gray-800">{detail.employee || "Unassigned"}</span>
+                              <span className="text-[9px] text-gray-500 mt-1">
+                                {detail.startDate || '??'} → {detail.endDate || '??'}
+                              </span>
                             </span>
                           ))}
                         </div>
                       </td>
-                      <td className="p-4">
+                      <td className="p-4 align-top">
                         <span className={`font-mono font-bold ${freelanceTotal > 0 ? 'text-green-600' : 'text-gray-400'}`}>
                           ${freelanceTotal.toLocaleString()}
                         </span>
