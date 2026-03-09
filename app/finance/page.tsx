@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useState } from "react";
+import Link from "next/link";
+import React, { useState, useMemo } from "react";
 
 // --- INTERFACES ---
 interface ServiceDetail {
@@ -14,6 +15,8 @@ interface Project {
   projectName: string;
   clientName: string;
   budget: number;
+  type: "retainer" | "one-off";
+  date: string;
   services: Record<string, ServiceDetail>;
 }
 
@@ -24,182 +27,362 @@ interface InternalEmployee {
   monthlySalary: number;
 }
 
+// Filter Types
+type FilterMode = "PRESET" | "MONTH" | "CUSTOM";
+
 export default function FinancePage() {
-  // --- STATE ---
+  // --- FILTER STATE ---
+  const [filterMode, setFilterMode] = useState<FilterMode>("PRESET");
+  const [activePreset, setActivePreset] = useState("ALL");
+  const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth().toString());
+  const [dateRange, setDateRange] = useState({ start: "", end: "" });
+
+  // --- DATA ---
   const [projects] = useState<Project[]>([
     {
       id: 1,
       projectName: "Summer Campaign",
       clientName: "Nike",
       budget: 5000,
+      type: "one-off",
+      date: "2024-02-15",
       services: {
         "Reals": { employee: "John Doe", isFreelancer: true, salary: "1200" },
         "Design": { employee: "Sarah Staff", isFreelancer: false, salary: "0" },
-        "Copy Writer": { employee: "Jane Smith", isFreelancer: true, salary: "450" }
       }
     },
     {
       id: 2,
-      projectName: "Social Blitz",
+      projectName: "Monthly Content",
       clientName: "Coca Cola",
       budget: 3500,
+      type: "retainer",
+      date: "2024-01-10",
       services: {
         "Photo": { employee: "Mike Ross", isFreelancer: true, salary: "900" }
+      }
+    },
+    {
+      id: 3,
+      projectName: "Brand Refresh",
+      clientName: "Local Shop",
+      budget: 2000,
+      type: "one-off",
+      date: "2023-12-05",
+      services: {
+        "Design": { employee: "Sarah Jenkins", isFreelancer: false, salary: "0" }
       }
     }
   ]);
 
   const [employees] = useState<InternalEmployee[]>([
     { id: 1, name: "Sarah Jenkins", role: "Lead Designer", monthlySalary: 4500 },
-    { id: 2, name: "Alex Rivera", role: "Project Manager", monthlySalary: 3800 },
-    { id: 3, name: "Maria Chen", role: "Copywriter", monthlySalary: 3200 },
   ]);
 
-  // --- CALCULATIONS ---
-  
-  // 1. Flatten all freelance payments into a single list
-  const freelancePayments = projects.flatMap(project => 
-    Object.entries(project.services)
-      .filter(([_, detail]) => detail.isFreelancer && Number(detail.salary) > 0)
-      .map(([serviceName, detail]) => ({
-        id: `${project.id}-${serviceName}`,
-        freelancerName: detail.employee,
-        service: serviceName,
-        projectName: project.projectName,
-        amount: Number(detail.salary)
-      }))
-  );
+  // --- REFINED FILTER LOGIC ---
+  const filteredProjects = useMemo(() => {
+    return projects.filter(p => {
+      const pDate = new Date(p.date);
+      const pMonth = pDate.getMonth();
 
-  const totalProjectRevenue = projects.reduce((sum, p) => sum + p.budget, 0);
-  const totalFreelanceExpenses = freelancePayments.reduce((sum, p) => sum + p.amount, 0);
-  const totalEmployeePayroll = employees.reduce((sum, e) => sum + e.monthlySalary, 0);
+      if (filterMode === "PRESET") {
+        if (activePreset === "ALL") return true;
+        if (activePreset === "Q1") return pMonth >= 0 && pMonth <= 2;
+        if (activePreset === "Q2") return pMonth >= 3 && pMonth <= 5;
+      }
+
+      if (filterMode === "MONTH") {
+        return pMonth === parseInt(selectedMonth);
+      }
+
+      if (filterMode === "CUSTOM") {
+        if (!dateRange.start || !dateRange.end) return true;
+        const start = new Date(dateRange.start);
+        const end = new Date(dateRange.end);
+        return pDate >= start && pDate <= end;
+      }
+
+      return true;
+    });
+  }, [filterMode, activePreset, selectedMonth, dateRange, projects]);
+
+  // --- CALCULATIONS (Based on Filtered Data) ---
+  const totalProjectRevenue = filteredProjects.reduce((sum, p) => sum + p.budget, 0);
   
-  const totalExpenses = totalFreelanceExpenses + totalEmployeePayroll;
-  const netProfit = totalProjectRevenue - totalExpenses;
+  const retainerRevenue = filteredProjects
+    .filter(p => p.type === "retainer")
+    .reduce((sum, p) => sum + p.budget, 0);
+
+  const oneOffRevenue = filteredProjects
+    .filter(p => p.type === "one-off")
+    .reduce((sum, p) => sum + p.budget, 0);
+
+  const totalFreelanceExpenses = filteredProjects.flatMap(p => Object.values(p.services))
+    .filter(d => d.isFreelancer)
+    .reduce((sum, d) => sum + Number(d.salary), 0);
+    
+  const totalEmployeePayroll = filteredProjects.length > 0 ? employees.reduce((sum, e) => sum + e.monthlySalary, 0) : 0;
+  
+  const totalCosts = totalFreelanceExpenses + totalEmployeePayroll;
+  const netProfit = totalProjectRevenue - totalCosts;
+  const profitMargin = totalProjectRevenue > 0 ? (netProfit / totalProjectRevenue) * 100 : 0;
 
   return (
-    <div className="max-w-7xl mx-auto p-8 bg-gray-50 min-h-screen space-y-8">
+    <div className="max-w-7xl mx-auto p-8 bg-background min-h-screen space-y-10 transition-colors duration-300">
+      
       {/* HEADER */}
-      <div className="flex justify-between items-center">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-end border-b border-border pb-8 gap-6">
         <div>
-          <h1 className="text-3xl font-bold text-gray-800">Financial Reporting</h1>
-          <p className="text-gray-500 text-sm">Real-time overview of revenue and outflows</p>
+          <h1 className="text-3xl font-black text-foreground tracking-tight uppercase">Financial Hub</h1>
+          <p className="text-muted-foreground font-medium uppercase text-xs tracking-widest mt-1">Advanced Filtering Enabled</p>
         </div>
-        <span className="bg-blue-100 text-blue-700 px-4 py-1 rounded-full text-sm font-semibold">
-          Feb 2026
-        </span>
+
+        <div className="text-right hidden md:block">
+          <p className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Est. Tax Reserve (20%)</p>
+          <p className="text-xl font-black text-orange-600 font-mono">${(totalProjectRevenue * 0.2).toLocaleString()}</p>
+        </div>
       </div>
 
-      {/* --- STAT CARDS --- */}
+      {/* FILTER ENGINE SECTION */}
+      <div className="bg-card border border-border p-6 rounded-[2.5rem] shadow-sm space-y-6">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+          <div className="space-y-3">
+            <h2 className="text-[10px] font-black text-muted-foreground uppercase tracking-[0.2em]">Filter Mode</h2>
+            <div className="flex bg-muted p-1 rounded-xl border border-border w-fit">
+              {(["PRESET", "MONTH", "CUSTOM"] as FilterMode[]).map((mode) => (
+                <button
+                  key={mode}
+                  onClick={() => setFilterMode(mode)}
+                  className={`px-4 py-2 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${
+                    filterMode === mode ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {mode}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            <h2 className="text-[10px] font-black text-muted-foreground uppercase tracking-[0.2em]">Selection</h2>
+            <div className="flex flex-wrap items-center gap-4">
+              {filterMode === "PRESET" && (
+                <select 
+                  value={activePreset} 
+                  onChange={(e) => setActivePreset(e.target.value)}
+                  className="bg-background border border-border px-4 py-2.5 rounded-xl text-[10px] font-black uppercase outline-none focus:ring-2 ring-blue-500/20 transition-all cursor-pointer"
+                >
+                  <option value="ALL">All Recorded Time</option>
+                  <option value="Q1">Q1 (Jan — Mar)</option>
+                  <option value="Q2">Q2 (Apr — Jun)</option>
+                </select>
+              )}
+
+              {filterMode === "MONTH" && (
+                <select 
+                  value={selectedMonth} 
+                  onChange={(e) => setSelectedMonth(e.target.value)}
+                  className="bg-background border border-border px-4 py-2.5 rounded-xl text-[10px] font-black uppercase outline-none focus:ring-2 ring-blue-500/20 transition-all cursor-pointer"
+                >
+                  {["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].map((m, i) => (
+                    <option key={m} value={i}>{m}</option>
+                  ))}
+                </select>
+              )}
+
+              {filterMode === "CUSTOM" && (
+                <div className="flex items-center gap-3">
+                  <input 
+                    type="date" 
+                    className="bg-background border border-border px-3 py-2 rounded-xl text-[10px] uppercase font-bold outline-none focus:ring-2 ring-blue-500/20 transition-all"
+                    onChange={(e) => setDateRange({...dateRange, start: e.target.value})}
+                  />
+                  <span className="text-muted-foreground text-[10px] font-black tracking-widest">TO</span>
+                  <input 
+                    type="date" 
+                    className="bg-background border border-border px-3 py-2 rounded-xl text-[10px] uppercase font-bold outline-none focus:ring-2 ring-blue-500/20 transition-all"
+                    onChange={(e) => setDateRange({...dateRange, end: e.target.value})}
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* STAT CARDS */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-        <StatCard title="Total Revenue" value={`$${totalProjectRevenue.toLocaleString()}`} color="text-blue-600" />
-        <StatCard title="Staff Payroll" value={`$${totalEmployeePayroll.toLocaleString()}`} color="text-orange-600" subtitle="Fixed" />
-        <StatCard title="Freelance Costs" value={`$${totalFreelanceExpenses.toLocaleString()}`} color="text-red-500" subtitle="Variable" />
-        <StatCard title="Net Profit" value={`$${netProfit.toLocaleString()}`} color={netProfit >= 0 ? "text-green-600" : "text-red-600"} />
+        <StatCard title="Total Revenue" value={`$${totalProjectRevenue.toLocaleString()}`} color="text-blue-600" icon="↑" />
+        <StatCard title="Total Costs" value={`$${totalCosts.toLocaleString()}`} color="text-rose-500" icon="↓" />
+        <StatCard title="Net Profit" value={`$${netProfit.toLocaleString()}`} color="text-emerald-500" icon="∑" />
+        <StatCard title="Profit Margin" value={`${profitMargin.toFixed(1)}%`} color="text-violet-500" icon="%" />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      REVENUE SEGMENTATION
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="bg-card p-6 rounded-[2rem] border border-border flex items-center gap-6 group">
+            <div className="w-14 h-14 rounded-2xl bg-blue-500/10 flex items-center justify-center text-2xl">🤝</div>
+            <div>
+                <p className="text-[10px] font-black text-muted-foreground uppercase tracking-[0.2em]">Retainer Revenue</p>
+                <p className="text-3xl font-black text-foreground font-mono tracking-tighter">${retainerRevenue.toLocaleString()}</p>
+            </div>
+        </div>
+        <div className="bg-card p-6 rounded-[2rem] border border-border flex items-center gap-6 group">
+            <div className="w-14 h-14 rounded-2xl bg-orange-500/10 flex items-center justify-center text-2xl">⚡</div>
+            <div>
+                <p className="text-[10px] font-black text-muted-foreground uppercase tracking-[0.2em]">One-Off Revenue</p>
+                <p className="text-3xl font-black text-foreground font-mono tracking-tighter">${oneOffRevenue.toLocaleString()}</p>
+            </div>
+        </div>
+      </div>
+
+      {/* LEDGERS */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <div className="bg-card rounded-[2rem] border border-border shadow-sm overflow-hidden">
+        <Link href={"finance/revenue-breakdown"}>
+          <div>
+            <div className="p-6 border-b border-border bg-muted/20 flex justify-between items-center">
+                <h3 className="font-black text-foreground text-sm uppercase tracking-widest">Revenue Breakdown</h3>
+                <span className="text-[10px] font-black bg-blue-500 text-white px-3 py-1 rounded-full uppercase">
+                    {filteredProjects.length} Items
+                </span>
+            </div>
+            <table className="w-full text-left">
+                <thead className="text-[10px] uppercase text-muted-foreground border-b border-border">
+                    <tr>
+                        <th className="p-6 font-black tracking-widest">Client / Type</th>
+                        <th className="p-6 text-right font-black tracking-widest">Contract</th>
+                    </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                {filteredProjects.map((p) => (
+                    <tr key={p.id} className="hover:bg-muted/10 transition-colors group">
+                        <td className="p-6">
+                            <p className="font-black text-foreground text-sm group-hover:text-blue-600 transition-colors uppercase tracking-tight">{p.clientName}</p>
+                            <div className="flex items-center gap-2 mt-1">
+                                <span className="text-[9px] font-bold text-muted-foreground">{p.date}</span>
+                                <span className={`text-[8px] font-black px-1.5 py-0.5 rounded border ${p.type === 'retainer' ? 'border-blue-500/30 text-blue-500' : 'border-orange-500/30 text-orange-500'} uppercase`}>
+                                    {p.type}
+                                </span>
+                            </div>
+                        </td>
+                        <td className="p-6 text-right font-mono font-black text-blue-600">
+                            +${p.budget.toLocaleString()}
+                        </td>
+                    </tr>
+                ))}
+                </tbody>
+            </table>
+        </div>
+        </Link>
+        </div>
+
+        <div className="bg-card rounded-[2rem] border border-border shadow-sm overflow-hidden">
+          <Link href={"finance/expense-ledger"}>
+          <div>
+            <div className="p-6 border-b border-border bg-muted/20 flex justify-between items-center">
+                <h3 className="font-black text-foreground text-sm uppercase tracking-widest">Expense Ledger</h3>
+                <span className="text-[10px] font-black bg-rose-500 text-white px-3 py-1 rounded-full uppercase">
+                    ${totalCosts.toLocaleString()}
+                </span>
+            </div>
+            <table className="w-full text-left">
+                <thead className="text-[10px] uppercase text-muted-foreground border-b border-border">
+                    <tr>
+                        <th className="p-6 font-black tracking-widest">Resource</th>
+                        <th className="p-6 text-right font-black tracking-widest">Amount</th>
+                    </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                {filteredProjects.length > 0 && employees.map((emp) => (
+                    <tr key={`staff-${emp.id}`} className="hover:bg-muted/10 transition-colors">
+                        <td className="p-6">
+                            <p className="font-black text-foreground text-sm uppercase tracking-tight">{emp.name}</p>
+                            <p className="text-[10px] text-muted-foreground">Internal Monthly</p>
+                        </td>
+                        <td className="p-6 text-right font-mono font-black text-rose-500">
+                            -${emp.monthlySalary.toLocaleString()}
+                        </td>
+                    </tr>
+                ))}
+                {filteredProjects.flatMap(p => Object.entries(p.services))
+                    .filter(([_, detail]) => detail.isFreelancer)
+                    .map(([serviceName, detail], idx) => (
+                    <tr key={`free-${idx}`} className="hover:bg-muted/10 transition-colors">
+                        <td className="p-6">
+                            <p className="font-black text-foreground text-sm uppercase tracking-tight">{detail.employee}</p>
+                            <p className="text-[10px] text-muted-foreground">{serviceName}</p>
+                        </td>
+                        <td className="p-6 text-right font-mono font-black text-rose-500">
+                            -${Number(detail.salary).toLocaleString()}
+                        </td>
+                    </tr>
+                ))}
+                </tbody>
+            </table>
+            </div>
+        </Link>
+        </div>
         
-        {/* --- INTERNAL PAYROLL --- */}
-        <div className="lg:col-span-1 bg-white rounded-xl shadow-sm border border-gray-200 h-fit overflow-hidden">
-          <div className="p-4 border-b bg-gray-50 font-bold text-gray-800">Internal Staff</div>
-          <div className="p-4 space-y-4">
-            {employees.map((emp) => (
-              <div key={emp.id} className="flex justify-between items-center pb-3 border-b border-gray-50 last:border-0 last:pb-0">
-                <div>
-                  <div className="font-bold text-gray-800 text-sm">{emp.name}</div>
-                  <div className="text-xs text-gray-500">{emp.role}</div>
+      </div>
+
+      {/* PROFITABILITY & CASH */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <div className="bg-card rounded-[2rem] border border-border overflow-hidden shadow-sm">
+          <div className="p-6 bg-muted/20 border-b border-border font-black text-foreground text-[10px] uppercase tracking-[0.2em]">Project Profitability</div>
+          <div className="p-6 space-y-6">
+            {filteredProjects.length === 0 ? (
+                <p className="text-center text-muted-foreground py-10 text-xs font-bold uppercase">No data for selected period</p>
+            ) : filteredProjects.map(p => {
+              const cost = Object.values(p.services).reduce((s, d) => s + Number(d.salary), 0);
+              const margin = p.budget > 0 ? ((p.budget - cost) / p.budget) * 100 : 0;
+              return (
+                <div key={p.id} className="flex justify-between items-center group">
+                  <div>
+                    <p className="font-black text-sm text-foreground uppercase tracking-tight group-hover:text-blue-600 transition-colors">{p.projectName}</p>
+                    <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-widest">{p.clientName}</p>
+                  </div>
+                  <div className="text-right font-mono">
+                    <p className="text-sm font-black text-emerald-500">+${(p.budget - cost).toLocaleString()}</p>
+                    <p className="text-[9px] font-black text-muted-foreground uppercase tracking-tighter">{margin.toFixed(0)}% Margin</p>
+                  </div>
                 </div>
-                <div className="text-right font-mono font-bold text-gray-700">
-                  ${emp.monthlySalary.toLocaleString()}
-                </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         </div>
 
-        {/* --- PROJECT PERFORMANCE --- */}
-        <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-          <div className="p-4 border-b bg-gray-50 font-bold text-gray-800">Project Performance</div>
-          <table className="w-full text-left">
-            <thead className="bg-white text-[10px] uppercase text-gray-400 border-b">
-              <tr>
-                <th className="p-4">Project</th>
-                <th className="p-4 text-right">Revenue</th>
-                <th className="p-4 text-right">Freelance</th>
-                <th className="p-4 text-right">Gross</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {projects.map((p) => {
-                const costs = Object.values(p.services).reduce((s, d) => s + (Number(d.salary) || 0), 0);
-                return (
-                  <tr key={p.id} className="text-sm hover:bg-gray-50">
-                    <td className="p-4 font-semibold text-gray-700">{p.projectName}</td>
-                    <td className="p-4 text-right font-mono">${p.budget.toLocaleString()}</td>
-                    <td className="p-4 text-right font-mono text-red-400">-${costs.toLocaleString()}</td>
-                    <td className="p-4 text-right font-mono font-bold text-green-600">${(p.budget - costs).toLocaleString()}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* --- FREELANCE LEDGER --- */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-        <div className="p-4 border-b bg-gray-50 flex justify-between items-center">
-          <h2 className="font-bold text-gray-800">Freelance Payment Ledger</h2>
-          <span className="text-xs font-medium bg-gray-200 text-gray-600 px-2 py-1 rounded">
-            {freelancePayments.length} Active Payments
-          </span>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left">
-            <thead className="bg-white text-[10px] uppercase tracking-widest text-gray-400 border-b">
-              <tr>
-                <th className="p-4 font-semibold">Freelancer</th>
-                <th className="p-4 font-semibold">Service</th>
-                <th className="p-4 font-semibold">Project</th>
-                <th className="p-4 font-semibold text-right">Amount</th>
-                <th className="p-4 font-semibold text-center">Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100 text-sm">
-              {freelancePayments.map((payment) => (
-                <tr key={payment.id} className="hover:bg-blue-50/30">
-                  <td className="p-4 font-bold text-gray-700">{payment.freelancerName}</td>
-                  <td className="p-4">
-                    <span className="px-2 py-1 rounded bg-blue-100 text-blue-700 text-[10px] font-bold uppercase">
-                      {payment.service}
-                    </span>
-                  </td>
-                  <td className="p-4 text-gray-500">{payment.projectName}</td>
-                  <td className="p-4 text-right font-mono font-bold">${payment.amount.toLocaleString()}</td>
-                  <td className="p-4 text-center">
-                    <span className="text-[10px] font-bold text-orange-500 uppercase flex items-center justify-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-orange-500 animate-pulse" />
-                      Pending
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="bg-slate-950 rounded-[2rem] p-10 text-white flex flex-col justify-between shadow-2xl relative overflow-hidden group">
+          <div className="absolute -top-10 -right-10 opacity-10 group-hover:rotate-12 transition-transform duration-700">
+            <span className="text-[12rem]">💰</span>
+          </div>
+          <div className="relative z-10">
+            <h4 className="font-black text-blue-400 uppercase text-[10px] tracking-[0.3em] mb-6">Cash Position</h4>
+            <p className="text-6xl font-black font-mono tracking-tighter">$42,800.00</p>
+            <div className="mt-4 flex items-center gap-2 text-blue-300/60 font-black text-[10px] uppercase tracking-widest">
+                <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
+                Verified Treasury Balance
+            </div>
+          </div>
+          <button className="relative z-10 w-full bg-blue-600 text-white py-5 rounded-2xl font-black text-xs uppercase tracking-[0.2em] mt-12 hover:bg-blue-500 transition-all active:scale-95 shadow-xl shadow-blue-500/20">
+            Export Report
+          </button>
         </div>
       </div>
     </div>
   );
 }
 
-// --- SUB-COMPONENTS ---
-function StatCard({ title, value, color, subtitle }: { title: string; value: string; color: string; subtitle?: string }) {
+function StatCard({ title, value, color, icon }: any) {
   return (
-    <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-      <p className="text-xs font-bold text-gray-400 uppercase mb-1">{title}</p>
-      <p className={`text-2xl font-black ${color}`}>{value}</p>
-      {subtitle && <p className="text-[10px] text-gray-400 uppercase mt-1 tracking-wider">{subtitle}</p>}
+    <div className="bg-card p-6 rounded-[2rem] shadow-sm border border-border flex justify-between items-start transition-all hover:border-blue-500/30 group">
+      <div>
+        <p className="text-[10px] font-black text-muted-foreground uppercase mb-1 tracking-widest group-hover:text-blue-600 transition-colors">{title}</p>
+        <p className={`text-2xl font-black font-mono tracking-tighter ${color}`}>{value}</p>
+      </div>
+      <div className="bg-muted w-10 h-10 rounded-xl flex items-center justify-center text-lg font-black text-muted-foreground group-hover:text-foreground transition-colors">
+        {icon}
+      </div>
     </div>
   );
 }
