@@ -2,7 +2,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import Sidebar from "@/components/main/Sidebar"; // Renamed to reflect current UI
 import { ThemeProvider } from "@/components/theme-provider";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
@@ -25,7 +24,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         >
           {/* Main Wrapper: Holds Sidebar and Content side-by-side */}
           <div className="flex min-h-screen">
-            <Sidebar />
             
             {/* Content Area: Occupies the remaining width */}
             <main className="flex-1 bg-background overflow-y-auto">

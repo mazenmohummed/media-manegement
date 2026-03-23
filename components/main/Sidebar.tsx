@@ -14,7 +14,9 @@ import {
   LogOut,
   ChevronLeft,
   Menu,
-  Calendar
+  Calendar,
+  SquareDashed,
+  LayoutDashboard
 } from "lucide-react";
 
 export default function Sidebar() {
@@ -22,14 +24,14 @@ export default function Sidebar() {
   const [isCollapsed, setIsCollapsed] = useState(false);
 
   const navLinks = [
-    { name: "Home", href: "/", icon: <Home size={20} /> },
-    { name: "Clients", href: "/clients", icon: <Users size={20} /> },
-    { name: "Projects", href: "/projects", icon: <Briefcase size={20} /> },
-    { name: "Tasks", href: "/tasks", icon: <CheckSquare size={20} /> },
-    { name: "Calendar", href: "/calender", icon: <Calendar size={20} /> },
-    { name: "Employees", href: "/employees", icon: <UserCircle size={20} /> },
-    { name: "Finance", href: "/finance", icon: <DollarSign size={20} /> },
-    { name: "Equipment", href: "/equipment", icon: <Wrench size={20} /> },
+    { name: "dashboard", href: "/dashboard", icon: <LayoutDashboard size={20} /> },
+    { name: "Clients", href: "/dashboard/clients", icon: <Users size={20} /> },
+    { name: "Projects", href: "/dashboard/projects", icon: <Briefcase size={20} /> },
+    { name: "Tasks", href: "/dashboard/tasks", icon: <CheckSquare size={20} /> },
+    { name: "Calendar", href: "/dashboard/calender", icon: <Calendar size={20} /> },
+    { name: "Employees", href: "/dashboard/employees", icon: <UserCircle size={20} /> },
+    { name: "Finance", href: "/dashboard/finance", icon: <DollarSign size={20} /> },
+    { name: "Equipment", href: "/dashboard/equipment", icon: <Wrench size={20} /> },
   ];
 
   return (
@@ -49,7 +51,10 @@ export default function Sidebar() {
       {/* BRAND HEADER */}
       <div className="h-16 flex items-center px-6 border-b border-border shrink-0 overflow-hidden">
         <Link href="/" className="text-xl font-black text-blue-600 tracking-tighter italic whitespace-nowrap">
-          {isCollapsed ? "M" : "MEDIA SaaS"}
+         <div className="flex items-center gap-3  px-2">
+          <div className="w-8 h-8 bg-blue-600 rounded-lg shadow-[0_0_15px_rgba(37,99,235,0.3)]" />
+          <span className="font-black tracking-tighter text-lg">AGENCY.OS</span>
+        </div>
         </Link>
       </div>
 

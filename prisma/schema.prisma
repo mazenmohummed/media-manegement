@@ -28,7 +28,7 @@ enum SubscriptionStatus {
 }
 
 model Agency {
-    id           String  @id @default(auto()) @map("_id") @db.ObjectId
+    id           String  @id @default(cuid()) @map("_id") @db.ObjectId
     agencyName   String
     operatorName String?
     email        String? @unique
@@ -46,7 +46,7 @@ model Agency {
 }
 
 model Subscription {
-    id       String             @id @default(auto()) @map("_id") @db.ObjectId
+    id       String             @id @default(cuid()) @map("_id") @db.ObjectId
     agencyId String             @unique @db.ObjectId
     agency   Agency             @relation(fields: [agencyId], references: [id])
     plan     SubscriptionPlan   @default(FREE)
@@ -78,7 +78,7 @@ enum UserRole {
 }
 
 model User {
-    id       String   @id @default(auto()) @map("_id") @db.ObjectId
+    id       String   @id @default(cuid()) @map("_id") @db.ObjectId
     name     String
     email    String   @unique
     password String?
@@ -107,7 +107,7 @@ type Leave {
 }
 
 model AttendanceLog {
-    id           String   @id @default(auto()) @map("_id") @db.ObjectId
+    id           String   @id @default(cuid()) @map("_id") @db.ObjectId
     date         DateTime
     checkInTime  DateTime
     checkOutTime DateTime
@@ -130,7 +130,7 @@ enum InvoiceStatus {
 }
 
 model Client {
-    id          String @id @default(auto()) @map("_id") @db.ObjectId
+    id          String @id @default(cuid()) @map("_id") @db.ObjectId
     clientName  String
     accountType String
     status      String
@@ -145,7 +145,7 @@ model Client {
 }
 
 model Project {
-    id             String   @id @default(auto()) @map("_id") @db.ObjectId
+    id             String   @id @default(cuid()) @map("_id") @db.ObjectId
     projectName    String
     targetDeadline DateTime
     status         String
@@ -174,7 +174,7 @@ model Project {
 // --------------------------------------
 
 model Task {
-    id       String @id @default(auto()) @map("_id") @db.ObjectId
+    id       String @id @default(cuid()) @map("_id") @db.ObjectId
     taskType String // UI: "CONSULTATION", "VIDEO", etc.
     progress Int    @default(0)
     status   String
@@ -208,7 +208,7 @@ model Task {
 }
 
 model ExternalRental {
-    id       String @id @default(auto()) @map("_id") @db.ObjectId
+    id       String @id @default(cuid()) @map("_id") @db.ObjectId
     itemName String // UI: "Rental Item"
     cost     Float // UI: "Cost $"
 
@@ -217,7 +217,7 @@ model ExternalRental {
 }
 
 model Comment {
-    id        String   @id @default(auto()) @map("_id") @db.ObjectId
+    id        String   @id @default(cuid()) @map("_id") @db.ObjectId
     text      String
     authorId  String?  @db.ObjectId
     author    User?    @relation(fields: [authorId], references: [id])
@@ -231,7 +231,7 @@ model Comment {
 // --------------------------------------
 
 model Payment {
-    id       String   @id @default(auto()) @map("_id") @db.ObjectId
+    id       String   @id @default(cuid()) @map("_id") @db.ObjectId
     amount   Float
     method   String
     datePaid DateTime
@@ -245,7 +245,7 @@ model Payment {
 }
 
 model Asset {
-    id                 String   @id @default(auto()) @map("_id") @db.ObjectId
+    id                 String   @id @default(cuid()) @map("_id") @db.ObjectId
     assetName          String
     category           String
     purchaseDate       DateTime
@@ -260,7 +260,7 @@ model Asset {
 }
 
 model Expense {
-    id           String   @id @default(auto()) @map("_id") @db.ObjectId
+    id           String   @id @default(cuid()) @map("_id") @db.ObjectId
     resourceName String
     category     String
     amount       Float
