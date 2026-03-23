@@ -1,0 +1,271 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+    provider = "prisma-client-js"
+}
+
+datasource db {
+    provider = "mongodb"
+    url      = env("DATABASE_URL")
+}
+
+// --------------------------------------
+// 1. Identity & SaaS Multi-Tenancy
+// --------------------------------------
+
+enum SubscriptionPlan {
+    FREE
+    PRO
+    ENTERPRISE
+}
+
+enum SubscriptionStatus {
+    ACTIVE
+    PAST_DUE
+    CANCELED
+    TRIALING
+}
+
+model Agency {
+    id           String  @id @default(auto()) @map("_id") @db.ObjectId
+    agencyName   String
+    operatorName String?
+    email        String? @unique
+
+    subscription Subscription?
+    users        User[]
+    projects     Project[]
+    clients      Client[]
+    assets       Asset[]
+    expenses     Expense[]
+    payments     Payment[]
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+}
+
+model Subscription {
+    id       String             @id @default(auto()) @map("_id") @db.ObjectId
+    agencyId String             @unique @db.ObjectId
+    agency   Agency             @relation(fields: [agencyId], references: [id])
+    plan     SubscriptionPlan   @default(FREE)
+    status   SubscriptionStatus @default(TRIALING)
+
+    maxUsers       Int     @default(5)
+    maxProjects    Int     @default(50)
+    hasAssetAccess Boolean @default(false)
+
+    stripeCustomerId String?   @unique
+    endDate          DateTime?
+}
+
+// --------------------------------------
+// 2. Users & HR
+// --------------------------------------
+
+enum UserType {
+    FULL_TIME
+    PART_TIME
+    FREELANCER
+    INTERN
+}
+
+enum UserRole {
+    ADMIN
+    OPERATOR
+    CREATIVE
+}
+
+model User {
+    id       String   @id @default(auto()) @map("_id") @db.ObjectId
+    name     String
+    email    String   @unique
+    password String?
+    userType UserType @default(FULL_TIME)
+    role     UserRole @default(CREATIVE)
+
+    verifiedSkills String[]
+    efficiencyRate Float?   @default(1.0)
+    leaves         Leave[]
+
+    agencyId String @db.ObjectId
+    agency   Agency @relation(fields: [agencyId], references: [id])
+
+    attendanceLogs AttendanceLog[]
+    tasks          Task[]
+    comments       Comment[]
+
+    createdAt DateTime @default(now())
+}
+
+type Leave {
+    startDate DateTime?
+    endDate   DateTime?
+    type      String
+    status    String
+}
+
+model AttendanceLog {
+    id           String   @id @default(auto()) @map("_id") @db.ObjectId
+    date         DateTime
+    checkInTime  DateTime
+    checkOutTime DateTime
+    status       String
+    userId       String   @db.ObjectId
+    user         User     @relation(fields: [userId], references: [id])
+}
+
+// --------------------------------------
+// 3. Client & Project Management
+// --------------------------------------
+
+enum InvoiceStatus {
+    DRAFT
+    SENT
+    PARTIALLY_PAID
+    PAID
+    OVERDUE
+    VOID
+}
+
+model Client {
+    id          String @id @default(auto()) @map("_id") @db.ObjectId
+    clientName  String
+    accountType String
+    status      String
+
+    agencyId String @db.ObjectId
+    agency   Agency @relation(fields: [agencyId], references: [id])
+
+    projects Project[]
+    payments Payment[]
+
+    createdAt DateTime @default(now())
+}
+
+model Project {
+    id             String   @id @default(auto()) @map("_id") @db.ObjectId
+    projectName    String
+    targetDeadline DateTime
+    status         String
+    projectStory   String?
+    cloudLink      String?
+
+    // FINANCIAL DATA (The Invoice Part)
+    totalValue    Float // This IS the invoice amount (The DEBIT)
+    invoiceNo     String? // Optional: For professional tracking like "INV-101"
+    invoiceStatus InvoiceStatus @default(DRAFT) // UI: "In Production", "Paid", "Overdue"
+
+    agencyId String @db.ObjectId
+    agency   Agency @relation(fields: [agencyId], references: [id])
+
+    clientId String @db.ObjectId
+    client   Client @relation(fields: [clientId], references: [id])
+
+    tasks Task[]
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+}
+
+// --------------------------------------
+// 4. Production & Rentals
+// --------------------------------------
+
+model Task {
+    id       String @id @default(auto()) @map("_id") @db.ObjectId
+    taskType String // UI: "CONSULTATION", "VIDEO", etc.
+    progress Int    @default(0)
+    status   String
+
+    // UI: FINANCIALS PER DEPT
+    grossRevenue Float @default(0.0) // UI: "GROSS REVENUE ($)"
+    margin       Float @default(30.0) // UI: "MARGIN (%)"
+
+    // UI: TIMELINE
+    startDate DateTime // UI: "DEPLOYMENT START"
+    endDate   DateTime // UI: "PROJECT CONCLUSION"
+
+    // UI: SCOPE & DELIVERABLES
+    description String?
+
+    // RELATIONS
+    projectId String  @db.ObjectId
+    project   Project @relation(fields: [projectId], references: [id])
+
+    assigneeId String? @db.ObjectId
+    assignee   User?   @relation(fields: [assigneeId], references: [id])
+
+    assetIds String[] @db.ObjectId
+    assets   Asset[]  @relation(fields: [assetIds], references: [id])
+
+    // NEW: EXTERNAL RENTALS
+    externalRentals ExternalRental[]
+
+    comments            Comment[]
+    lastUpdateTimestamp DateTime  @updatedAt
+}
+
+model ExternalRental {
+    id       String @id @default(auto()) @map("_id") @db.ObjectId
+    itemName String // UI: "Rental Item"
+    cost     Float // UI: "Cost $"
+
+    taskId String @db.ObjectId
+    task   Task   @relation(fields: [taskId], references: [id])
+}
+
+model Comment {
+    id        String   @id @default(auto()) @map("_id") @db.ObjectId
+    text      String
+    authorId  String?  @db.ObjectId
+    author    User?    @relation(fields: [authorId], references: [id])
+    taskId    String   @db.ObjectId
+    task      Task     @relation(fields: [taskId], references: [id])
+    createdAt DateTime @default(now())
+}
+
+// --------------------------------------
+// 5. Payments & Assets
+// --------------------------------------
+
+model Payment {
+    id       String   @id @default(auto()) @map("_id") @db.ObjectId
+    amount   Float
+    method   String
+    datePaid DateTime
+
+    agencyId String @db.ObjectId
+    agency   Agency @relation(fields: [agencyId], references: [id])
+    clientId String @db.ObjectId
+    client   Client @relation(fields: [clientId], references: [id])
+
+    createdAt DateTime @default(now())
+}
+
+model Asset {
+    id                 String   @id @default(auto()) @map("_id") @db.ObjectId
+    assetName          String
+    category           String
+    purchaseDate       DateTime
+    currentValue       Float
+    availabilityStatus String
+
+    agencyId String @db.ObjectId
+    agency   Agency @relation(fields: [agencyId], references: [id])
+
+    taskIds String[] @db.ObjectId
+    tasks   Task[]   @relation(fields: [taskIds], references: [id])
+}
+
+model Expense {
+    id           String   @id @default(auto()) @map("_id") @db.ObjectId
+    resourceName String
+    category     String
+    amount       Float
+    status       String
+    date         DateTime
+    agencyId     String   @db.ObjectId
+    agency       Agency   @relation(fields: [agencyId], references: [id])
+}
