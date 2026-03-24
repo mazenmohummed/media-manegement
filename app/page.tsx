@@ -42,7 +42,7 @@ export default function LandingPage() {
           and protect your profit margins with surgical precision.
         </p>
         <div className="flex flex-col md:flex-row items-center justify-center gap-4 pt-4">
-          <Link href="/signup">
+          <Link href="/deploy/agency">
             <button className="bg-blue-600 hover:bg-blue-700 text-white px-10 py-5 rounded-2xl font-black uppercase tracking-widest transition-all shadow-xl shadow-blue-200/20 active:scale-95 text-xs">
               Deploy Free Terminal
             </button>

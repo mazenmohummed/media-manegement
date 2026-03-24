@@ -28,7 +28,8 @@ enum SubscriptionStatus {
 }
 
 model Agency {
-    id           String  @id @default(cuid()) @map("_id") @db.ObjectId
+    id           String  @id @default(cuid()) @map("_id")
+    agencyNo     String?
     agencyName   String
     operatorName String?
     email        String? @unique
@@ -46,8 +47,8 @@ model Agency {
 }
 
 model Subscription {
-    id       String             @id @default(cuid()) @map("_id") @db.ObjectId
-    agencyId String             @unique @db.ObjectId
+    id       String             @id @default(cuid()) @map("_id")
+    agencyId String             @unique
     agency   Agency             @relation(fields: [agencyId], references: [id])
     plan     SubscriptionPlan   @default(FREE)
     status   SubscriptionStatus @default(TRIALING)
@@ -78,7 +79,8 @@ enum UserRole {
 }
 
 model User {
-    id       String   @id @default(cuid()) @map("_id") @db.ObjectId
+    id       String   @id @default(cuid()) @map("_id")
+    userNo   String?
     name     String
     email    String   @unique
     password String?
@@ -89,7 +91,7 @@ model User {
     efficiencyRate Float?   @default(1.0)
     leaves         Leave[]
 
-    agencyId String @db.ObjectId
+    agencyId String
     agency   Agency @relation(fields: [agencyId], references: [id])
 
     attendanceLogs AttendanceLog[]
@@ -107,12 +109,12 @@ type Leave {
 }
 
 model AttendanceLog {
-    id           String   @id @default(cuid()) @map("_id") @db.ObjectId
+    id           String   @id @default(cuid()) @map("_id")
     date         DateTime
     checkInTime  DateTime
     checkOutTime DateTime
     status       String
-    userId       String   @db.ObjectId
+    userId       String
     user         User     @relation(fields: [userId], references: [id])
 }
 
@@ -130,12 +132,13 @@ enum InvoiceStatus {
 }
 
 model Client {
-    id          String @id @default(cuid()) @map("_id") @db.ObjectId
+    id          String  @id @default(cuid()) @map("_id")
+    clientNo    String?
     clientName  String
     accountType String
     status      String
 
-    agencyId String @db.ObjectId
+    agencyId String
     agency   Agency @relation(fields: [agencyId], references: [id])
 
     projects Project[]
@@ -145,7 +148,8 @@ model Client {
 }
 
 model Project {
-    id             String   @id @default(cuid()) @map("_id") @db.ObjectId
+    id             String   @id @default(cuid()) @map("_id")
+    projectNo      String?
     projectName    String
     targetDeadline DateTime
     status         String
@@ -157,10 +161,10 @@ model Project {
     invoiceNo     String? // Optional: For professional tracking like "INV-101"
     invoiceStatus InvoiceStatus @default(DRAFT) // UI: "In Production", "Paid", "Overdue"
 
-    agencyId String @db.ObjectId
+    agencyId String
     agency   Agency @relation(fields: [agencyId], references: [id])
 
-    clientId String @db.ObjectId
+    clientId String
     client   Client @relation(fields: [clientId], references: [id])
 
     tasks Task[]
@@ -174,9 +178,10 @@ model Project {
 // --------------------------------------
 
 model Task {
-    id       String @id @default(cuid()) @map("_id") @db.ObjectId
+    id       String  @id @default(cuid()) @map("_id")
+    taskNo   String?
     taskType String // UI: "CONSULTATION", "VIDEO", etc.
-    progress Int    @default(0)
+    progress Int     @default(0)
     status   String
 
     // UI: FINANCIALS PER DEPT
@@ -191,13 +196,13 @@ model Task {
     description String?
 
     // RELATIONS
-    projectId String  @db.ObjectId
+    projectId String
     project   Project @relation(fields: [projectId], references: [id])
 
-    assigneeId String? @db.ObjectId
+    assigneeId String?
     assignee   User?   @relation(fields: [assigneeId], references: [id])
 
-    assetIds String[] @db.ObjectId
+    assetIds String[]
     assets   Asset[]  @relation(fields: [assetIds], references: [id])
 
     // NEW: EXTERNAL RENTALS
@@ -208,20 +213,20 @@ model Task {
 }
 
 model ExternalRental {
-    id       String @id @default(cuid()) @map("_id") @db.ObjectId
+    id       String @id @default(cuid()) @map("_id")
     itemName String // UI: "Rental Item"
     cost     Float // UI: "Cost $"
 
-    taskId String @db.ObjectId
+    taskId String
     task   Task   @relation(fields: [taskId], references: [id])
 }
 
 model Comment {
-    id        String   @id @default(cuid()) @map("_id") @db.ObjectId
+    id        String   @id @default(cuid()) @map("_id")
     text      String
-    authorId  String?  @db.ObjectId
+    authorId  String?
     author    User?    @relation(fields: [authorId], references: [id])
-    taskId    String   @db.ObjectId
+    taskId    String
     task      Task     @relation(fields: [taskId], references: [id])
     createdAt DateTime @default(now())
 }
@@ -231,41 +236,44 @@ model Comment {
 // --------------------------------------
 
 model Payment {
-    id       String   @id @default(cuid()) @map("_id") @db.ObjectId
-    amount   Float
-    method   String
-    datePaid DateTime
+    id        String   @id @default(cuid()) @map("_id")
+    paymentNo String?
+    amount    Float
+    method    String
+    datePaid  DateTime
 
-    agencyId String @db.ObjectId
+    agencyId String
     agency   Agency @relation(fields: [agencyId], references: [id])
-    clientId String @db.ObjectId
+    clientId String
     client   Client @relation(fields: [clientId], references: [id])
 
     createdAt DateTime @default(now())
 }
 
 model Asset {
-    id                 String   @id @default(cuid()) @map("_id") @db.ObjectId
+    id                 String   @id @default(cuid()) @map("_id")
+    assetNo            String?
     assetName          String
     category           String
     purchaseDate       DateTime
     currentValue       Float
     availabilityStatus String
 
-    agencyId String @db.ObjectId
+    agencyId String
     agency   Agency @relation(fields: [agencyId], references: [id])
 
-    taskIds String[] @db.ObjectId
+    taskIds String[]
     tasks   Task[]   @relation(fields: [taskIds], references: [id])
 }
 
 model Expense {
-    id           String   @id @default(cuid()) @map("_id") @db.ObjectId
+    id           String   @id @default(cuid()) @map("_id")
+    expenseNo    String?
     resourceName String
     category     String
     amount       Float
     status       String
     date         DateTime
-    agencyId     String   @db.ObjectId
+    agencyId     String
     agency       Agency   @relation(fields: [agencyId], references: [id])
 }

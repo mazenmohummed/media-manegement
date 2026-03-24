@@ -3,8 +3,10 @@
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { Plus, Search, Loader2, Building2 } from "lucide-react";
+import { useSession } from "next-auth/react";
 
 export default function ClientsPage() {
+  const { data: session, status } = useSession();
   const [clients, setClients] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -15,36 +17,60 @@ export default function ClientsPage() {
     clientName: "",
     accountType: "Retainer",
     status: "Active",
-    agencyId: "65f...your_agency_id" // Use real ID from session
   });
 
-  useEffect(() => {
-    fetchClients();
-  }, []);
+useEffect(() => {
+  if (status === "authenticated" && session?.user?.agencyId) {
+    fetchClients(session.user.agencyId);
+  } else if (status === "unauthenticated") {
+    setLoading(false); // Stop loading if not logged in
+  }
+}, [status, session]);
 
-  const fetchClients = async () => {
-    const res = await fetch("/api/clients");
-    const data = await res.json();
-    setClients(data);
-    setLoading(false);
+const fetchClients = async (agencyId: string) => {
+    try {
+      const res = await fetch(`/api/clients?agencyId=${agencyId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setClients(data);
+      }
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleAddClient = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (!session?.user?.agencyId) return alert("Session lost. Please refresh.");
+
     const res = await fetch("/api/clients", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(formData),
+      body: JSON.stringify({
+        ...formData,
+        agencyId: session.user.agencyId, // Dynamic ID from the secure session
+      }),
     });
 
     if (res.ok) {
-      fetchClients();
+      fetchClients(session.user.agencyId);
       setShowForm(false);
       setFormData({ ...formData, clientName: "" });
     }
   };
 
-  const filteredClients = clients.filter((c: any) =>
+  // Auth Guard: Prevents UI flicker or unauthorized access
+  if (status === "loading") {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh] space-y-4">
+        <Loader2 className="animate-spin text-blue-600" size={40} />
+        <p className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground">Initializing Terminal...</p>
+      </div>
+    );
+  }
+
+const filteredClients = clients.filter((c: any) =>
     c.clientName.toLowerCase().includes(searchTerm.toLowerCase())
   );
 

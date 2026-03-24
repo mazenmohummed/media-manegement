@@ -1,13 +1,21 @@
-import React from "react";
-import Sidebar from "@/components/main/Sidebar";// We'll create this next
+// app/dashboard/layout.tsx
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/authOptions";
+import { redirect } from "next/navigation";
+import Sidebar from "@/components/main/Sidebar";
 
-export default function DashboardLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="min-h-screen bg-background flex overflow-hidden">
+export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
+  const session = await getServerSession(authOptions);
+
+  if (!session) redirect("/login");
+
+  // If user exists but hasn't finished onboarding (no agency linked)
+  if (!session.user.agencyId || session.user.agencyId === "PENDING_ONBOARDING") {
+    redirect("/onboarding");
+  }
+
+  return <>    
+  <div className="min-h-screen bg-background flex overflow-hidden">
       {/* FIXED SIDEBAR */}
       <Sidebar />
 
@@ -21,5 +29,5 @@ export default function DashboardLayout({
         </div>
       </main>
     </div>
-  );
+    </>;
 }

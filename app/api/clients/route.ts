@@ -1,19 +1,21 @@
-import { prisma } from "@/lib/prisma";
+import prisma from "@/lib/prisma";
 import { NextResponse } from "next/server";
 
 // GET: Fetch all clients for the logged-in agency
 export async function GET() {
   try {
-    // In a real app, you'd get agencyId from the session/cookie
     const clients = await prisma.client.findMany({
-      include: {
-        projects: true,
+      // Remove the where clause temporarily to see if ANY clients show up
+      // where: { agencyId: "..." }, 
+      select: {
+        id: true,
+        clientName: true,
       },
-      orderBy: { createdAt: "desc" },
     });
+    console.log("Clients found:", clients); // Check your terminal!
     return NextResponse.json(clients);
   } catch (error) {
-    return NextResponse.json({ error: "Failed to fetch clients" }, { status: 500 });
+    return NextResponse.json({ error: "Database error" }, { status: 500 });
   }
 }
 
