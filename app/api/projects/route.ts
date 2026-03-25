@@ -1,6 +1,25 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 
+export async function GET(req: Request) {
+  try {
+    const projects = await prisma.project.findMany({
+      include: {
+        client: true, // Required for project.client.clientName
+        tasks: true,  // Required for the task workflow bubbles
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
+
+    return NextResponse.json(projects);
+  } catch (error) {
+    console.error("API_PROJECTS_GET_ERROR:", error);
+    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+  }
+}
+
 export async function POST(req: Request) {
   try {
     const body = await req.json();

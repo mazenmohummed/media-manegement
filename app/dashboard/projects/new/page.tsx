@@ -153,11 +153,20 @@ export default function NewProjectPage() {
       status: "PENDING"
     }));
 
+    // Calculate totalValue for the Project model based on task revenues
+    const totalValue = formattedTasks.reduce((acc, t) => acc + t.grossRevenue, 0);
+
     const payload = {
       projectName,
       clientId,
       projectStory,
-      cloudLink, // Included in payload
+      cloudLink,
+      totalValue,
+      status: "ACTIVE",
+      // Prisma requires targetDeadline; using the furthest task end date or tomorrow
+      targetDeadline: formattedTasks.length > 0 
+        ? new Date(Math.max(...formattedTasks.map(t => t.endDate?.getTime() || 0)))
+        : new Date(Date.now() + 86400000), 
       tasks: formattedTasks,
       agencyId: session.user.agencyId,
     };
@@ -201,6 +210,15 @@ export default function NewProjectPage() {
               </select>
               <input placeholder="Project Name" className="w-full p-4 rounded-2xl bg-muted/50 outline-none text-sm font-medium border-2 border-transparent focus:border-blue-600 transition-all" value={projectName} onChange={e => setProjectName(e.target.value)} />
               
+              {/* PROJECT STORY TEXTBOX */}
+              <textarea 
+                placeholder="Project Story / Brief..." 
+                rows={4}
+                className="w-full p-4 rounded-2xl bg-muted/50 outline-none text-sm font-medium border-2 border-transparent focus:border-blue-600 transition-all resize-none" 
+                value={projectStory} 
+                onChange={e => setProjectStory(e.target.value)} 
+              />
+
               {/* Added Cloud Link Input */}
               <input 
                 placeholder="Cloud Assets Link (Drive/Dropbox)" 

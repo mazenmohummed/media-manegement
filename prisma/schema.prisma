@@ -87,6 +87,8 @@ model User {
     userType UserType @default(FULL_TIME)
     role     UserRole @default(CREATIVE)
 
+    salary Float? @default(0.0)
+
     verifiedSkills String[]
     efficiencyRate Float?   @default(1.0)
     leaves         Leave[]
@@ -183,6 +185,8 @@ model Task {
     taskType String // UI: "CONSULTATION", "VIDEO", etc.
     progress Int     @default(0)
     status   String
+
+    paymentStatus String @default("Pending")
 
     // UI: FINANCIALS PER DEPT
     grossRevenue Float @default(0.0) // UI: "GROSS REVENUE ($)"

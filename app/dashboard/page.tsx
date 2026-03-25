@@ -1,126 +1,145 @@
 "use client";
-import React from "react";
-import { 
-  Activity, 
-  BarChart3, 
-  Box, 
-  Briefcase, 
-  DollarSign, 
-  Users, 
-  Plus,
-  LayoutDashboard
-} from "lucide-react"; // npm install lucide-react
 
-export default function Dashboard() {
+import React, { useState, useEffect } from "react";
+import { Clock, Calendar, Plane, CheckCircle2, AlertCircle } from "lucide-react";
+
+export default function EmployeeDashboard() {
+  const [loading, setLoading] = useState(false);
+  const [currentTime, setCurrentTime] = useState(new Date()); // State for the live clock
+  const [leaveForm, setLeaveForm] = useState({ start: "", end: "", type: "ANNUAL" });
+
+  // 1. LIVE CLOCK LOGIC
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 1000);
+
+    return () => clearInterval(timer); // Cleanup on unmount
+  }, []);
+
+  // 2. Handle Attendance Toggle
+  const handlePunch = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/attendance", { method: "POST" });
+      const data = await res.json();
+      if (res.ok) {
+        alert(data.message);
+      } else {
+        alert(data.error || "Something went wrong");
+      }
+    } catch (err) {
+      alert("Failed to connect to server");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 3. Handle Leave Submission
+  const submitLeave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      const res = await fetch("/api/leaves/request", {
+        method: "POST",
+        body: JSON.stringify({
+          startDate: leaveForm.start,
+          endDate: leaveForm.end,
+          type: leaveForm.type,
+        }),
+      });
+      if (res.ok) alert("Leave Requested!");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
-    <div className="min-h-screen bg-background flex">
-    
-      {/* MAIN CONTENT */}
-      <main className="flex-1 p-10 space-y-10">
-        <header className="flex justify-between items-end">
-          <div className="space-y-1">
-            <h1 className="text-3xl font-black tracking-tighter uppercase italic">Command Center</h1>
-            <p className="text-muted-foreground text-sm font-medium">System status: All production pipelines active.</p>
-          </div>
-          <button className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest flex items-center gap-2 transition-all shadow-lg shadow-blue-600/20">
-            <Plus size={14} strokeWidth={3} /> New Deployment
-          </button>
-        </header>
+    <div className="max-w-5xl mx-auto p-6 space-y-10 min-h-screen bg-background">
+      <header>
+        <h1 className="text-5xl font-black uppercase italic tracking-tighter">Self-Service Portal</h1>
+        <p className="text-blue-600 font-black text-[10px] uppercase tracking-widest mt-2">Personal Management • Terminal v1.0</p>
+      </header>
 
-        {/* STATS GRID */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-          <StatCard title="Total Revenue" value="$124,500" change="+12.5%" icon={<DollarSign className="text-blue-600" />} />
-          <StatCard title="Active Projects" value="14" change="+2" icon={<Briefcase className="text-blue-600" />} />
-          <StatCard title="Ops Efficiency" value="94.2%" change="-1.4%" icon={<Activity className="text-blue-600" />} />
-          <StatCard title="Asset Load" value="78%" change="+5%" icon={<Box className="text-blue-600" />} />
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
-          {/* PROJECT PIPELINE */}
-          <div className="lg:col-span-2 space-y-6">
-            <h3 className="text-xs font-black uppercase tracking-[0.3em] text-muted-foreground border-b border-border pb-4">Live Pipeline</h3>
-            <div className="space-y-4">
-              <ProjectRow name="Red Bull Commercial" client="Red Bull" status="Production" progress={65} value="$12,000" />
-              <ProjectRow name="Tech-X Brand Identity" client="Tech-X" status="Review" progress={90} value="$4,500" />
-              <ProjectRow name="Summer Fest 2026" client="City Council" status="Briefing" progress={15} value="$28,000" />
-            </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+        
+        {/* ATTENDANCE CARD */}
+        <section className="bg-card border border-border p-8 rounded-[2.5rem] relative overflow-hidden group shadow-2xl">
+          <div className="flex justify-between items-start mb-8">
+            <h3 className="text-[10px] font-black uppercase tracking-widest flex items-center gap-2">
+              <Clock size={14} className="text-primary"/> Attendance Punch
+            </h3>
+            <span className="bg-emerald-500/10 text-emerald-500 text-[8px] font-black px-2 py-1 rounded uppercase">Live Session</span>
           </div>
 
-          {/* RECENT ASSET LOGS */}
           <div className="space-y-6">
-            <h3 className="text-xs font-black uppercase tracking-[0.3em] text-muted-foreground border-b border-border pb-4">Asset Status</h3>
-            <div className="bg-card/50 border border-border rounded-[2rem] p-6 space-y-6">
-              <AssetStatus name="ARRI Alexa 35" status="Deployed" user="Ahmed K." color="bg-red-500" />
-              <AssetStatus name="Sony A7S III" status="In House" user="Available" color="bg-emerald-500" />
-              <AssetStatus name="DJI Ronin 4D" status="Maintenance" user="Technical" color="bg-amber-500" />
+            <div className="text-center py-6">
+               <p className="text-[10px] font-black text-muted-foreground uppercase mb-2">Current System Time</p>
+               {/* This now uses the state variable that updates every second */}
+               <p className="text-4xl font-black italic">{currentTime.toLocaleTimeString()}</p>
             </div>
+            
+            <button 
+              onClick={handlePunch}
+              disabled={loading}
+              className={`w-full py-6 rounded-2xl font-black uppercase italic text-lg tracking-tighter transition-all shadow-xl
+                ${loading ? "bg-muted animate-pulse cursor-not-allowed" : "bg-primary text-white hover:scale-[1.02] shadow-primary/20"}
+              `}
+            >
+              {loading ? "Syncing..." : "Toggle Punch In/Out"}
+            </button>
           </div>
-        </div>
-      </main>
-    </div>
-  );
-}
+        </section>
 
-// SUB-COMPONENTS
-function NavItem({ icon, label, active = false }: any) {
-  return (
-    <div className={`flex items-center gap-4 px-4 py-3 rounded-xl cursor-pointer transition-all ${active ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}>
-      {icon}
-      <span className="text-[10px] font-black uppercase tracking-widest">{label}</span>
-    </div>
-  );
-}
+        {/* LEAVE REQUEST CARD */}
+        <section className="bg-card border border-border p-8 rounded-[2.5rem] shadow-2xl">
+          <h3 className="text-[10px] font-black uppercase tracking-widest mb-8 flex items-center gap-2">
+            <Plane size={14} className="text-primary"/> Request Time Off
+          </h3>
 
-function StatCard({ title, value, change, icon }: any) {
-  return (
-    <div className="bg-card border border-border p-6 rounded-[2rem] space-y-4">
-      <div className="flex justify-between items-center">
-        <div className="p-2 bg-blue-600/10 rounded-lg">{icon}</div>
-        <span className={`text-[10px] font-black ${change.startsWith('+') ? 'text-emerald-500' : 'text-red-500'}`}>{change}</span>
-      </div>
-      <div>
-        <p className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">{title}</p>
-        <h4 className="text-2xl font-black tracking-tighter italic">{value}</h4>
-      </div>
-    </div>
-  );
-}
+          <form onSubmit={submitLeave} className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <label className="text-[8px] font-black uppercase text-muted-foreground">Start Date</label>
+                <input 
+                   type="date" 
+                   required
+                   onChange={(e) => setLeaveForm({...leaveForm, start: e.target.value})}
+                   className="w-full bg-muted/30 border border-border p-3 rounded-xl font-bold text-xs outline-none focus:ring-2 ring-primary/20" 
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[8px] font-black uppercase text-muted-foreground">End Date</label>
+                <input 
+                   type="date" 
+                   required
+                   onChange={(e) => setLeaveForm({...leaveForm, end: e.target.value})}
+                   className="w-full bg-muted/30 border border-border p-3 rounded-xl font-bold text-xs outline-none focus:ring-2 ring-primary/20" 
+                />
+              </div>
+            </div>
 
-function ProjectRow({ name, client, status, progress, value }: any) {
-  return (
-    <div className="bg-card border border-border p-6 rounded-[2rem] flex items-center justify-between hover:border-blue-600/30 transition-all group">
-      <div className="space-y-1">
-        <h4 className="font-black uppercase tracking-tight group-hover:text-blue-600 transition-colors">{name}</h4>
-        <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">{client} • {value}</p>
-      </div>
-      <div className="flex items-center gap-8">
-        <div className="hidden md:block w-32 space-y-2">
-          <div className="flex justify-between text-[8px] font-black uppercase tracking-widest opacity-60">
-            <span>Progress</span>
-            <span>{progress}%</span>
-          </div>
-          <div className="h-1 bg-muted rounded-full overflow-hidden">
-            <div className="h-full bg-blue-600 rounded-full" style={{ width: `${progress}%` }} />
-          </div>
-        </div>
-        <div className="px-3 py-1 bg-blue-600/10 border border-blue-600/20 rounded-full text-[8px] font-black text-blue-600 uppercase tracking-widest">
-          {status}
-        </div>
-      </div>
-    </div>
-  );
-}
+            <div className="space-y-1">
+              <label className="text-[8px] font-black uppercase text-muted-foreground">Leave Category</label>
+              <select 
+                onChange={(e) => setLeaveForm({...leaveForm, type: e.target.value})}
+                className="w-full bg-muted/30 border border-border p-3 rounded-xl font-bold text-xs outline-none appearance-none"
+              >
+                <option value="ANNUAL">Annual Leave</option>
+                <option value="SICK">Sick Leave</option>
+                <option value="EMERGENCY">Emergency</option>
+              </select>
+            </div>
 
-function AssetStatus({ name, status, user, color }: any) {
-  return (
-    <div className="flex items-center justify-between">
-      <div className="space-y-0.5">
-        <p className="text-xs font-black uppercase tracking-tight">{name}</p>
-        <p className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest">{user}</p>
-      </div>
-      <div className="flex items-center gap-2">
-        <div className={`w-1.5 h-1.5 rounded-full ${color} shadow-[0_0_8px_rgba(0,0,0,0.1)]`} />
-        <span className="text-[9px] font-black uppercase tracking-tighter opacity-60">{status}</span>
+            <button 
+              type="submit"
+              disabled={loading}
+              className="w-full bg-foreground text-background py-4 rounded-xl font-black uppercase text-[10px] tracking-widest hover:bg-primary hover:text-white transition-all mt-4 disabled:opacity-50"
+            >
+              Submit for Approval
+            </button>
+          </form>
+        </section>
       </div>
     </div>
   );

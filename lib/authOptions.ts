@@ -31,32 +31,39 @@ export const authOptions: NextAuthOptions = {
           user.password
         );
 
-        if (isPasswordValid) {
-          return {
-            id: user.id,
+       if (isPasswordValid) {
+        return {
+            id: user.id, // Ensure this field matches your Prisma User model ID
             name: user.name,
             email: user.email,
             agencyId: user.agencyId,
-          };
+            role: user.role,
+        };
         }
-        
+                
         // If password doesn't match
         return null;
       }
     })
   ],
-  callbacks: {
-    async jwt({ token, user }) {
-      if (user) {
-        token.agencyId = (user as any).agencyId;
-      }
-      return token;
-    },
-    async session({ session, token }) {
-      if (session.user) {
-        (session.user as any).agencyId = token.agencyId;
-      }
-      return session;
+ callbacks: {
+  async jwt({ token, user }) {
+    // This runs on sign-in. 'user' is the object returned from your 'authorize' function.
+    if (user) {
+      token.id = user.id; // Map the MongoDB/Prisma ID to the token
+      token.agencyId = (user as any).agencyId;
+      token.role = (user as any).role;
     }
+    return token;
+  },
+  async session({ session, token }) {
+    // This runs whenever a session is checked. 'token' is the decrypted JWT.
+    if (session.user) {
+      (session.user as any).id = token.id as string; // Map token ID back to session
+      (session.user as any).agencyId = token.agencyId as string;
+      (session.user as any).role = token.role as string;
+    }
+    return session;
   }
+}
 };
