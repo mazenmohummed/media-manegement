@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/authOptions";
 import prisma from "@/lib/prisma";
+import type { Prisma } from '@prisma/client';
 
 export async function POST(req: Request) {
   const session = await getServerSession(authOptions);
@@ -10,15 +11,16 @@ export async function POST(req: Request) {
   const { agencyName, operatorName } = await req.json();
 
   try {
-    const result = await prisma.$transaction(async (tx) => {
-      // 1. Create Agency
-      const agency = await tx.agency.create({
-        data: {
+    
+      const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+  // 1. Create Agency
+  const agency = await tx.agency.create({
+     data: {
           agencyName,
           operatorName,
           email: session.user.email,
         },
-      });
+  });
 
       // 2. Create Default Subscription
       await tx.subscription.create({
