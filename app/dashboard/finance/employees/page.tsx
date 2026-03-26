@@ -299,19 +299,18 @@ export default function EmployeeFinancePage() {
            <tbody className="divide-y divide-border font-mono text-sm">
              {data.employees.map((emp: any) => {
               // 1. Get revenue from the correct key
-              const totalRevenueGeneratedByEmp = emp.revenue || 0;
+              const totalRevenueGeneratedByEmp = emp.totalTaskRevenue || 0;
 
-              const grossOwed = emp.userType === "FREELANCER" 
-                ? totalRevenueGeneratedByEmp 
-                : (emp.salary || 0);
+              const grossOwed = emp.userType === "FREELANCER"
+              ? totalRevenueGeneratedByEmp   // ✅ Freelancer يتحسب من Revenue
+              : (emp.salary || 0);           // ✅ Staff يتحسب من Salary
 
               const totalPaidToDate = payoutHistory
-                .filter((log) => log.resourceName.toLowerCase() === emp.name.toLowerCase())
-                .reduce((sum, log) => sum + log.amount, 0);
+              .filter((log) => log.resourceName === emp.name || log.resourceName.includes(emp.name))
+              .reduce((sum, log) => sum + (log.amount || 0), 0);
+
 
               const upcomingPayout = Math.max(0, grossOwed - totalPaidToDate);
-              
-              // 5. Agency Net Profit for this person
               const employeeNet = totalRevenueGeneratedByEmp - grossOwed;
 
               return (
