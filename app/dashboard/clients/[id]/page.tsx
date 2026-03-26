@@ -197,45 +197,73 @@ const handleUpdateClient = async (e: React.FormEvent) => {
           </h2>
           <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2">
             {client.projects?.length > 0 ? client.projects.map((project: any) => (
-              <div key={project.id} className="p-5 border rounded-3xl bg-muted/20 hover:bg-muted/40 transition-all group border-border/50">
-                <div className="flex justify-between items-start">
+              <div 
+                key={project.id} 
+                onClick={() => router.push(`/dashboard/projects/${project.id}`)} // ADD REDIRECT
+                className="p-5 border rounded-3xl bg-muted/20 hover:bg-muted/40 transition-all group border-border/50 cursor-pointer flex justify-between items-center"
+              >
+                <div className="flex justify-between items-start w-full">
                   <div>
-                    <h3 className="font-black uppercase tracking-tight text-sm group-hover:text-blue-600 transition-colors">{project.projectName}</h3>
-                    <p className="text-[9px] text-muted-foreground font-bold uppercase mt-1 tracking-widest">Status: {project.status}</p>
+                    <h3 className="font-black uppercase tracking-tight text-sm group-hover:text-blue-600 transition-colors">
+                      {project.projectName}
+                    </h3>
+                    <p className="text-[9px] text-muted-foreground font-bold uppercase mt-1 tracking-widest">
+                      Status: {project.status}
+                    </p>
                   </div>
-                  <p className="font-black italic text-sm text-foreground">${(project.totalValue || 0).toLocaleString()}</p>
+                  <div className="flex items-center gap-3">
+                    <p className="font-black italic text-sm text-foreground">
+                      ${(project.totalValue || 0).toLocaleString()}
+                    </p>
+                    {/* Visual indicator for clickability */}
+                    <span className="text-muted-foreground/30 group-hover:text-blue-600 group-hover:translate-x-1 transition-all">
+                      <ArrowLeft size={14} className="rotate-180" />
+                    </span>
+                  </div>
                 </div>
               </div>
             )) : (
-              <div className="text-center py-10 opacity-50 uppercase text-[10px] font-black tracking-widest italic">No Projects Initialized</div>
+              <div className="text-center py-10 opacity-50 uppercase text-[10px] font-black tracking-widest italic">
+                No Projects Initialized
+              </div>
             )}
           </div>
         </div>
 
-        {/* PAYMENT HISTORY */}
+       {/* PAYMENT HISTORY */}
         <div className="bg-card border rounded-[2rem] p-8 space-y-6">
-        <h2 className="text-sm font-black uppercase tracking-widest flex items-center gap-2 border-b border-border pb-4">
+          <h2 className="text-sm font-black uppercase tracking-widest flex items-center gap-2 border-b border-border pb-4">
             <DollarSign size={18} className="text-emerald-600" /> Ledger Transactions
-        </h2>
-        <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2">
+          </h2>
+          <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2">
             {client.payments?.length > 0 ? client.payments.map((payment: any) => (
-            <div key={payment.id} className="flex justify-between items-center p-4 border-b border-border border-dashed hover:bg-emerald-600/5 transition-colors rounded-xl">
+              <div 
+                key={payment.id} 
+                onClick={() => router.push(`/dashboard/finance/payments/${payment.id}`)} // ADD REDIRECT
+                className="flex justify-between items-center p-4 border-b border-border border-dashed hover:bg-emerald-600/5 transition-all rounded-xl cursor-pointer group"
+              >
                 <div className="space-y-1">
-                {/* DISPLAY PAYMENT NUMBER */}
-                <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-black bg-emerald-600/10 text-emerald-700 px-2 py-0.5 rounded-md border border-emerald-600/10">
-                    {payment.paymentNo || "TRX-REF"}
+                  {/* DISPLAY PAYMENT NUMBER */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-black bg-emerald-600/10 text-emerald-700 px-2 py-0.5 rounded-md border border-emerald-600/10 group-hover:bg-emerald-600 group-hover:text-white transition-colors">
+                      {payment.paymentNo || "TRX-REF"}
                     </span>
                     <p className="text-[10px] font-black uppercase tracking-wider">{payment.method || "Transfer"}</p>
+                  </div>
+                  <p className="text-[9px] text-muted-foreground font-bold">{new Date(payment.datePaid).toLocaleDateString()}</p>
                 </div>
-                <p className="text-[9px] text-muted-foreground font-bold">{new Date(payment.datePaid).toLocaleDateString()}</p>
+                <div className="flex items-center gap-3">
+                  <p className="font-black text-emerald-600 tracking-tighter text-lg">+ ${(payment.amount || 0).toLocaleString()}</p>
+                  {/* Subtle arrow to indicate clickability */}
+                  <span className="text-muted-foreground/30 group-hover:text-emerald-600 group-hover:translate-x-1 transition-all">
+                    <ArrowLeft size={14} className="rotate-180" />
+                  </span>
                 </div>
-                <p className="font-black text-emerald-600 tracking-tighter text-lg">+ ${(payment.amount || 0).toLocaleString()}</p>
-            </div>
+              </div>
             )) : (
-            <div className="text-center py-10 opacity-50 uppercase text-[10px] font-black tracking-widest italic">Zero Inbound Cashflow</div>
+              <div className="text-center py-10 opacity-50 uppercase text-[10px] font-black tracking-widest italic">Zero Inbound Cashflow</div>
             )}
-        </div>
+          </div>
         </div>
 
         {/* EDIT MODAL */}
@@ -280,47 +308,7 @@ const handleUpdateClient = async (e: React.FormEvent) => {
         </div>
       )}
 
-      {/* PAYMENT MODAL */}
-      {showPaymentModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-background/80 backdrop-blur-md">
-          <form onSubmit={handleRecordPayment} className="bg-card border w-full max-w-md p-8 rounded-[2rem] space-y-4 shadow-2xl">
-            <div className="flex justify-between items-center">
-              <h2 className="font-black uppercase italic tracking-tighter">Record Inbound Payment</h2>
-              <X className="cursor-pointer" onClick={() => setShowPaymentModal(false)} />
-            </div>
-            <input 
-              type="number" 
-              required
-              className="w-full bg-muted p-4 rounded-xl outline-none border border-border" 
-              placeholder="Amount ($)"
-              value={paymentData.amount}
-              onChange={e => setPaymentData({...paymentData, amount: e.target.value})}
-            />
-            <select 
-              className="w-full bg-muted p-4 rounded-xl outline-none border border-border"
-              value={paymentData.method}
-              onChange={e => setPaymentData({...paymentData, method: e.target.value})}
-            >
-              <option value="Bank Transfer">Bank Transfer</option>
-              <option value="Cash">Cash</option>
-              <option value="Card">Card</option>
-            </select>
-            <input 
-              type="date"
-              className="w-full bg-muted p-4 rounded-xl outline-none border border-border"
-              value={paymentData.datePaid}
-              onChange={e => setPaymentData({...paymentData, datePaid: e.target.value})}
-            />
-            <button 
-              disabled={isRecording}
-              type="submit" 
-              className="w-full bg-emerald-600 disabled:bg-emerald-400 text-white font-black uppercase py-4 rounded-xl tracking-widest flex items-center justify-center gap-2"
-            >
-              {isRecording ? <Loader2 className="animate-spin" size={18} /> : "Confirm Transaction"}
-            </button>
-          </form>
-        </div>
-      )}
+
       </div>
     </div>
   );

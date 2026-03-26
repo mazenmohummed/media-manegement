@@ -4,6 +4,7 @@ import { authOptions } from "@/lib/authOptions";
 import { redirect } from "next/navigation";
 import Sidebar from "@/components/main/Sidebar";
 
+
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const session = await getServerSession(authOptions);
 
@@ -17,14 +18,15 @@ export default async function DashboardLayout({ children }: { children: React.Re
   return <>    
   <div className="min-h-screen bg-background flex overflow-hidden">
       {/* FIXED SIDEBAR */}
-      <Sidebar />
+      <Sidebar/>
 
       {/* MAIN VIEWPORT */}
       <main className="flex-1 h-screen overflow-y-auto bg-background relative">
-        <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-border to-transparent" />
+        <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-border to-transparent " />
        
         
-        <div className="p-8 md:p-12 max-w-[1600px] mx-auto">
+        <div className="max-w-[1600px] mx-auto p-4">
+
           {children}
         </div>
       </main>

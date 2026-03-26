@@ -125,3 +125,30 @@ export async function PUT(
     return NextResponse.json({ error: "Update failed" }, { status: 500 });
   }
 }
+
+export async function DELETE(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const session = await getServerSession(authOptions);
+    if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+    const { id } = await params;
+
+    // Optional: Check if the user is trying to delete themselves
+    if (session.user.id === id) {
+      return NextResponse.json({ error: "Cannot terminate own account" }, { status: 400 });
+    }
+
+    // Delete the user (Prisma will handle relations based on your schema's onDelete)
+    await prisma.user.delete({
+      where: { id },
+    });
+
+    return NextResponse.json({ message: "Employee terminated successfully" });
+  } catch (error) {
+    console.error("DELETE_ERROR:", error);
+    return NextResponse.json({ error: "Termination failed" }, { status: 500 });
+  }
+}

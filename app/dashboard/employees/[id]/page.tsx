@@ -3,7 +3,7 @@
 import React, { useEffect, useState, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { 
-  ArrowLeft, Edit3, Trash2, UserCheck, Wallet, ArrowUpRight, ShieldCheck
+  ArrowLeft, Edit3, Trash2, UserCheck, Wallet, ArrowUpRight, ShieldCheck 
 } from "lucide-react";
 
 export default function EmployeeProfile() {
@@ -15,6 +15,7 @@ export default function EmployeeProfile() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<"TASKS" | "ATTENDANCE" | "LEAVES">("TASKS");
   const [isSaving, setIsSaving] = useState(false);
+  const [isTerminating, setIsTerminating] = useState(false);
 
   // --- EDIT MODAL STATES ---
   const [isEditing, setIsEditing] = useState(false);
@@ -40,14 +41,13 @@ export default function EmployeeProfile() {
       const data = await res.json();
       setEmployee(data);
       
-      // Sync edit form with fetched data
       setEditForm({
         name: data.name || "",
         role: data.role || "CREATIVE",
         userType: data.userType || "FULL_TIME",
         salary: data.salary || 0,
         email: data.email || "",
-        password: "", // Always reset password field for security
+        password: "", 
         verifiedSkills: data.verifiedSkills || [],
       });
     } catch (err) { 
@@ -61,11 +61,10 @@ export default function EmployeeProfile() {
     fetchDetails();
   }, [id]);
 
-  // --- SAVE LOGIC ---
+  // --- ACTIONS ---
   const handleSave = async () => {
-    if (isSaving) return; // Prevent double clicks
-  
-  setIsSaving(true);
+    if (isSaving) return;
+    setIsSaving(true);
     try {
       const res = await fetch(`/api/employees/${id}`, {
         method: "PUT",
@@ -74,7 +73,7 @@ export default function EmployeeProfile() {
       });
 
       if (res.ok) {
-        await fetchDetails(); // Refresh data from server
+        await fetchDetails();
         setIsEditing(false);
       } else {
         const errData = await res.json();
@@ -83,8 +82,25 @@ export default function EmployeeProfile() {
     } catch (err) {
       console.error("Update failed", err);
     } finally {
-    setIsSaving(false); // Stop loading regardless of outcome
-  }
+      setIsSaving(false);
+    }
+  };
+
+  const handleTerminate = async () => {
+    const confirmTermination = confirm(
+      `WARNING: Are you sure you want to terminate ${employee.name}? This action cannot be undone.`
+    );
+    if (!confirmTermination) return;
+
+    setIsTerminating(true);
+    try {
+      const res = await fetch(`/api/employees/${id}`, { method: "DELETE" });
+      if (res.ok) router.push("/dashboard/employees"); 
+    } catch (err) {
+      console.error("Termination error:", err);
+    } finally {
+      setIsTerminating(false);
+    }
   };
 
   // --- DYNAMIC CALCULATIONS ---
@@ -138,15 +154,38 @@ export default function EmployeeProfile() {
         </div>
         
         <div className="flex gap-3">
-          <button 
-            onClick={() => setIsEditing(true)}
-            className="flex items-center gap-2 bg-card border border-border px-5 py-3 rounded-2xl text-[10px] font-black uppercase hover:bg-muted transition-all"
-          >
+          <button onClick={() => setIsEditing(true)} className="flex items-center gap-2 bg-card border border-border px-5 py-3 rounded-2xl text-[10px] font-black uppercase hover:bg-muted transition-all">
             <Edit3 size={14} /> Edit Profile
           </button>
-          <button className="flex items-center gap-2 bg-destructive/10 text-destructive border border-destructive/20 px-5 py-3 rounded-2xl text-[10px] font-black uppercase hover:bg-destructive hover:text-white transition-all">
-            <Trash2 size={14} /> Terminate
+          <button onClick={handleTerminate} disabled={isTerminating} className="flex items-center gap-2 bg-destructive/10 text-destructive border border-destructive/20 px-5 py-3 rounded-2xl text-[10px] font-black uppercase hover:bg-destructive hover:text-white transition-all disabled:opacity-50">
+            <Trash2 size={14} /> {isTerminating ? "Processing..." : "Terminate"}
           </button>
+        </div>
+      </div>
+
+      {/* TOP METRICS ROW */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="bg-primary p-6 rounded-[2rem] text-primary-foreground shadow-xl shadow-primary/20 relative overflow-hidden group">
+           <ArrowUpRight className="absolute -right-2 -top-2 w-24 h-24 opacity-10 group-hover:scale-110 transition-transform" />
+           <p className="text-[10px] font-black uppercase tracking-widest opacity-80">Total Revenue Generated</p>
+           <h2 className="text-4xl font-black italic tracking-tighter mt-1">
+             ${financeStats.gross.toLocaleString()}
+           </h2>
+           <p className="text-[9px] font-bold mt-2 uppercase opacity-70">Across {filteredTasks.length} Projects</p>
+        </div>
+
+        <div className="bg-card border border-border p-6 rounded-[2rem] flex flex-col justify-center">
+           <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Net Agency Profit</p>
+           <h2 className="text-4xl font-black italic tracking-tighter mt-1 text-emerald-600">
+             ${financeStats.net.toLocaleString()}
+           </h2>
+        </div>
+
+        <div className="bg-card border border-border p-6 rounded-[2rem] flex flex-col justify-center">
+           <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Efficiency Rating</p>
+           <h2 className="text-4xl font-black italic tracking-tighter mt-1 text-blue-600">
+             {(financeStats.gross / (employee.salary || 1)).toFixed(1)}x
+           </h2>
         </div>
       </div>
 
@@ -163,21 +202,17 @@ export default function EmployeeProfile() {
             <div className="space-y-6">
               <div>
                 <p className="text-[8px] font-black text-muted-foreground uppercase mb-1">Monthly Salary</p>
-                <p className="text-2xl font-black italic tracking-tighter">
-                  ${employee.salary?.toLocaleString() || "0.00"}
-                </p>
+                <p className="text-2xl font-black italic tracking-tighter">${employee.salary?.toLocaleString() || "0.00"}</p>
               </div>
-              <div className="space-y-3 pt-4 border-t border-border">
-                <div className="flex justify-between items-end">
+              <div className="pt-4 border-t border-border flex justify-between">
                   <div>
-                    <p className="text-[8px] font-black text-muted-foreground uppercase">Gross Generated</p>
+                    <p className="text-[8px] font-black text-muted-foreground uppercase">Period Gross</p>
                     <p className="text-lg font-black italic">${financeStats.gross.toLocaleString()}</p>
                   </div>
                   <div className="text-right">
-                    <p className="text-[8px] font-black text-emerald-600 uppercase">Net Profit</p>
+                    <p className="text-[8px] font-black text-emerald-600 uppercase">Period Net</p>
                     <p className="text-lg font-black italic text-emerald-600">${financeStats.net.toLocaleString()}</p>
                   </div>
-                </div>
               </div>
             </div>
           </section>
@@ -198,21 +233,14 @@ export default function EmployeeProfile() {
             </div>
           </section>
 
-          {/* SKILLS SECTION */}
           <section className="bg-card border border-border p-8 rounded-[2.5rem] space-y-4">
              <h3 className="text-[10px] font-black uppercase tracking-widest flex items-center gap-2">
                <ShieldCheck size={14} className="text-primary"/> Verified Skills
              </h3>
              <div className="flex flex-wrap gap-2 pt-2">
-               {employee.verifiedSkills?.length > 0 ? (
-                 employee.verifiedSkills.map((skill: string, i: number) => (
-                   <span key={i} className="px-3 py-1 bg-muted rounded-lg text-[9px] font-black uppercase tracking-tighter">
-                     {skill}
-                   </span>
-                 ))
-               ) : (
-                 <span className="text-[10px] text-muted-foreground italic">No skills listed</span>
-               )}
+               {employee.verifiedSkills?.map((skill: string, i: number) => (
+                 <span key={i} className="px-3 py-1 bg-muted rounded-lg text-[9px] font-black uppercase tracking-tighter">{skill}</span>
+               )) || <span className="text-[10px] text-muted-foreground italic">No skills listed</span>}
              </div>
           </section>
         </div>
@@ -220,12 +248,12 @@ export default function EmployeeProfile() {
         {/* MIDDLE COLUMN: CONTENT TABS */}
         <div className="lg:col-span-3 space-y-6">
           <div className="bg-card border border-border p-4 rounded-[2rem] flex flex-wrap justify-between items-center gap-4">
-            <div className="flex gap-2 md:gap-4">
+            <div className="flex gap-2">
               {["TASKS", "ATTENDANCE", "LEAVES"].map((tab) => (
                 <button
                   key={tab}
                   onClick={() => setActiveTab(tab as any)}
-                  className={`px-4 md:px-6 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${
+                  className={`px-6 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${
                     activeTab === tab ? "bg-primary text-white shadow-lg shadow-primary/20" : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
@@ -235,31 +263,17 @@ export default function EmployeeProfile() {
             </div>
 
             <div className="flex items-center gap-3 bg-background p-1 rounded-xl border">
-                <select 
-                  value={filterMode} 
-                  onChange={(e) => setFilterMode(e.target.value as any)}
-                  className="bg-transparent text-[9px] font-black uppercase px-2 outline-none cursor-pointer"
-                >
+                <select value={filterMode} onChange={(e) => setFilterMode(e.target.value as any)} className="bg-transparent text-[9px] font-black uppercase px-2 outline-none cursor-pointer">
                   <option value="PRESET">Presets</option>
                   <option value="MONTH">Monthly</option>
                 </select>
                 <div className="w-[1px] h-4 bg-border" />
                 {filterMode === "MONTH" ? (
-                  <select 
-                    value={selectedMonth} 
-                    onChange={(e) => setSelectedMonth(parseInt(e.target.value))}
-                    className="bg-transparent text-[9px] font-black uppercase px-2 outline-none cursor-pointer"
-                  >
-                    {["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].map((m, i) => (
-                      <option key={m} value={i}>{m}</option>
-                    ))}
+                  <select value={selectedMonth} onChange={(e) => setSelectedMonth(parseInt(e.target.value))} className="bg-transparent text-[9px] font-black uppercase px-2 outline-none cursor-pointer">
+                    {["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].map((m, i) => <option key={m} value={i}>{m}</option>)}
                   </select>
                 ) : (
-                  <select 
-                    value={activePreset} 
-                    onChange={(e) => setActivePreset(e.target.value)}
-                    className="bg-transparent text-[9px] font-black uppercase px-2 outline-none cursor-pointer"
-                  >
+                  <select value={activePreset} onChange={(e) => setActivePreset(e.target.value)} className="bg-transparent text-[9px] font-black uppercase px-2 outline-none cursor-pointer">
                     <option value="ALL">All Time</option>
                     <option value="Q1">Q1</option>
                     <option value="Q2">Q2</option>
@@ -272,7 +286,7 @@ export default function EmployeeProfile() {
             {activeTab === "TASKS" && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {filteredTasks.length > 0 ? filteredTasks.map((task: any) => (
-                  <div key={task.id} className="bg-card border border-border p-6 rounded-[2rem] group cursor-pointer hover:border-primary transition-all relative overflow-hidden">
+                  <div key={task.id} className="bg-card border border-border p-6 rounded-[2rem] group hover:border-primary transition-all relative overflow-hidden">
                     <div className="flex justify-between items-start mb-4">
                       <div>
                         <p className="text-[8px] font-black text-primary uppercase">{task.project?.projectName || "Direct Task"}</p>
@@ -335,30 +349,17 @@ export default function EmployeeProfile() {
                     {employee.leaves?.length > 0 ? (
                       employee.leaves.map((leave: any, i: number) => (
                         <tr key={i} className="text-[11px] font-bold uppercase hover:bg-muted/10 transition-colors">
+                          <td className="p-6">{new Date(leave.startDate).toLocaleDateString('en-GB')} - {new Date(leave.endDate).toLocaleDateString('en-GB')}</td>
+                          <td className="p-6"><span className="bg-blue-500/10 text-blue-600 px-2 py-1 rounded text-[9px] font-black">{leave.type}</span></td>
                           <td className="p-6">
-                            {new Date(leave.startDate).toLocaleDateString('en-GB')} - {new Date(leave.endDate).toLocaleDateString('en-GB')}
-                          </td>
-                          <td className="p-6">
-                            <span className="bg-blue-500/10 text-blue-600 px-2 py-1 rounded text-[9px] font-black">
-                              {leave.type}
-                            </span>
-                          </td>
-                          <td className="p-6">
-                            <span className={`px-3 py-1 rounded-lg text-[9px] font-black ${
-                              leave.status === 'Approved' ? 'bg-emerald-500/10 text-emerald-600' : 
-                              leave.status === 'Pending' ? 'bg-amber-500/10 text-amber-600' : 'bg-red-500/10 text-red-600'
-                            }`}>
+                            <span className={`px-3 py-1 rounded-lg text-[9px] font-black ${leave.status === 'Approved' ? 'bg-emerald-500/10 text-emerald-600' : 'bg-amber-500/10 text-amber-600'}`}>
                               {leave.status}
                             </span>
                           </td>
                         </tr>
                       ))
                     ) : (
-                      <tr>
-                        <td colSpan={3} className="p-20 text-center text-muted-foreground text-[10px] font-black uppercase italic">
-                          No leave records found in ledger
-                        </td>
-                      </tr>
+                      <tr><td colSpan={3} className="p-20 text-center text-muted-foreground text-[10px] font-black uppercase italic">No leave records found</td></tr>
                     )}
                   </tbody>
                 </table>
@@ -368,101 +369,51 @@ export default function EmployeeProfile() {
         </div>
       </div>
 
-      {/* --- EDIT MODAL OVERLAY --- */}
+      {/* EDIT MODAL OVERLAY */}
       {isEditing && (
         <div className="fixed inset-0 z-[100] flex justify-end bg-black/60 backdrop-blur-sm">
-          <div className="w-full max-w-md bg-background h-full shadow-2xl p-8 border-l border-border animate-in slide-in-from-right duration-300 flex flex-col overflow-y-auto">
+          <div className="w-full max-w-md bg-background h-full shadow-2xl p-8 border-l border-border flex flex-col overflow-y-auto">
             <div className="flex justify-between items-center mb-8">
               <h2 className="text-xl font-black uppercase italic tracking-tighter">Edit Personnel</h2>
               <button onClick={() => setIsEditing(false)} className="text-muted-foreground hover:text-foreground uppercase text-[10px] font-black">Close</button>
             </div>
 
             <div className="space-y-6 flex-1">
-              {/* Name & Email */}
-              <div className="grid grid-cols-1 gap-4">
-                <div className="space-y-1">
-                  <label className="text-[9px] font-black uppercase text-muted-foreground">Full Name</label>
-                  <input type="text" value={editForm.name} onChange={(e) => setEditForm({...editForm, name: e.target.value})} className="w-full bg-muted/30 border border-border p-3 rounded-xl font-bold outline-none" />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[9px] font-black uppercase text-muted-foreground">System Email</label>
-                  <input type="email" value={editForm.email} onChange={(e) => setEditForm({...editForm, email: e.target.value})} className="w-full bg-muted/30 border border-border p-3 rounded-xl font-bold outline-none" />
-                </div>
-              </div>
-
-              {/* Password (Optional) */}
               <div className="space-y-1">
-                <label className="text-[9px] font-black uppercase text-blue-600">Change Password (Leave blank to keep current)</label>
-                <input type="password" placeholder="••••••••" onChange={(e) => setEditForm({...editForm, password: e.target.value})} className="w-full bg-muted/30 border border-border p-3 rounded-xl font-bold outline-none" />
+                <label className="text-[9px] font-black uppercase text-muted-foreground">Full Name</label>
+                <input type="text" value={editForm.name} onChange={(e) => setEditForm({...editForm, name: e.target.value})} className="w-full bg-muted/30 border border-border p-3 rounded-xl font-bold outline-none" />
               </div>
-
-              {/* Role & Type Selectors */}
+              <div className="space-y-1">
+                <label className="text-[9px] font-black uppercase text-muted-foreground">System Email</label>
+                <input type="email" value={editForm.email} onChange={(e) => setEditForm({...editForm, email: e.target.value})} className="w-full bg-muted/30 border border-border p-3 rounded-xl font-bold outline-none" />
+              </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">
                   <label className="text-[9px] font-black uppercase text-muted-foreground">Designation</label>
-                  <select 
-                    value={editForm.role} 
-                    onChange={(e) => setEditForm({...editForm, role: e.target.value})}
-                    className="w-full bg-muted/30 border border-border p-3 rounded-xl font-bold outline-none appearance-none"
-                  >
+                  <select value={editForm.role} onChange={(e) => setEditForm({...editForm, role: e.target.value})} className="w-full bg-muted/30 border border-border p-3 rounded-xl font-bold outline-none">
                     <option value="ADMIN">ADMIN</option>
                     <option value="OPERATOR">OPERATOR</option>
                     <option value="CREATIVE">CREATIVE</option>
                   </select>
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[9px] font-black uppercase text-muted-foreground">Employment Type</label>
-                  <select 
-                    value={editForm.userType} 
-                    onChange={(e) => setEditForm({...editForm, userType: e.target.value})}
-                    className="w-full bg-muted/30 border border-border p-3 rounded-xl font-bold outline-none appearance-none"
-                  >
-                    <option value="FULL_TIME">FULL TIME</option>
-                    <option value="PART_TIME">PART TIME</option>
-                    <option value="FREELANCER">FREELANCER</option>
-                    <option value="INTERN">INTERN</option>
-                  </select>
+                  <label className="text-[9px] font-black uppercase text-muted-foreground">Monthly Salary</label>
+                  <input type="number" value={editForm.salary} onChange={(e) => setEditForm({...editForm, salary: Number(e.target.value)})} className="w-full bg-muted/30 border border-border p-3 rounded-xl font-bold outline-none" />
                 </div>
               </div>
-
-              {/* Salary */}
-              <div className="space-y-1">
-                <label className="text-[9px] font-black uppercase text-muted-foreground">Monthly Salary ($)</label>
-                <input type="number" value={editForm.salary} onChange={(e) => setEditForm({...editForm, salary: Number(e.target.value)})} className="w-full bg-muted/30 border border-border p-3 rounded-xl font-bold outline-none" />
-              </div>
-
-              {/* Verified Skills */}
               <div className="space-y-1">
                 <label className="text-[9px] font-black uppercase text-muted-foreground">Verified Skills (Comma separated)</label>
                 <textarea 
                   value={editForm.verifiedSkills.join(", ")} 
                   onChange={(e) => setEditForm({...editForm, verifiedSkills: e.target.value.split(",").map(s => s.trim())})}
                   className="w-full bg-muted/30 border border-border p-3 rounded-xl font-bold outline-none min-h-[80px]"
-                  placeholder="React, Next.js, UI/UX"
                 />
               </div>
             </div>
 
-            <div className="pt-6">
-              <button 
-                onClick={handleSave} 
-                disabled={isSaving}
-                className={`w-full p-4 rounded-2xl font-black uppercase text-xs tracking-widest transition-all shadow-lg 
-                  ${isSaving 
-                    ? "bg-muted text-muted-foreground cursor-not-allowed" 
-                    : "bg-primary text-white hover:opacity-90 shadow-primary/20"
-                  }`}
-              >
-                {isSaving ? (
-                  <span className="flex items-center justify-center gap-2">
-                    <div className="w-3 h-3 border-2 border-muted-foreground border-t-transparent rounded-full animate-spin" />
-                    Syncing to Ledger...
-                  </span>
-                ) : (
-                  "Sync Changes to Ledger"
-                )}
-              </button>
-            </div>
+            <button onClick={handleSave} disabled={isSaving} className="w-full p-4 mt-6 bg-primary text-white rounded-2xl font-black uppercase text-xs tracking-widest shadow-lg shadow-primary/20 disabled:opacity-50">
+              {isSaving ? "Syncing to Ledger..." : "Sync Changes to Ledger"}
+            </button>
           </div>
         </div>
       )}
