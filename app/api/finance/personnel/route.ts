@@ -1,78 +1,98 @@
 import { NextResponse } from "next/server";
-// Ensure this matches your lib file name and export
-import prisma from "@/lib/prisma"; 
+import prisma from "@/lib/prisma";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/authOptions";
 
-/**
- * GET /api/personnel
- */
 export async function GET(req: Request) {
   try {
-    // 1. Validate Prisma Instance
-    if (!prisma) {
-      return NextResponse.json({ error: "Database not initialized" }, { status: 500 });
-    }
-
     const session = await getServerSession(authOptions);
+    const agencyId = session?.user?.agencyId;
     
-    // 2. Safely check for session and agencyId
-    if (!session || !session.user || !('agencyId' in session.user)) {
-      return NextResponse.json({ error: "Unauthorized: Missing Agency ID" }, { status: 401 });
+    // 1. SECURITY: Strict agency wall
+    if (!agencyId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const agencyId = (session.user as any).agencyId;
-
+    // 2. FETCH: Scoped data
     const employees = await prisma.user.findMany({
-      where: { agencyId: agencyId },
+      where: { agencyId },
       include: {
         tasks: {
-          where: { status: "COMPLETED" },
-          select: { grossRevenue: true }
+          where: { 
+            status: "COMPLETED", 
+            agencyId 
+          },
+          select: { 
+            internalCost: true, // Updated from grossRevenue
+            margin: true
+          }
         }
       }
     });
 
-    // --- TRANSFORM DATA ---
+    // 3. TRANSFORM: Logic for ROI & Performance
     const formattedEmployees = employees.map((emp) => {
-      const revenue = emp.tasks.reduce((sum, t) => sum + (t.grossRevenue || 0), 0);
-      
-      // logic: Freelancers cost 70% of revenue, staff use flat salary
-      const cost = emp.userType === "FREELANCER" ? (revenue * 0.7) : (emp.salary || 0);
-      
-      // Calculate ROI (Return on Investment per employee)
-      const roi = cost > 0 ? (revenue / cost).toFixed(2) : "0.00";
+      const completedTasks = emp.tasks;
+
+      // Revenue generated (The Base Value of work performed)
+      const totalTaskRevenue = completedTasks.reduce(
+        (sum, t) => sum + (Number(t.internalCost) || 0), 0
+      );
+
+      // Profit contribution based on your schema's margin %
+      const totalProfitContribution = completedTasks.reduce((sum, t) => {
+        const cost = Number(t.internalCost) || 0;
+        const marginPercent = Number(t.margin) || 0;
+        return sum + (cost * (marginPercent / 100));
+      }, 0);
+
+      /**
+       * ROI Logic:
+       * - Freelancer: Cost is the internalCost (assuming revenue share)
+       * - Full-time/Intern: Cost is their fixed monthly salary
+       */
+      const productionCost = emp.userType === "FREELANCER" 
+        ? totalTaskRevenue 
+        : (Number(emp.salary) || 0);
+
+      // Efficiency: Revenue generated per unit of cost
+      const efficiency = productionCost > 0 
+        ? (totalTaskRevenue / productionCost).toFixed(2) 
+        : "0.00";
 
       return {
         id: emp.id,
         name: emp.name,
-        role: emp.role || "Team Member",
+        role: emp.role,
         userType: emp.userType,
+        totalTaskRevenue,
+        totalProfitContribution,
+        efficiencyRate: efficiency,
         salary: emp.salary || 0,
-        revenue: revenue,
-        efficiency: `${roi}x`, // Formatted for your frontend .replace() logic
       };
     });
 
-    // --- CALCULATE GLOBAL METRICS ---
-    const totalRev = formattedEmployees.reduce((sum, e) => sum + e.revenue, 0);
-    const totalCost = formattedEmployees.reduce((sum, e) => {
-        // Recalculate cost for global efficiency
-        return sum + (e.userType === "FREELANCER" ? e.revenue * 0.7 : e.salary);
+    // 4. GLOBAL METRICS
+    const totalAgencyRevenue = formattedEmployees.reduce((sum, e) => sum + e.totalTaskRevenue, 0);
+    const totalAgencyProfit = formattedEmployees.reduce((sum, e) => sum + e.totalProfitContribution, 0);
+    
+    // Total Liability = Sum of all Salaries + Freelancer payouts
+    const totalLiability = formattedEmployees.reduce((sum, e) => {
+        return sum + (e.userType === "FREELANCER" ? e.totalTaskRevenue : e.salary);
     }, 0);
-
-    const metrics = {
-      avgRevenuePerHead: formattedEmployees.length > 0 ? totalRev / formattedEmployees.length : 0,
-      globalEfficiency: totalCost > 0 ? (totalRev / totalCost).toFixed(2) : "0.00"
-    };
 
     return NextResponse.json({
       employees: formattedEmployees,
-      metrics: metrics
+      metrics: {
+        totalRevenue: totalAgencyRevenue,
+        totalProfit: totalAgencyProfit,
+        globalROI: totalLiability > 0 ? (totalAgencyRevenue / totalLiability).toFixed(2) : "0.00",
+        employeeCount: formattedEmployees.length
+      }
     });
 
   } catch (error) {
-    console.error("GET_FINANCE_DATA_ERROR:", error);
+    console.error("GET_FINANCE_METRICS_ERROR:", error);
     return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
   }
 }

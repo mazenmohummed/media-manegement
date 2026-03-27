@@ -1,34 +1,51 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
+import { ArrowLeft, Printer, CheckCircle2, Globe, User, Trash2, Loader2 } from "lucide-react";
+
+import { Prisma } from "@prisma/client";
+
+type ProjectWithRelations = Prisma.ProjectGetPayload<{
+  include: { 
+    client: true, 
+    tasks: { include: { taskExpenses: true, assignee: true, assets: true } } 
+  }
+}>;
 
 export default function ProjectDetailsPage() {
   const { id } = useParams();
-  const [project, setProject] = useState<any>(null);
+  const router = useRouter();
+  const [project, setProject] = useState<ProjectWithRelations | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isDeleting, setIsDeleting] = useState(false);
 
-  useEffect(() => {
+  
+
+  
+  
+
+ useEffect(() => {
     async function fetchProject() {
       try {
         const res = await fetch(`/api/projects/${id}`);
         if (res.ok) setProject(await res.json());
-      } catch (err) {
-        console.error(err);
-      } finally {
-        setLoading(false);
-      }
+      } catch (err) { console.error(err); }
+      finally { setLoading(false); }
     }
     fetchProject();
   }, [id]);
 
-  if (loading) return <div className="p-20 text-center font-black animate-pulse">LOADING PRODUCTION DATA...</div>;
-  if (!project) return <div className="p-20 text-center">Project not found.</div>;
+  
+
+  if (loading) return <div className="p-20 text-center font-black animate-pulse uppercase tracking-widest text-blue-600">Loading Production Data...</div>;
+  if (!project) return <div className="p-20 text-center font-bold uppercase">Project not found.</div>;
 
   const globalFinancials = project.tasks.reduce((acc: any, t: any) => {
-    const rentalCost = t.externalRentals.reduce((sum: number, r: any) => sum + (r.cost || 0), 0);
-    const combinedCost = (t.grossRevenue || 0) + rentalCost;
+    const rentalCost = (t.taskExpenses ?? []).reduce((sum: number, r: any) => sum + (r.cost || 0), 0);
+    const internalBase = t.internalCost || 0;
+    const combinedCost = internalBase + rentalCost;
     const marginAmount = combinedCost * ((t.margin || 0) / 100);
     
     return {
@@ -38,15 +55,57 @@ export default function ProjectDetailsPage() {
     };
   }, { totalClientPrice: 0, totalRentals: 0, totalProfit: 0 });
 
+  const handleDelete = async () => {
+  if (!confirm("Are you sure? This will permanently delete the project and all associated tasks.")) return;
+  
+  setIsDeleting(true);
+  try {
+    const res = await fetch(`/api/projects/${project.id}`, {
+      method: "DELETE",
+    });
+    if (res.ok) {
+      router.push("/dashboard/projects"); // Redirect to list after deletion
+    } else {
+      alert("Failed to delete project");
+    }
+  } catch (err) {
+    console.error(err);
+  } finally {
+    setIsDeleting(false);
+  }
+};
+
+  if (loading) return <div className="p-20 text-center font-black animate-pulse">LOADING PRODUCTION DATA...</div>;
+  if (!project) return <div className="p-20 text-center">Project not found.</div>;
+
+
   return (
     <div className="max-w-7xl mx-auto p-8 space-y-10 bg-background min-h-screen">
+      
+      {/* HEADER ACTIONS (Hidden on Print) */}
+      <div className="flex justify-between items-center  ">
+        <button onClick={() => router.back()} className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-muted-foreground hover:text-foreground">
+          <ArrowLeft size={14} /> Back to Dashboard
+        </button>
+        <button onClick={() => router.push(`/dashboard/projects/${project.id}/invoice`)} className="flex items-center gap-2 bg-foreground text-background px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:opacity-90 shadow-lg transition-all">
+          <Printer size={14} /> Print Invoice PDF
+        </button>
+        <button 
+      onClick={handleDelete}
+      disabled={isDeleting}
+      className="flex items-center gap-2 bg-rose-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-rose-700 transition-all shadow-lg disabled:opacity-50"
+    >
+      {isDeleting ? <Loader2 className="animate-spin" size={14} /> : <Trash2 size={14} />}
+      Delete Project
+    </button>
+      </div>
       {/* HEADER SECTION */}
-      <div className="flex justify-between items-end border-b-4 border-foreground pb-6">
+      <div className="flex justify-between items-end border-b-4 printable-invoice border-foreground pb-6">
         <div>
           <span className="text-[10px] font-black uppercase bg-blue-600 text-white px-2 py-1">Active Production</span>
           <h1 className="text-6xl font-black uppercase italic tracking-tighter mt-2">{project.projectName}</h1>
           <p className="text-muted-foreground font-bold mt-1 uppercase tracking-widest text-xs">
-            CLIENT: {project.client?.clientName} // ID: {project.id.slice(-8)}
+            CLIENT: {project.client?.clientName} // NO: {project.projectNo || project.id.slice(-8)}
           </p>
         </div>
         <div className="text-right">
@@ -60,12 +119,12 @@ export default function ProjectDetailsPage() {
       </div>
 
       {/* TASKS ROADMAP */}
-      <div className="space-y-6">
+      <div className="space-y-6 ">
         <h2 className="text-2xl font-black uppercase italic">Production Roadmap</h2>
 
         {project.tasks.map((task: any) => {
-          const internalCost = task.grossRevenue || 0;
-          const rentalCost = task.externalRentals.reduce((acc: number, r: any) => acc + (r.cost || 0), 0);
+          const internalCost = task.internalCost || 0; 
+          const rentalCost = (task.taskExpenses ?? []).reduce((acc: number, r: any) => acc + (r.cost || 0), 0);
           const totalBaseCost = internalCost + rentalCost;
           const profitMargin = totalBaseCost * (task.margin / 100);
           const finalTaskPrice = totalBaseCost + profitMargin;
@@ -79,7 +138,7 @@ export default function ProjectDetailsPage() {
                   <div className="lg:col-span-4 p-8 bg-muted/30 border-r border-border flex flex-col justify-between">
                     <div>
                       <div className="flex justify-between items-start mb-2">
-                        <h3 className="text-xl font-black uppercase group-hover:text-blue-600 transition-colors">{task.taskType}</h3>
+                        <h3 className="text-xl font-black uppercase group-hover:text-blue-600 transition-colors printable-invoice ">{task.taskType}</h3>
                         <span className="text-[10px] font-bold px-3 py-1 bg-foreground text-background rounded-full uppercase">{task.status}</span>
                       </div>
                       <p className="text-xs text-muted-foreground mb-6 line-clamp-2">{task.description}</p>
@@ -132,7 +191,7 @@ export default function ProjectDetailsPage() {
 
                   {/* RIGHT: FINANCIALS & ASSETS */}
                   <div className="lg:col-span-8 p-8 grid grid-cols-1 md:grid-cols-2 gap-8">
-                    <div className="bg-muted/20 p-6 rounded-3xl border border-border/50">
+                    <div className="bg-muted/20 p-6 rounded-3xl border border-border/50 ">
                       <p className="text-[10px] font-black uppercase text-blue-600 mb-4 tracking-widest">Financial breakdown</p>
                       <div className="space-y-2 text-xs font-bold">
                         <div className="flex justify-between font-medium opacity-60">
@@ -176,5 +235,6 @@ export default function ProjectDetailsPage() {
         })}
       </div>
     </div>
+    
   );
 }

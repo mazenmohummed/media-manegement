@@ -26,12 +26,36 @@ export default function UnifiedCalendarPage() {
   const [currentDate, setCurrentDate] = useState(new Date());
 
   useEffect(() => {
-    fetch("/api/calendar").then(res => res.json()).then(data => setEvents(data));
-  }, []);
+  fetch("/api/calendar")
+    .then((res) => res.json())
+    .then((data) => {
+      
+      // Convert ISO strings from JSON back into actual Date objects
+      const formattedData = data.map((event: any) => {
+      const start = new Date(event.start);
+      const end = new Date(event.end);
 
+      // If start and end are the same day/time, 
+      // push the end to the very last second of the day.
+      if (start.getTime() === end.getTime()) {
+        end.setHours(23, 59, 59, 999);
+      }
+
+      return {
+        ...event,
+        start,
+        end,
+        allDay: true,
+      };
+    });
+      setEvents(formattedData);
+    })
+    .catch((err) => console.error("Calendar sync error:", err));
+}, []);
   const filteredEvents = useMemo(() => 
     events.filter(e => visibleLayers.includes(e.resource.type)),
   [events, visibleLayers]);
+  console.log(events)
 
   const toggleLayer = (layer: string) => {
     setVisibleLayers(prev => 
@@ -111,9 +135,13 @@ export default function UnifiedCalendarPage() {
             startAccessor="start"
             endAccessor="end"
             eventPropGetter={eventPropGetter}
-            onNavigate={setCurrentDate}
+            onNavigate={(newDate) => setCurrentDate(newDate)}
             date={currentDate}
+            defaultView="month" // Add this
+            views={['month', 'week', 'day', 'agenda']} // Add this
             className="font-sans text-sm custom-calendar"
+            popup={true} // This opens a tooltip when clicking "+x more"
+            style={{ height: "100%" }}
           />
         </div>
       </main>

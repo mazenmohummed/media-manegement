@@ -145,8 +145,16 @@ const filteredClients = clients.filter((c: any) =>
             ) : filteredClients.map((client: any) => (
               <tr key={client.id} className="hover:bg-muted/10 transition-colors group">
                 <td className="p-6">
-                  <div className="font-black uppercase tracking-tight group-hover:text-blue-600 transition-colors">{client.clientName}</div>
-                  <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mt-1">ID: {client.id.slice(-6)}</div>
+                  {/* Client Name with blue hover effect */}
+                  <div className="font-black uppercase tracking-tight group-hover:text-blue-600 transition-colors">
+                    {client.clientName}
+                  </div>
+                  
+                  {/* Professional Client Number Display */}
+                  <div className="text-[10px] font-bold text-blue-600/60 uppercase tracking-widest mt-1 flex items-center gap-1">
+                    <span className="text-muted-foreground/50">REF:</span> 
+                    {client.clientNo || "PENDING_ID"}
+                  </div>
                 </td>
                 <td className="p-6">
                   <span className={`px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest border ${

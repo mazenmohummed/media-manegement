@@ -83,19 +83,19 @@ export default function EmployeeFinancePage() {
 
   
 
- const handleCreatePayout = async (e: React.FormEvent) => {
+  const handleCreatePayout = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsProcessing(true);
 
     const selectedEmployee = data.employees.find((emp: any) => emp.id === formData.employeeId);
 
-    // Matches your Prisma Expense model fields
     const payload = {
+      employeeId: formData.employeeId, // The ID from your <select>
       resourceName: selectedEmployee?.name || "Unknown Resource",
       category: formData.category,
-      amount: parseFloat(formData.amount),
+      amount: formData.amount,
       status: formData.status,
-      date: new Date(formData.date).toISOString(),
+      date: formData.date,
     };
 
     try {
@@ -106,7 +106,8 @@ export default function EmployeeFinancePage() {
       });
 
       if (res.ok) {
-        await fetchData(); // Refresh tables
+        // Re-fetch both personnel data and history to update the "Upcoming Payout" values
+        await fetchData(); 
         setIsModalOpen(false);
         setFormData({ ...formData, amount: "", employeeId: "" });
       }
@@ -116,7 +117,6 @@ export default function EmployeeFinancePage() {
       setIsProcessing(false);
     }
   };
-
   // Helper to calculate what an employee is "owed" before payouts
   const calculateGrossLiability = (emp: any) => {
     if (emp.userType === "FREELANCER") {
@@ -298,11 +298,21 @@ export default function EmployeeFinancePage() {
             </thead>
            <tbody className="divide-y divide-border font-mono text-sm">
              {data.employees.map((emp: any) => {
-              // 1. Get revenue from the correct key
-              const totalRevenueGeneratedByEmp = emp.totalTaskRevenue || 0;
+              // 1. Get revenue from the correct k
+
+              
+              const netProfitValue = emp.totalNetProfit || 0;
+              const revenueValue = emp.totalTaskRevenue || 0;
+              const totalTaskRevenue = emp.tasks?.reduce((sum: number, task: any) => {
+                // Only count revenue from completed tasks (optional, depending on your business logic)
+                if (task.status === "COMPLETED") {
+                  return sum + (task.grossRevenue || 0);
+                }
+                return sum;
+              }, 0) || 0;
 
               const grossOwed = emp.userType === "FREELANCER"
-              ? totalRevenueGeneratedByEmp   // ✅ Freelancer يتحسب من Revenue
+              ? totalTaskRevenue   // ✅ Freelancer يتحسب من Revenue
               : (emp.salary || 0);           // ✅ Staff يتحسب من Salary
 
               const totalPaidToDate = payoutHistory
@@ -310,8 +320,8 @@ export default function EmployeeFinancePage() {
               .reduce((sum, log) => sum + (log.amount || 0), 0);
 
 
-              const upcomingPayout = Math.max(0, grossOwed - totalPaidToDate);
-              const employeeNet = totalRevenueGeneratedByEmp - grossOwed;
+              const upcomingPayout = grossOwed - totalPaidToDate
+              const employeeNet = revenueValue - grossOwed;
 
               return (
                 <EmployeeRow 
@@ -320,8 +330,8 @@ export default function EmployeeFinancePage() {
                   role={emp.role} 
                   userType={emp.userType}
                   payout={`$${upcomingPayout.toLocaleString()}`} 
-                  revenue={`$${totalRevenueGeneratedByEmp.toLocaleString()}`} 
-                  netProfit={`$${employeeNet.toLocaleString()}`}
+                  revenue={`$${revenueValue}`} 
+                  netProfit={`$${netProfitValue}`}
                   efficiency={emp.efficiencyRate || "0.0"} 
                   onClick={() => router.push(`/dashboard/employees/${emp.id}`)}
                 />

@@ -1,31 +1,32 @@
 import { NextResponse } from "next/server";
-import { db } from "@/lib/db";
-import { getCurrentUser } from "@/lib/auth";
+import prisma from "@/lib/prisma";
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "@/lib/authOptions";
 
 export async function GET() {
   try {
-    // 1. Authenticate and get user context
-    const user = await getCurrentUser();
+    const session = await getServerSession(authOptions);
+    const agencyId = session?.user?.agencyId;
 
-    if (!user?.agencyId) {
+    if (!agencyId) {
       return new NextResponse("Unauthorized", { status: 401 });
     }
 
-    // 2. Fetch Assets & External Rentals filtered by Agency
-    const [assets, externalRentals] = await Promise.all([
-      db.asset.findMany({
-        where: { agencyId: user.agencyId },
+    // 1. FETCH: Assets and Rental Expenses with strict Agency Wall
+    const [assets, rentalExpenses] = await Promise.all([
+      prisma.asset.findMany({
+        where: { agencyId },
         include: {
           tasks: {
-            select: { grossRevenue: true }
+            where: { agencyId },
+            select: { internalCost: true } // Updated from grossRevenue
           }
         }
       }),
-      db.externalRental.findMany({
-        where: {
-          task: {
-            project: { agencyId: user.agencyId }
-          }
+      prisma.taskExpense.findMany({ // Updated from externalRental
+        where: { 
+          agencyId,
+          category: "RENTAL" // Specifically track equipment leakage
         },
         include: {
           task: {
@@ -37,39 +38,41 @@ export async function GET() {
       })
     ]);
 
-    // 3. Business Logic: Asset ROI & Performance Mapping
+    // 2. LOGIC: ROI & Performance Mapping
     const assetStats = assets.map(asset => {
       const totalRevenueGenerated = asset.tasks.reduce(
-        (sum, t) => sum + (t.grossRevenue || 0), 
+        (sum, t) => sum + (Number(t.internalCost) || 0), 
         0
       );
       
-      // ROI Calculation: (Revenue / Current Value) * 100
-      const roi = asset.currentValue > 0 
-        ? Math.round((totalRevenueGenerated / asset.currentValue) * 100) 
+      const currentValue = Number(asset.currentValue) || 0;
+
+      // ROI Calculation: (Revenue Generated / Current Asset Value) * 100
+      const roi = currentValue > 0 
+        ? Math.round((totalRevenueGenerated / currentValue) * 100) 
         : 0;
 
       return {
         id: asset.id,
         name: asset.assetName,
         category: asset.category,
-        cost: asset.currentValue, 
+        valuation: currentValue, 
         revenue: totalRevenueGenerated,
         roi,
-        status: totalRevenueGenerated > asset.currentValue ? "Profitable" : "Recouping"
+        status: totalRevenueGenerated > currentValue ? "Profitable" : "Recouping"
       };
     });
 
-    // 4. Aggregate Metrics
-    const totalValuation = assets.reduce((sum, a) => sum + a.currentValue, 0);
-    const totalLeakage = externalRentals.reduce((sum, r) => sum + r.cost, 0);
+    // 3. METRICS: Derived from scoped data
+    const totalValuation = assetStats.reduce((sum, a) => sum + a.valuation, 0);
+    const totalLeakage = rentalExpenses.reduce((sum, r) => sum + (Number(r.cost) || 0), 0);
     
-    // Utilization: Percentage of assets currently assigned to at least one task
+    // Utilization: % of owned assets currently assigned to at least one task
+    const activeAssetsCount = assets.filter(a => a.tasks.length > 0).length;
     const avgUtilization = assets.length > 0 
-      ? Math.round((assets.filter(a => a.tasks.length > 0).length / assets.length) * 100)
+      ? Math.round((activeAssetsCount / assets.length) * 100)
       : 0;
 
-    // Aggregate ROI across the whole portfolio
     const totalRevenue = assetStats.reduce((sum, a) => sum + a.revenue, 0);
     const aggregateROI = totalValuation > 0 
       ? `${Math.round((totalRevenue / totalValuation) * 100)}%` 
@@ -78,16 +81,16 @@ export async function GET() {
     return NextResponse.json({
       metrics: {
         totalValuation,
-        totalLeakage,
+        totalLeakage, // Money spent on external rentals
         avgUtilization,
         assetROI: aggregateROI
       },
       assets: assetStats,
-      leakageItems: externalRentals.map(r => ({
+      leakageItems: rentalExpenses.map(r => ({
         id: r.id,
         item: r.itemName,
         cost: r.cost,
-        project: r.task.project.projectName
+        project: r.task?.project?.projectName || "Direct Task"
       }))
     });
 

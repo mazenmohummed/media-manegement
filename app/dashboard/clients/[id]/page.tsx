@@ -32,7 +32,7 @@ export default function ClientTerminal() {
 
   // Form States
   const [editData, setEditData] = useState({ clientName: "", accountType: "", status: "" });
-  const [paymentData, setPaymentData] = useState({ amount: "", method: "Bank Transfer", datePaid: new Date().toISOString().split('T')[0] });
+  const [paymentData, setPaymentData] = useState({ amount: "", method: "Cash", datePaid: new Date().toISOString().split('T')[0] });
 
   const fetchClientData = async () => {
     try {
@@ -85,44 +85,55 @@ const handleUpdateClient = async (e: React.FormEvent) => {
   };
 
  const handleRecordPayment = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsRecording(true);
-    try {
-      const res = await fetch(`/api/payments`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          ...paymentData, 
-          clientId: id, 
-          agencyId: client.agencyId 
-        }),
+  e.preventDefault();
+  
+  // Validation: Ensure amount is valid before sending
+  if (!paymentData.amount || parseFloat(paymentData.amount) <= 0) {
+    alert("Please enter a valid payment amount.");
+    return;
+  }
+
+  setIsRecording(true);
+  try {
+    const res = await fetch(`/api/payments`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ 
+        amount: parseFloat(paymentData.amount), // Ensure number type
+        method: paymentData.method,
+        datePaid: new Date(paymentData.datePaid).toISOString(), // Format for Prisma
+        clientId: id, 
+        description: `Payment from ${client.clientName}` // Optional: Add a default description
+      }),
+    });
+
+    if (res.ok) {
+      // 1. Close Modal
+      setShowPaymentModal(false);
+      
+      // 2. Reset Form
+      setPaymentData({ 
+        amount: "", 
+        method: "Bank Transfer", 
+        datePaid: new Date().toISOString().split('T')[0] 
       });
 
-      if (res.ok) {
-        // 1. Close the modal
-        setShowPaymentModal(false);
-        
-        // 2. Reset the form data for next time
-        setPaymentData({ 
-          amount: "", 
-          method: "Bank Transfer", 
-          datePaid: new Date().toISOString().split('T')[0] 
-        });
-
-        // 3. Refresh the UI to show the new payment
-        fetchClientData();
-      } else {
-        const errorData = await res.json();
-        alert(`Error: ${errorData.error || "Failed to record payment"}`);
-      }
-    } catch (err) {
-      console.error("Connection error:", err);
-      alert("Failed to connect to the server.");
-    } finally {
-      setIsRecording(false); // Stop Loading
+      // 3. Refresh Data - This updates the StatCards and the Ledger list automatically
+      await fetchClientData(); 
+      
+      // Optional: Add a simple success feedback
+      console.log("Ledger updated successfully.");
+    } else {
+      const errorData = await res.json();
+      alert(`Transaction Failed: ${errorData.error || "Unknown Error"}`);
     }
-  };
-
+  } catch (err) {
+    console.error("Connection error:", err);
+    alert("Failed to connect to the terminal server.");
+  } finally {
+    setIsRecording(false);
+  }
+};
   if (loading) return <div className="h-screen flex items-center justify-center bg-background"><Loader2 className="animate-spin text-blue-600" size={40} /></div>;
   if (!client || client.error) return <div className="p-10 text-white font-black uppercase">Entity Not Found in Database.</div>;
 
@@ -169,7 +180,7 @@ const handleUpdateClient = async (e: React.FormEvent) => {
           </h1>
           {/* FIX: Explicitly check for id existence */}
           <p className="text-muted-foreground font-mono text-xs uppercase tracking-widest bg-muted/50 w-fit px-3 py-1 rounded-lg border border-border">
-            SYSTEM_ID: {client.id ? client.id : "PENDING_FETCH"}
+            CLIENT_NO: {client.clientNo || "NOT_ASSIGNED"}
           </p>
         </div>
         
@@ -265,6 +276,55 @@ const handleUpdateClient = async (e: React.FormEvent) => {
             )}
           </div>
         </div>
+
+        {/* PAYMENT MODAL */}
+        {showPaymentModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-background/80 backdrop-blur-md">
+          <form onSubmit={handleRecordPayment} className="bg-card border w-full max-w-md p-8 rounded-[2rem] space-y-4 shadow-2xl">
+            <div className="flex justify-between items-center mb-2">
+              <h2 className="font-black uppercase italic tracking-tighter text-xl">New Transaction</h2>
+              <X className="cursor-pointer text-muted-foreground hover:text-foreground" onClick={() => setShowPaymentModal(false)} />
+            </div>
+
+            <div className="space-y-4">
+              <div className="space-y-1">
+                <label className="text-[10px] font-black uppercase text-muted-foreground ml-1">Deposit Amount</label>
+                <input 
+                  required
+                  type="number"
+                  step="0.01"
+                  className="w-full bg-muted p-4 rounded-xl outline-none border border-border font-black text-lg focus:border-emerald-600 transition-all" 
+                  value={paymentData.amount} 
+                  onChange={e => setPaymentData({...paymentData, amount: e.target.value})}
+                  placeholder="0.00"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-black uppercase text-muted-foreground ml-1">Payment Channel</label>
+                <select 
+                  className="w-full bg-muted p-4 rounded-xl outline-none border border-border font-bold appearance-none cursor-pointer"
+                  value={paymentData.method}
+                  onChange={e => setPaymentData({...paymentData, method: e.target.value})}
+                >
+                  <option value="Cash">Cash</option>
+                  <option value="Bank Transfer">Bank Transfer</option>
+                  <option value="InstaPay">InstaPay</option>
+                  <option value="Stripe">Stripe / Card</option>
+                </select>
+              </div>
+            </div>
+
+            <button 
+              disabled={isRecording}
+              type="submit" 
+              className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:bg-emerald-800 text-white font-black uppercase py-5 rounded-2xl tracking-widest flex items-center justify-center gap-2 mt-4 transition-all"
+            >
+              {isRecording ? <Loader2 className="animate-spin" size={18} /> : "Authorize Payment"}
+            </button>
+          </form>
+        </div>
+        )}
 
         {/* EDIT MODAL */}
       {showEditModal && (

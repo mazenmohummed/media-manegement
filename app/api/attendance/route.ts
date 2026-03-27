@@ -6,6 +6,9 @@ import { authOptions } from "@/lib/authOptions";
 export async function POST(req: Request) {
   const session = await getServerSession(authOptions);
   
+  if (!session?.user?.agencyId || !session?.user?.id) {
+    return NextResponse.json({ error: "Unauthorized: No Agency or User ID" }, { status: 401 });
+  }
   
   if (!(session?.user as any)?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -33,6 +36,7 @@ export async function POST(req: Request) {
   const userId = (session.user as any).id;
   const now = new Date();
   const startOfDay = new Date();
+  const agencyId = session.user.agencyId;
   startOfDay.setHours(0, 0, 0, 0);
 
   try {
@@ -41,6 +45,7 @@ export async function POST(req: Request) {
       where: {
         userId: userId,
         date: { gte: startOfDay },
+        agencyId: agencyId,
       },
     });
 
@@ -53,6 +58,7 @@ export async function POST(req: Request) {
       const log = await prisma.attendanceLog.create({
         data: {
           userId,
+          agencyId,
           date: new Date(),
           checkInTime: checkInTime,
           checkOutTime: checkInTime, // Initial checkout is same as checkin

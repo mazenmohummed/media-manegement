@@ -23,7 +23,7 @@ export async function GET(
           include: {
             assignee: true,
             assets: true,
-            externalRentals: true,
+            taskExpenses: true,
             comments: {
               include: { author: true },
               orderBy: { createdAt: "desc" }
@@ -41,5 +41,53 @@ export async function GET(
   } catch (error) {
     console.error("FETCH_PROJECT_ERROR:", error);
     return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+  }
+}
+
+export async function DELETE(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const resolvedParams = await params;
+    const id = resolvedParams.id;
+
+    if (!id) {
+      return NextResponse.json({ error: "No ID provided" }, { status: 400 });
+    }
+
+    // Use a Transaction to ensure either everything is deleted or nothing is
+    await prisma.$transaction(async (tx) => {
+      // 1. Delete Expenses linked to any Task in this Project
+      await tx.taskExpense.deleteMany({
+        where: {
+          task: {
+            projectId: id,
+          },
+        },
+      });
+
+      // 2. Delete Tasks linked to this Project
+      await tx.task.deleteMany({
+        where: {
+          projectId: id,
+        },
+      });
+
+      // 3. Finally, delete the Project itself
+      await tx.project.delete({
+        where: {
+          id: id,
+        },
+      });
+    });
+
+    return NextResponse.json({ message: "Project and all related data purged." });
+  } catch (error) {
+    console.error("Delete Project Error:", error);
+    return NextResponse.json(
+      { error: "Failed to purge project data." },
+      { status: 500 }
+    );
   }
 }

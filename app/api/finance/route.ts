@@ -1,61 +1,90 @@
 import { NextResponse } from "next/server";
-import prisma from "@/lib/prisma"; // Ensure this matches your prisma instance path
-import { getServerSession } from "next-auth";
+import prisma from "@/lib/prisma";
+import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/authOptions";
 
 export async function GET() {
   try {
     const session = await getServerSession(authOptions);
-    if (!session?.user?.agencyId) {
+    const agencyId = session?.user?.agencyId;
+
+    if (!agencyId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const agencyId = session.user.agencyId;
-
-    // Fetch employees with their associated tasks (to calculate revenue)
+    // 1. FETCH: Only users and tasks belonging to THIS agency
     const employees = await prisma.user.findMany({
       where: { agencyId },
       include: {
         tasks: {
+          where: { 
+            status: "COMPLETED", 
+            agencyId 
+          },
           select: {
-            grossRevenue: true,
+            internalCost: true, // Updated from grossRevenue
+            margin: true,       // Added to calculate true profit
           },
         },
       },
     });
 
-    // Transform data for the frontend
+    // 2. TRANSFORM: Individual Performance Metrics
     const formattedEmployees = employees.map((emp) => {
-      const totalTaskRevenue = emp.tasks.reduce((sum, t) => sum + (t.grossRevenue || 0), 0);
-      
-      // Basic ROI Calculation: Revenue / (Salary or 1 if 0 to avoid Infinity)
-      const cost = emp.userType === "FREELANCER" ? totalTaskRevenue : (emp.salary || 1);
-      const roi = (totalTaskRevenue / cost).toFixed(1);
+      const completedTasks = emp.tasks;
+
+      // Revenue generated (Base work value)
+      const totalRevenue = completedTasks.reduce(
+        (sum, t) => sum + (Number(t.internalCost) || 0), 0
+      );
+
+      // Profit generated (InternalCost * Margin%)
+      const totalProfit = completedTasks.reduce((sum, t) => {
+        const cost = Number(t.internalCost) || 0;
+        const margin = Number(t.margin) || 0;
+        return sum + (cost * (margin / 100));
+      }, 0);
+
+      /**
+       * ROI LOGIC:
+       * For Staff: (Profit / Salary) -> How many times they pay for themselves.
+       * For Freelancers: (Profit / 1) -> Since they are variable cost, we track pure profit.
+       */
+      const costBasis = emp.userType === "FREELANCER" ? 1 : (Number(emp.salary) || 1);
+      const efficiency = (totalProfit / costBasis).toFixed(2);
 
       return {
         id: emp.id,
         name: emp.name,
-        role: emp.role || "Team Member",
-        userType: emp.userType, // FULL_TIME, FREELANCER, etc.
+        role: emp.role,
+        userType: emp.userType,
         salary: emp.salary || 0,
-        totalTaskRevenue,
-        efficiencyRate: roi,
+        totalRevenue,
+        totalProfit,
+        efficiencyRate: efficiency,
       };
     });
 
-    // Global Metrics
-    const totalRevenue = formattedEmployees.reduce((sum, emp) => sum + emp.totalTaskRevenue, 0);
-    const totalSalary = formattedEmployees.reduce((sum, emp) => sum + emp.salary, 0);
-    const globalEfficiency = totalSalary > 0 ? (totalRevenue / totalSalary).toFixed(2) : "0.00";
+    // 3. GLOBAL METRICS
+    const totalAgencyRevenue = formattedEmployees.reduce((sum, e) => sum + e.totalRevenue, 0);
+    const totalAgencyProfit = formattedEmployees.reduce((sum, e) => sum + e.totalProfit, 0);
+    const totalSalaryLiability = formattedEmployees
+      .filter(e => e.userType !== "FREELANCER")
+      .reduce((sum, e) => sum + e.salary, 0);
 
     return NextResponse.json({
       employees: formattedEmployees,
       metrics: {
-        totalRevenue,
-        avgRevenuePerHead: totalRevenue / (employees.length || 1),
-        globalEfficiency,
+        totalRevenue: totalAgencyRevenue,
+        totalProfit: totalAgencyProfit,
+        avgProfitPerHead: totalAgencyProfit / (employees.length || 1),
+        salaryToProfitRatio: totalSalaryLiability > 0 
+          ? (totalAgencyProfit / totalSalaryLiability).toFixed(2) 
+          : "0.00",
+        teamSize: employees.length
       },
     });
+
   } catch (error) {
     console.error("PERSONNEL_GET_ERROR:", error);
     return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });

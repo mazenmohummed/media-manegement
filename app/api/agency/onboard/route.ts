@@ -1,28 +1,45 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/authOptions";
-import prisma from "@/lib/prisma";
-import type { Prisma } from '@prisma/client';
+import { db } from "@/lib/db"; // Point to your Prisma client
 
 export async function POST(req: Request) {
   const session = await getServerSession(authOptions);
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  
+  // 1. Auth Guard
+  if (!session?.user?.email) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
 
-  const { agencyName, operatorName } = await req.json();
-
-  try {
-    
-      const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-  // 1. Create Agency
-  const agency = await tx.agency.create({
-     data: {
-          agencyName,
-          operatorName,
-          email: session.user.email,
-        },
+  // 2. Fetch fresh user state to prevent double-onboarding
+  const user = await db.user.findUnique({
+    where: { email: session.user.email },
+    select: { id: true, agencyId: true }
   });
 
-      // 2. Create Default Subscription
+  if (user?.agencyId) {
+    return NextResponse.json({ error: "Agency already configured for this account" }, { status: 400 });
+  }
+
+  const { agencyName } = await req.json();
+
+  if (!agencyName || agencyName.length < 3) {
+    return NextResponse.json({ error: "Invalid Agency Name" }, { status: 400 });
+  }
+
+  try {
+    // 3. ATOMIC TRANSACTION: Everything happens or nothing happens
+    const result = await db.$transaction(async (tx) => {
+      // Create the Agency
+      const agency = await tx.agency.create({
+        data: {
+          agencyName,
+          operatorName: session.user.name || "System Admin",
+          email: session.user.email!,
+        },
+      });
+
+      // Create a Free-Tier Subscription by default
       await tx.subscription.create({
         data: {
           agencyId: agency.id,
@@ -31,18 +48,28 @@ export async function POST(req: Request) {
         },
       });
 
-      // 3. Update User to link to Agency
+      // Update the User to be an ADMIN of this new Agency
       const updatedUser = await tx.user.update({
-        where: { email: session.user.email! },
-        data: { agencyId: agency.id },
+        where: { id: user!.id },
+        data: { 
+          agencyId: agency.id,
+          role: "ADMIN" 
+        },
       });
 
       return { agency, updatedUser };
     });
 
-    return NextResponse.json(result);
+    // 4. Return data needed for the Next-Auth session update()
+    return NextResponse.json({
+      message: "Deployment Successful",
+      agencyId: result.agency.id,
+      agencyName: result.agency.agencyName,
+      role: result.updatedUser.role
+    });
+
   } catch (error) {
-    console.error(error);
-    return NextResponse.json({ error: "Failed to initialize agency" }, { status: 500 });
+    console.error("ONBOARDING_CRITICAL_FAILURE:", error);
+    return NextResponse.json({ error: "Database transaction failed" }, { status: 500 });
   }
 }

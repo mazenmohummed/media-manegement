@@ -1,9 +1,23 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma"; 
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "@/lib/authOptions";
 
 export async function GET() {
+  const session = await getServerSession(authOptions);
+
+  if (!session?.user?.agencyId) {
+    return new NextResponse("Unauthorized", { status: 401 });
+  }
+
   try {
-    const assets = await prisma.asset.findMany(); // Get everything without filters first
+    const assets = await prisma.asset.findMany(
+      {
+    where: {
+      agencyId: session.user.agencyId // <--- The "Wall"
+    }
+  }
+    ); 
 
     const totalInvestment = assets.reduce((sum, a) => sum + (Number(a.currentValue) || 0), 0);
     

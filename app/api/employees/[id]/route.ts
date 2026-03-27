@@ -1,28 +1,20 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { getServerSession } from "next-auth";
+import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/authOptions";
 import bcrypt from "bcryptjs";
-import { Prisma } from "@prisma/client";
 
-// Update the type to remove 'leaves' from include since it's an embedded type
-type EmployeeWithRelations = Prisma.UserGetPayload<{
-  include: {
-    tasks: { include: { project: true } };
-    attendanceLogs: true;
-    agency: true;
-  };
-}>;
-
+// GET: Fetch single employee with updated financial metrics
 export async function GET(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
+    const agencyId = session?.user?.agencyId;
     const { id } = await params;
+
+    if (!agencyId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const employee = await prisma.user.findUnique({
       where: { id },
@@ -37,55 +29,71 @@ export async function GET(
         },
         agency: true,
       },
-    }) as EmployeeWithRelations | null;
+    });
 
-    if (!employee || employee.agencyId !== session.user.agencyId) {
-      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    // THE WALL: Verify existence and agency ownership
+    if (!employee || employee.agencyId !== agencyId) {
+      return NextResponse.json({ error: "Employee not found in your workspace" }, { status: 404 });
     }
 
-    // Manual sort for embedded 'leaves' array
-    const sortedLeaves = [...(employee.leaves || [])].sort((a, b) => 
-      new Date(b.startDate || 0).getTime() - new Date(a.startDate || 0).getTime()
-    );
+    // Financial Analytics based on your actual Schema fields (internalCost & margin)
+    const totalInternalCostGenerated = employee.tasks.reduce((sum, t) => sum + (t.internalCost || 0), 0);
+    
+    // Calculate Margin Value: (InternalCost * (Margin % / 100))
+    const totalMarginValue = employee.tasks.reduce((sum, t) => {
+      const cost = t.internalCost || 0;
+      const marginPercent = t.margin || 0;
+      return sum + (cost * (marginPercent / 100));
+    }, 0);
 
     const { password, ...userFields } = employee;
 
-    const totalGrossGenerated = employee.tasks.reduce((sum, t) => sum + (t.grossRevenue || 0), 0);
-    const totalMarginGenerated = employee.tasks.reduce((sum, t) => 
-      sum + ((t.grossRevenue || 0) * ((t.margin || 0) / 100)), 0);
-
     return NextResponse.json({
       ...userFields,
-      leaves: sortedLeaves,
       stats: {
-        totalGrossGenerated,
-        totalMarginGenerated,
+        totalInternalCostGenerated,
+        totalMarginValue,
         taskCount: employee.tasks.length,
+        efficiencyRate: employee.efficiencyRate
       },
     });
   } catch (error) {
-    console.error(error);
+    console.error("GET_EMPLOYEE_DETAIL_ERROR:", error);
     return NextResponse.json({ error: "Server Error" }, { status: 500 });
   }
 }
 
+// PUT: Update employee details with proper data casting
 export async function PUT(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
+    const agencyId = session?.user?.agencyId;
     const { id } = await params;
+
+    if (!agencyId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
     const body = await req.json();
 
+    // 1. Verify ownership
+    const existingEmployee = await prisma.user.findFirst({
+      where: { id, agencyId }
+    });
+
+    if (!existingEmployee) {
+      return NextResponse.json({ error: "Unauthorized update attempt" }, { status: 403 });
+    }
+
+    // 2. Prepare Update Object
     const updateData: any = {
       name: body.name,
       email: body.email,
       role: body.role,
       userType: body.userType,
       salary: parseFloat(body.salary) || 0,
+      efficiencyRate: parseFloat(body.efficiencyRate) || 1.0,
       verifiedSkills: Array.isArray(body.verifiedSkills) ? body.verifiedSkills : [],
     };
 
@@ -96,59 +104,38 @@ export async function PUT(
     const updatedEmployee = await prisma.user.update({
       where: { id },
       data: updateData,
-      include: {
-        tasks: { 
-          include: { project: true },
-          orderBy: { startDate: 'desc' } 
-        },
-        attendanceLogs: { 
-          take: 30, 
-          orderBy: { date: 'desc' } 
-        },
-        // 'leaves' is NOT included here because it is an embedded field
-      },
     });
 
-    // Manual sort for embedded leaves after update
-    const sortedLeaves = [...(updatedEmployee.leaves || [])].sort((a, b) => 
-      new Date(b.startDate || 0).getTime() - new Date(a.startDate || 0).getTime()
-    );
-
-    const { password, ...safeUpdatedData } = updatedEmployee;
-
-    return NextResponse.json({
-        ...safeUpdatedData,
-        leaves: sortedLeaves
-    });
+    const { password, ...safeData } = updatedEmployee;
+    return NextResponse.json(safeData);
   } catch (error) {
-    console.error("UPDATE_ERROR:", error);
+    console.error("UPDATE_EMPLOYEE_ERROR:", error);
     return NextResponse.json({ error: "Update failed" }, { status: 500 });
   }
 }
 
+// DELETE: Terminate employee
 export async function DELETE(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
+    const agencyId = session?.user?.agencyId;
     const { id } = await params;
 
-    // Optional: Check if the user is trying to delete themselves
-    if (session.user.id === id) {
-      return NextResponse.json({ error: "Cannot terminate own account" }, { status: 400 });
-    }
+    if (!agencyId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (session.user.id === id) return NextResponse.json({ error: "Self-termination forbidden" }, { status: 400 });
 
-    // Delete the user (Prisma will handle relations based on your schema's onDelete)
-    await prisma.user.delete({
-      where: { id },
+    const deleted = await prisma.user.deleteMany({
+      where: { id, agencyId },
     });
 
-    return NextResponse.json({ message: "Employee terminated successfully" });
+    if (deleted.count === 0) return NextResponse.json({ error: "Employee not found" }, { status: 404 });
+
+    return NextResponse.json({ message: "Employee removed from agency successfully" });
   } catch (error) {
-    console.error("DELETE_ERROR:", error);
+    console.error("DELETE_EMPLOYEE_ERROR:", error);
     return NextResponse.json({ error: "Termination failed" }, { status: 500 });
   }
 }

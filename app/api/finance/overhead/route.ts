@@ -1,14 +1,24 @@
 import { NextResponse } from "next/server";
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
+import prisma from "@/lib/prisma";
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "@/lib/authOptions";
 
 export async function GET() {
   try {
-    // 1. Fetch all expenses belonging to categories that aren't "Salary" or "Bonus"
-    // (Assuming agencyId is handled by your auth session, add that filter as needed)
+    const session = await getServerSession(authOptions);
+
+    // 1. SECURITY: Block if no valid agencyId is in the session
+    if (!session?.user?.agencyId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const agencyId = session.user.agencyId;
+
+    // 2. FETCH: Only expenses belonging to THIS agency
+    // We also filter out payroll items to focus on "Overhead" (SaaS, Rent, etc.)
     const expenses = await prisma.expense.findMany({
       where: {
+        agencyId: agencyId, // THE WALL
         NOT: {
           category: { in: ["Salary", "Bonus", "Commission"] }
         }
@@ -16,7 +26,7 @@ export async function GET() {
       orderBy: { date: "desc" }
     });
 
-    // 2. Calculate Metrics
+    // 3. DATE LOGIC: Current Month Burn
     const now = new Date();
     const currentMonth = now.getMonth();
     const currentYear = now.getFullYear();
@@ -26,65 +36,71 @@ export async function GET() {
       return expDate.getMonth() === currentMonth && expDate.getFullYear() === currentYear;
     });
 
-    const totalBurn = monthlyExpenses.reduce((sum, exp) => sum + exp.amount, 0);
+    const totalBurn = monthlyExpenses.reduce((sum, exp) => sum + (Number(exp.amount) || 0), 0);
     
-    // Grouping for Stat Cards
-    const fixedMonthly = expenses
-      .filter(exp => exp.category === "Infrastructure" || exp.category === "Utilities")
-      .reduce((sum, exp) => sum + exp.amount, 0);
+    // 4. METRICS: Grouping for Stat Cards
+    const fixedMonthly = monthlyExpenses
+      .filter(exp => ["Infrastructure", "Utilities", "Rent"].includes(exp.category))
+      .reduce((sum, exp) => sum + (Number(exp.amount) || 0), 0);
 
-    const saasTools = expenses
-      .filter(exp => exp.category === "Software" || exp.category === "Technology")
-      .reduce((sum, exp) => sum + exp.amount, 0);
+    const saasTools = monthlyExpenses
+      .filter(exp => ["Software", "Technology", "Subscription"].includes(exp.category))
+      .reduce((sum, exp) => sum + (Number(exp.amount) || 0), 0);
 
-    const taxLegal = expenses
-      .filter(exp => exp.category === "Legal" || exp.category === "Taxes")
-      .reduce((sum, exp) => sum + exp.amount, 0);
+    const taxLegal = monthlyExpenses
+      .filter(exp => ["Legal", "Taxes", "Insurance"].includes(exp.category))
+      .reduce((sum, exp) => sum + (Number(exp.amount) || 0), 0);
 
     return NextResponse.json({
+      agencyId, 
       expenses,
       metrics: {
         totalBurn,
         fixedMonthly,
         saasTools,
         taxLegal,
-        // Mocking cash reserve for runway calculation (usually from a separate model)
-        runwayMonths: (50000 / totalBurn).toFixed(1) 
+        // Runway calculation (Assuming a mock $50k reserve or pull from Agency balance)
+        runwayMonths: totalBurn > 0 ? (50000 / totalBurn).toFixed(1) : "∞"
       }
     });
   } catch (error) {
-    return NextResponse.json({ error: "Failed to fetch overhead" }, { status: 500 });
+    console.error("OVERHEAD_GET_ERROR:", error);
+    return NextResponse.json({ error: "Failed to fetch overhead data" }, { status: 500 });
   }
 }
 
-// app/api/finance/overhead/route.ts
-
 export async function POST(req: Request) {
   try {
+    const session = await getServerSession(authOptions);
+
+    if (!session?.user?.agencyId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const body = await req.json();
     
-    // VALIDATION: Check if values are coming through
-    if (!body.resourceName || !body.amount || !body.agencyId) {
+    if (!body.resourceName || !body.amount) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
+    // 5. CREATE: Enforce Agency Wall by using session ID
     const expense = await prisma.expense.create({
       data: {
         resourceName: body.resourceName,
         category: body.category,
         amount: parseFloat(body.amount),
         status: body.status || "Pending",
-        date: new Date(body.date),
-        // CRITICAL: This agencyId MUST exist in your Agency table
+        date: body.date ? new Date(body.date) : new Date(),
+        // Connect directly to the agency from the session
         agency: {
-          connect: { id: body.agencyId }
+          connect: { id: session.user.agencyId }
         }
       }
     });
     
     return NextResponse.json(expense);
   } catch (error: any) {
-    console.error("Prisma Error:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    console.error("OVERHEAD_POST_ERROR:", error);
+    return NextResponse.json({ error: "Failed to log expense" }, { status: 500 });
   }
 }

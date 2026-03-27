@@ -52,9 +52,19 @@ export default function Sidebar() {
 
       {/* BRAND HEADER */}
       <div className="h-20 flex items-center px-6 border-b border-border shrink-0 overflow-hidden">
-        <Link href="/" className="flex items-center gap-3">
+        <Link href="/dashboard" className="flex items-center gap-3">
           <div className="w-8 h-8 bg-blue-600 rounded-lg shadow-[0_0_20px_rgba(37,99,235,0.5)] shrink-0 animate-pulse" />
-          {!isCollapsed && <span className="font-black tracking-tighter text-lg italic text-blue-600">AGENCY.OS</span>}
+          {!isCollapsed && (
+            <div className="flex flex-col">
+              {/* Dynamic Agency Name */}
+              <span className="font-black tracking-tighter text-sm italic text-blue-600 uppercase truncate max-w-[120px]">
+                {session?.user?.agencyName || "Loading..."}
+              </span>
+              <span className="text-[8px] font-bold text-muted-foreground tracking-[0.2em] -mt-1 uppercase">
+                Agency OS
+              </span>
+            </div>
+          )}
         </Link>
       </div>
 

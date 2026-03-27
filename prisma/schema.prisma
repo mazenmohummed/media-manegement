@@ -17,7 +17,7 @@ datasource db {
 enum SubscriptionPlan {
     FREE
     PRO
-    ENTERPRISE
+    UNLIMITED
 }
 
 enum SubscriptionStatus {
@@ -25,6 +25,7 @@ enum SubscriptionStatus {
     PAST_DUE
     CANCELED
     TRIALING
+    UNPAID
 }
 
 model Agency {
@@ -34,6 +35,20 @@ model Agency {
     operatorName String?
     email        String? @unique
 
+    // --- BILLING INFO ---
+    stripeCustomerId String? // Stripe Customer ID
+    hasPaymentMethod Boolean @default(false) // UI: "Card Linked" status
+    billingAddress   String? // For Invoice Generation
+
+    latitude  Float? // Office Location
+    longitude Float? // Office Location
+    radius    Int    @default(100) // Meters allowed for check-in
+
+    address String? // UI: Physical address in Hurghada
+
+    // Office Schedule
+    workingHours WorkingDay[]
+
     subscription Subscription?
     users        User[]
     projects     Project[]
@@ -42,8 +57,22 @@ model Agency {
     expenses     Expense[]
     payments     Payment[]
 
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+    createdAt      DateTime        @default(now())
+    updatedAt      DateTime        @updatedAt
+    payouts        Payout[]
+    attendanceLogs AttendanceLog[]
+    tasks          Task[]
+    taskExpenses   TaskExpense[]
+    comments       Comment[]
+    notifications  Notification[]
+    agencyInvoices AgencyInvoice[]
+}
+
+type WorkingDay {
+    day       String // "Monday", "Tuesday", etc.
+    openTime  String // "09:00"
+    closeTime String // "17:00"
+    isClosed  Boolean @default(false)
 }
 
 model Subscription {
@@ -53,12 +82,53 @@ model Subscription {
     plan     SubscriptionPlan   @default(FREE)
     status   SubscriptionStatus @default(TRIALING)
 
+    // --- STRIPE / PAYMENT SYNC ---
+    stripeSubscriptionId String? // The ID of the recurring sub in Stripe
+    stripePriceId        String? // To track which specific price they are paying
+
+    // Billing Period Tracking
+    currentPeriodStart DateTime? // When the current month started
+    currentPeriodEnd   DateTime? // When the next payment is due
+    cancelAtPeriodEnd  Boolean   @default(false) // If they turned off auto-renew
+
+    // Business Logic Limits
     maxUsers       Int     @default(5)
     maxProjects    Int     @default(50)
     hasAssetAccess Boolean @default(false)
 
-    stripeCustomerId String?   @unique
-    endDate          DateTime?
+    // Feature Gates
+    geoFencingEnabled Boolean @default(false)
+    advancedReporting Boolean @default(false)
+    hasGeoTracking    Boolean @default(false)
+    hasNotifications  Boolean @default(true)
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+}
+
+enum InvoiceType {
+    SUBSCRIPTION
+    BUNDLE
+    ADDON
+}
+
+model AgencyInvoice {
+    id       String      @id @default(cuid()) @map("_id")
+    agencyId String
+    agency   Agency      @relation(fields: [agencyId], references: [id])
+    type     InvoiceType @default(SUBSCRIPTION)
+
+    amount          Float // e.g., 99.00
+    currency        String  @default("USD")
+    status          String // "PAID", "OPEN", "VOID"
+    stripeInvoiceId String? @unique
+    pdfUrl          String? // Link to the Stripe hosted invoice
+
+    plan        SubscriptionPlan
+    periodStart DateTime
+    periodEnd   DateTime
+
+    createdAt DateTime @default(now())
 }
 
 // --------------------------------------
@@ -73,6 +143,7 @@ enum UserType {
 }
 
 enum UserRole {
+    SUPERADMIN
     ADMIN
     OPERATOR
     CREATIVE
@@ -100,24 +171,53 @@ model User {
     tasks          Task[]
     comments       Comment[]
 
-    createdAt DateTime @default(now())
+    createdAt     DateTime       @default(now())
+    expenses      Expense[]
+    payouts       Payout[]
+    notifications Notification[]
 }
 
 type Leave {
-    startDate DateTime?
-    endDate   DateTime?
-    type      String
-    status    String
+    startDate  DateTime?
+    endDate    DateTime?
+    type       String
+    status     String    @default("PENDING")
+    reason     String?
+    agencyId   String?
+    approvedBy String? // Store the name or ID of the manager
+    updatedAt  DateTime  @default(now())
+    createdAt  DateTime  @default(now())
 }
 
 model AttendanceLog {
-    id           String   @id @default(cuid()) @map("_id")
-    date         DateTime
+    id           String    @id @default(cuid()) @map("_id")
+    date         DateTime  @default(now())
     checkInTime  DateTime
-    checkOutTime DateTime
+    checkOutTime DateTime?
     status       String
     userId       String
-    user         User     @relation(fields: [userId], references: [id])
+    user         User      @relation(fields: [userId], references: [id])
+
+    type AttendanceType @default(OFFICE)
+
+    isLate          Boolean @default(false)
+    checkInLocation String? // "OFFICE", "FIELD_TASK", "REMOTE"
+
+    agencyId String
+    agency   Agency @relation(fields: [agencyId], references: [id])
+
+    // Geo-Validation
+    checkInLat Float?
+    checkInLng Float?
+
+    totalHours Float? // Calculated on check-out
+
+    createdAt DateTime @default(now())
+}
+
+enum AttendanceType {
+    OFFICE
+    FIELD_TASK
 }
 
 // --------------------------------------
@@ -171,8 +271,9 @@ model Project {
 
     tasks Task[]
 
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+    createdAt    DateTime      @default(now())
+    updatedAt    DateTime      @updatedAt
+    taskExpenses TaskExpense[]
 }
 
 // --------------------------------------
@@ -180,16 +281,17 @@ model Project {
 // --------------------------------------
 
 model Task {
-    id       String  @id @default(cuid()) @map("_id")
-    taskNo   String?
-    taskType String // UI: "CONSULTATION", "VIDEO", etc.
-    progress Int     @default(0)
-    status   String
+    id          String  @id @default(cuid()) @map("_id")
+    taskNo      String?
+    taskType    String // UI: "CONSULTATION", "VIDEO", etc.
+    progress    Int     @default(0)
+    status      String
+    actualHours Float   @default(0.0) // Total hours logged here
 
     paymentStatus String @default("Pending")
 
     // UI: FINANCIALS PER DEPT
-    grossRevenue Float @default(0.0) // UI: "GROSS REVENUE ($)"
+    internalCost Float @default(0.0) // UI: "GROSS REVENUE ($)"
     margin       Float @default(30.0) // UI: "MARGIN (%)"
 
     // UI: TIMELINE
@@ -198,6 +300,19 @@ model Task {
 
     // UI: SCOPE & DELIVERABLES
     description String?
+
+    priority   String  @default("MEDIUM") // "URGENT", "HIGH", "MEDIUM"
+    isNotified Boolean @default(false) // To prevent spamming alerts
+
+    // NEW: Geofencing for the specific Shoot
+    locationName String? // e.g., "Steigenberger Al Dau"
+    latitude     Float?
+    longitude    Float?
+    radius       Int     @default(200) // Meters allowed for "Arrived" status
+
+    // Tracking the Time Spent on this specific location
+    arrivalAt   DateTime?
+    departureAt DateTime?
 
     // RELATIONS
     projectId String
@@ -209,20 +324,35 @@ model Task {
     assetIds String[]
     assets   Asset[]  @relation(fields: [assetIds], references: [id])
 
+    agencyId String
+    agency   Agency @relation(fields: [agencyId], references: [id])
+
     // NEW: EXTERNAL RENTALS
-    externalRentals ExternalRental[]
+    taskExpenses TaskExpense[]
 
     comments            Comment[]
     lastUpdateTimestamp DateTime  @updatedAt
+
+    createdAt DateTime @default(now())
 }
 
-model ExternalRental {
-    id       String @id @default(cuid()) @map("_id")
-    itemName String // UI: "Rental Item"
-    cost     Float // UI: "Cost $"
+model TaskExpense {
+    id          String  @id @default(cuid()) @map("_id")
+    itemName    String // UI: "Camera Rental", "Location Fee", "Lunch"
+    cost        Float // UI: "Cost $"
+    category    String // UI: "RENTAL", "TRAVEL", "HOSPITALITY", "MISC"
+    description String?
 
     taskId String
     task   Task   @relation(fields: [taskId], references: [id])
+
+    projectId String?
+    project   Project? @relation(fields: [projectId], references: [id])
+
+    agencyId String
+    agency   Agency @relation(fields: [agencyId], references: [id])
+
+    createdAt DateTime @default(now())
 }
 
 model Comment {
@@ -233,6 +363,9 @@ model Comment {
     taskId    String
     task      Task     @relation(fields: [taskId], references: [id])
     createdAt DateTime @default(now())
+
+    agencyId String
+    agency   Agency @relation(fields: [agencyId], references: [id])
 }
 
 // --------------------------------------
@@ -240,11 +373,12 @@ model Comment {
 // --------------------------------------
 
 model Payment {
-    id        String   @id @default(cuid()) @map("_id")
-    paymentNo String?
-    amount    Float
-    method    String
-    datePaid  DateTime
+    id          String   @id @default(cuid()) @map("_id")
+    paymentNo   String?
+    amount      Float
+    method      String
+    datePaid    DateTime
+    description String?
 
     agencyId String
     agency   Agency @relation(fields: [agencyId], references: [id])
@@ -268,6 +402,8 @@ model Asset {
 
     taskIds String[]
     tasks   Task[]   @relation(fields: [taskIds], references: [id])
+
+    createdAt DateTime @default(now())
 }
 
 model Expense {
@@ -278,6 +414,48 @@ model Expense {
     amount       Float
     status       String
     date         DateTime
+    description  String?
     agencyId     String
     agency       Agency   @relation(fields: [agencyId], references: [id])
+
+    userId String? @map("userId")
+    user   User?   @relation(fields: [userId], references: [id])
+
+    createdAt DateTime @default(now())
+}
+
+model Payout {
+    id          String   @id @default(cuid()) @map("_id")
+    payoutNo    String?
+    amount      Float
+    category    String // e.g., "Salary", "Bonus", "Commission"
+    status      String   @default("PAID")
+    date        DateTime @default(now())
+    description String?
+
+    // Relation to Employee
+    userId String
+    user   User   @relation(fields: [userId], references: [id])
+
+    // Relation to Agency (for security)
+    agencyId String
+    agency   Agency @relation(fields: [agencyId], references: [id])
+
+    createdAt DateTime @default(now())
+}
+
+model Notification {
+    id      String  @id @default(cuid()) @map("_id")
+    title   String
+    message String
+    type    String // "DEADLINE", "ASSIGNMENT", "SYSTEM"
+    isRead  Boolean @default(false)
+
+    userId String
+    user   User   @relation(fields: [userId], references: [id])
+
+    agencyId String
+    agency   Agency @relation(fields: [agencyId], references: [id])
+
+    createdAt DateTime @default(now())
 }

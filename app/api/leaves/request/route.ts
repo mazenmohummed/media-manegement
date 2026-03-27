@@ -1,34 +1,42 @@
 import { NextResponse } from "next/server";
-import  prisma  from "@/lib/prisma"; // Adjust this to your actual prisma client path
-import { getServerSession } from "next-auth"; // Assumes you're using NextAuth for session management
+import prisma from "@/lib/prisma";
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "@/lib/authOptions";
 
 export async function POST(req: Request) {
   try {
-    const session = await getServerSession();
+    const session = await getServerSession(authOptions);
 
-    if (!session || !session.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // 1. SECURITY: Block if no valid session or agency context
+    if (!session?.user?.agencyId) {
+      return NextResponse.json({ error: "Unauthorized: No Agency Context" }, { status: 401 });
     }
 
     const { startDate, endDate, type, reason } = await req.json();
 
-    // Basic validation
+    // 2. VALIDATION
     if (!startDate || !endDate || !type) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
-    // Update the user document by pushing a new leave object into the array
+    const agencyId = session.user.agencyId;
+
+    // 3. ATOMIC UPDATE: Push the leave request into the user's embedded array
+    // We include the agencyId inside the object for easier admin-level filtering later
     const updatedUser = await prisma.user.update({
       where: { 
-        email: session.user.email as string // Or use session.user.id if available
+        id: session.user.id // Prefer ID over email for indexed lookups
       },
       data: {
         leaves: {
           push: {
             startDate: new Date(startDate),
             endDate: new Date(endDate),
-            type: type, // e.g., "ANNUAL", "SICK", "EMERGENCY"
-            status: "PENDING", // Default status for new requests
+            type: type, // "ANNUAL", "SICK", etc.
+            reason: reason || "",
+            status: "PENDING",
+            agencyId: agencyId, // THE WALL: Essential for global leave dashboards
+            createdAt: new Date(),
           },
         },
       },

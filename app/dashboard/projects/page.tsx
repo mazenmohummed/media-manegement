@@ -5,32 +5,28 @@ import Link from "next/link";
 import { 
   PlusCircle, 
   Search, 
-  Filter as FilterIcon, 
-  Briefcase,
-  CheckCircle2,
-  Clock,
-  Calendar
+  TrendingUp,
+  DollarSign,
+  PieChart,
+  Layers
 } from "lucide-react";
 
-// Types derived from your structure
-type ProjectWithRelations = any; // Replace with your generated Prisma types if available
+type ProjectWithRelations = any;
 
 export default function ProjectsPage() {
   const [projects, setProjects] = useState<ProjectWithRelations[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
 
-  // --- FILTER STATES ---
   const [filterMode, setFilterMode] = useState<"PRESET" | "MONTH" | "CUSTOM">("PRESET");
   const [activePreset, setActivePreset] = useState("ALL");
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth().toString());
   const [dateRange, setDateRange] = useState({ start: "", end: "" });
 
-  // Initial Fetch
   useEffect(() => {
     async function loadProjects() {
       try {
-        const res = await fetch('/api/projects'); // Ensure you have this endpoint
+        const res = await fetch('/api/projects');
         const data = await res.json();
         setProjects(data);
       } catch (error) {
@@ -42,47 +38,57 @@ export default function ProjectsPage() {
     loadProjects();
   }, []);
 
-  // --- FILTERING LOGIC ---
-  const filteredProjects = useMemo(() => {
-    return projects.filter((project) => {
+  // --- CALCULATIONS & FILTERING ---
+  const { filteredProjects, stats } = useMemo(() => {
+    // 1. Filter the projects first
+    const filtered = projects.filter((project) => {
       const projectDate = new Date(project.createdAt);
-      
-      // 1. Search Filter
       const matchesSearch = project.projectName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                            project.client?.clientName.toLowerCase().includes(searchQuery.toLowerCase());
+                            project.client?.clientName?.toLowerCase().includes(searchQuery.toLowerCase());
+      
       if (!matchesSearch) return false;
 
-      // 2. Date Filter
-      if (filterMode === "MONTH") {
-        return projectDate.getMonth() === parseInt(selectedMonth);
-      }
-      
+      if (filterMode === "MONTH") return projectDate.getMonth() === parseInt(selectedMonth);
       if (filterMode === "CUSTOM" && dateRange.start && dateRange.end) {
-        const start = new Date(dateRange.start);
-        const end = new Date(dateRange.end);
-        return projectDate >= start && projectDate <= end;
+        return projectDate >= new Date(dateRange.start) && projectDate <= new Date(dateRange.end);
       }
-      
       if (filterMode === "PRESET") {
         if (activePreset === "ALL") return true;
         const month = projectDate.getMonth();
         if (activePreset === "Q1") return month >= 0 && month <= 2;
         if (activePreset === "Q2") return month >= 3 && month <= 5;
       }
-      
       return true;
     });
+
+    // 2. Calculate totals from the filtered list
+    const totals = filtered.reduce((acc, project) => {
+      const projectFinancials = (project.tasks ?? []).reduce((taskAcc: any, t: any) => {
+        const rentalCost = (t.taskExpenses ?? []).reduce((sum: number, r: any) => sum + (r.cost || 0), 0);
+        const internalBase = t.internalCost || 0;
+        const combinedCost = internalBase + rentalCost;
+        const marginAmount = combinedCost * ((t.margin || 0) / 100);
+
+        return {
+          revenue: taskAcc.revenue + (combinedCost + marginAmount),
+          profit: taskAcc.profit + marginAmount
+        };
+      }, { revenue: 0, profit: 0 });
+
+      return {
+        totalRevenue: acc.totalRevenue + projectFinancials.revenue,
+        totalProfit: acc.totalProfit + projectFinancials.profit,
+        totalTasks: acc.totalTasks + (project.tasks?.length || 0)
+      };
+    }, { totalRevenue: 0, totalProfit: 0, totalTasks: 0 });
+
+    return { filteredProjects: filtered, stats: totals };
   }, [projects, searchQuery, filterMode, activePreset, selectedMonth, dateRange]);
 
-  const stats = {
-    totalValue: filteredProjects.reduce((acc, p) => acc + (p.totalValue || 0), 0),
-    taskCount: filteredProjects.reduce((acc, p) => acc + (p.tasks?.length || 0), 0)
-  };
-
-  if (loading) return <div className="p-20 text-center font-black uppercase italic animate-pulse">Accessing Ledger...</div>;
+  if (loading) return <div className="p-20 text-center font-black uppercase italic animate-pulse text-muted-foreground">Accessing Ledger...</div>;
 
   return (
-    <div className="max-w-7xl mx-auto p-6 space-y-8">
+    <div className="max-w-7xl mx-auto p-6 space-y-8 bg-background min-h-screen">
       {/* HEADER */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
@@ -90,39 +96,46 @@ export default function ProjectsPage() {
           <p className="text-muted-foreground text-xs font-bold uppercase tracking-widest">Active Deployments & Financial Tracking</p>
         </div>
         <div className="flex gap-3">
-            <div className="flex bg-card border rounded-xl overflow-hidden p-1">
-                {["PRESET", "MONTH", "CUSTOM"].map((mode) => (
-                    <button 
-                        key={mode}
-                        onClick={() => setFilterMode(mode as any)}
-                        className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase transition-all ${
-                            filterMode === mode ? "bg-primary text-primary-foreground shadow-sm" : "hover:bg-muted"
-                        }`}
-                    >
-                        {mode}
-                    </button>
-                ))}
-            </div>
-            <Link href="/dashboard/projects/new" className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-2xl flex items-center gap-2 text-xs font-black uppercase tracking-widest transition-all">
-                <PlusCircle size={16} /> New Deployment
-            </Link>
+          <div className="flex bg-card border rounded-xl overflow-hidden p-1 shadow-sm">
+            {["PRESET", "MONTH", "CUSTOM"].map((mode) => (
+              <button 
+                key={mode}
+                onClick={() => setFilterMode(mode as any)}
+                className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase transition-all ${
+                  filterMode === mode ? "bg-primary text-primary-foreground shadow-sm" : "hover:bg-muted text-muted-foreground"
+                }`}
+              >
+                {mode}
+              </button>
+            ))}
+          </div>
+          <Link href="/dashboard/projects/new" className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-2xl flex items-center gap-2 text-xs font-black uppercase tracking-widest transition-all shadow-lg shadow-blue-600/20">
+            <PlusCircle size={16} /> New Deployment
+          </Link>
         </div>
       </div>
 
-      {/* FILTER PANEL */}
+      {/* STATS SUMMARY */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+        <StatCard label="Pipeline" value={`${filteredProjects.length} Entities`} icon={<Layers size={14} />} />
+        <StatCard label="Gross Revenue" value={`$${stats.totalRevenue.toLocaleString()}`} icon={<DollarSign size={14} />} color="blue" />
+        <StatCard label="Net Profit" value={`$${stats.totalProfit.toLocaleString()}`} icon={<TrendingUp size={14} />} color="emerald" />
+        <StatCard label="Avg Margin" value={`${stats.totalRevenue > 0 ? ((stats.totalProfit / stats.totalRevenue) * 100).toFixed(1) : 0}%`} icon={<PieChart size={14} />} color="purple" />
+      </div>
+
+      {/* SEARCH & FILTERS */}
       <div className="bg-card border p-6 rounded-[2.5rem] space-y-4 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-4">
-            <div className="flex items-center gap-2 bg-background border px-4 py-2.5 rounded-xl w-full max-w-md">
-                <Search size={14} className="text-muted-foreground" />
-                <input 
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Search Projects or Clients..." 
-                    className="bg-transparent border-none outline-none text-xs font-bold uppercase w-full"
-                />
-            </div>
-
-            <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2 bg-background border px-4 py-2.5 rounded-xl w-full max-w-md focus-within:ring-2 ring-blue-500/20 transition-all">
+            <Search size={14} className="text-muted-foreground" />
+            <input 
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search Projects or Clients..." 
+              className="bg-transparent border-none outline-none text-xs font-bold uppercase w-full"
+            />
+          </div>
+          <div className="flex items-center gap-4">
                 <h2 className="text-[10px] font-black text-muted-foreground uppercase tracking-[0.2em]">Timeline Selection:</h2>
                 {filterMode === "PRESET" && (
                     <select value={activePreset} onChange={(e) => setActivePreset(e.target.value)}
@@ -151,24 +164,8 @@ export default function ProjectsPage() {
         </div>
       </div>
 
-      {/* STATS SUMMARY (Linked to filtered data) */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-card border p-6 rounded-[2rem]">
-          <p className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Filtered Pipeline</p>
-          <p className="text-3xl font-black italic">{filteredProjects.length} Entities</p>
-        </div>
-        <div className="bg-card border p-6 rounded-[2rem] border-emerald-500/20 bg-emerald-500/5">
-          <p className="text-[10px] font-black text-emerald-600 uppercase tracking-widest">Filtered Revenue</p>
-          <p className="text-3xl font-black italic text-emerald-600">${stats.totalValue.toLocaleString()}</p>
-        </div>
-        <div className="bg-card border p-6 rounded-[2rem]">
-          <p className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Scope Units</p>
-          <p className="text-3xl font-black italic">{stats.taskCount} Units</p>
-        </div>
-      </div>
-
       {/* LEDGER TABLE */}
-      <div className="bg-card border rounded-[2.5rem] overflow-hidden">
+      <div className="bg-card border rounded-[2.5rem] overflow-hidden shadow-sm">
         <div className="overflow-x-auto">
           <table className="w-full text-left">
             <thead>
@@ -176,7 +173,7 @@ export default function ProjectsPage() {
                 <th className="px-8 py-5">Project / Story</th>
                 <th className="px-8 py-5">Client</th>
                 <th className="px-8 py-5">Workflow</th>
-                <th className="px-8 py-5 text-right">Invoice Value</th>
+                <th className="px-8 py-5 text-right">Revenue</th>
               </tr>
             </thead>
             <tbody className="divide-y border-t">
@@ -203,21 +200,35 @@ export default function ProjectsPage() {
                     </div>
                   </td>
                   <td className="px-8 py-6 text-right">
-                    <p className="font-black italic text-lg tracking-tighter">${project.totalValue?.toLocaleString()}</p>
+                    <p className="font-black italic text-lg tracking-tighter">${stats.totalRevenue.toLocaleString()}</p>
                     <p className="text-[9px] font-black uppercase text-muted-foreground">{project.invoiceStatus}</p>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-          
-          {filteredProjects.length === 0 && (
-            <div className="p-20 text-center">
-              <p className="text-[10px] font-black uppercase tracking-[0.3em] text-muted-foreground">Zero records found for current selection</p>
-            </div>
-          )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// Sub-component for clean stats
+function StatCard({ label, value, icon, color = "gray" }: any) {
+  const colors: any = {
+    blue: "border-blue-500/20 bg-blue-500/5 text-blue-600",
+    emerald: "border-emerald-500/20 bg-emerald-500/5 text-emerald-600",
+    purple: "border-purple-500/20 bg-purple-500/5 text-purple-600",
+    gray: "text-muted-foreground"
+  };
+
+  return (
+    <div className={`bg-card border p-6 rounded-[2rem] ${colors[color] || ""}`}>
+      <div className="flex justify-between items-start">
+        <p className="text-[10px] font-black uppercase tracking-widest opacity-70">{label}</p>
+        <div className="opacity-70">{icon}</div>
+      </div>
+      <p className="text-3xl font-black italic mt-1 text-foreground">{value}</p>
     </div>
   );
 }

@@ -188,3 +188,59 @@
       display: none !important;
     }
   }
+
+  .rbc-month-view {
+  min-height: 600px; /* Ensures the grid has space to breathe */
+}
+
+.rbc-event-content {
+  overflow: visible !important;
+  white-space: normal !important;
+}
+
+/* Ensure the month grid rows can grow to fit events */
+.rbc-month-row {
+  overflow: visible !important;
+}
+
+/* Style the individual event "strips" in Month view */
+.rbc-event {
+  min-height: 20px !important;
+  display: flex !important;
+  align-items: center !important;
+  padding: 2px 8px !important;
+  border-radius: 4px !important;
+  margin-bottom: 1px !important;
+}
+
+/* Force text to be visible and white (or high contrast) */
+.rbc-event-content {
+  font-size: 10px !important;
+  font-weight: 700 !important;
+  color: white !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+/* Remove the default "dots" react-big-calendar sometimes uses for timed events in month view */
+.rbc-event-label {
+  display: none !important;
+}
+
+@media print {
+          body * { visibility: hidden; background: none !important; }
+          .printable-invoice, .printable-invoice * { visibility: visible; }
+          .printable-invoice {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+            border: none !important;
+            box-shadow: none !important;
+            background: white !important;
+            color: black !important;
+          }
+          .print-break-inside-avoid { page-break-inside: avoid; }
+          @page { margin: 15mm; }
+          .no-print { display: none !important; }}

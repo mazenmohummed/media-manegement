@@ -1,16 +1,18 @@
-// app/login/page.tsx
 "use client";
 
 import { useState } from "react";
-import { signIn } from "next-auth/react";
+import { signIn, getSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Loader2, ShieldCheck } from "lucide-react";
+import { Loader2, ShieldCheck, Eye, EyeOff } from "lucide-react";
 
 export default function LoginPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  
+  // New State: Toggle Password Visibility
+  const [showPassword, setShowPassword] = useState(false);
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -24,21 +26,27 @@ export default function LoginPage() {
     const res = await signIn("credentials", {
       email,
       password,
-      redirect: false, // Prevent auto-redirect to handle errors manually
+      redirect: false,
     });
 
     if (res?.error) {
       setError("Invalid credentials. Access denied.");
       setLoading(false);
     } else {
-      router.push("/dashboard");
-      router.refresh(); // Ensure session state updates globally
+      const session = await getSession();
+
+      if (session?.user?.role === "SUPERADMIN") {
+        router.push("/superadmin");
+      } else {
+        router.push("/dashboard");
+      }
+
+      router.refresh(); 
     }
   }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-6">
-      {/* Background Glows */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute top-[10%] left-[15%] w-[40%] h-[40%] bg-blue-600/5 rounded-full blur-[120px]" />
       </div>
@@ -51,13 +59,13 @@ export default function LoginPage() {
           <h2 className="text-3xl font-black text-foreground tracking-tighter uppercase italic">
             Access Terminal
           </h2>
-          <p className="text-muted-foreground text-xs font-bold uppercase tracking-widest mt-2">
+          <p className="text-muted-foreground text-[10px] font-bold uppercase tracking-[0.3em] mt-2">
             Identity Verification Required
           </p>
         </header>
 
         {error && (
-          <div className="mb-6 p-4 bg-red-500/10 border border-red-500/20 rounded-xl text-red-500 text-xs font-bold uppercase tracking-wider text-center">
+          <div className="mb-6 p-4 bg-red-500/10 border border-red-500/20 rounded-xl text-red-500 text-[10px] font-black uppercase tracking-wider text-center">
             {error}
           </div>
         )}
@@ -80,13 +88,25 @@ export default function LoginPage() {
             <label className="text-[10px] font-black text-muted-foreground uppercase tracking-[0.2em] ml-1">
               Access Password
             </label>
-            <input 
-              name="password"
-              required
-              type="password" 
-              className="w-full bg-muted/30 p-4 border border-border rounded-2xl outline-none focus:ring-2 focus:ring-blue-600/50 focus:border-blue-600 transition-all font-medium text-foreground" 
-              placeholder="••••••••"
-            />
+            <div className="relative group">
+              <input 
+                name="password"
+                required
+                // Toggle between 'password' and 'text'
+                type={showPassword ? "text" : "password"} 
+                className="w-full bg-muted/30 p-4 pr-12 border border-border rounded-2xl outline-none focus:ring-2 focus:ring-blue-600/50 focus:border-blue-600 transition-all font-medium text-foreground" 
+                placeholder="••••••••"
+              />
+              
+              {/* EYE TOGGLE BUTTON */}
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-4 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-blue-600 transition-colors p-1"
+              >
+                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
+            </div>
           </div>
 
           <button 
@@ -94,10 +114,7 @@ export default function LoginPage() {
             className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white py-5 rounded-2xl font-black text-xs uppercase tracking-[0.3em] transition-all active:scale-[0.98] shadow-xl shadow-blue-500/20 mt-4 flex items-center justify-center gap-2"
           >
             {loading ? (
-              <>
-                <Loader2 className="animate-spin" size={16} />
-                Authenticating...
-              </>
+              <><Loader2 className="animate-spin" size={16} /> Authenticating...</>
             ) : (
               "Authorize Access"
             )}
@@ -105,9 +122,9 @@ export default function LoginPage() {
         </form>
 
         <footer className="mt-10 pt-8 border-t border-border text-center">
-          <p className="text-xs text-muted-foreground font-bold uppercase tracking-widest">
+          <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest">
             New Operator?{" "}
-            <Link href="/deploy/agency" className="text-blue-600 hover:text-blue-500 transition-colors">
+            <Link href="/deploy/agency" className="text-blue-600 hover:text-blue-500 transition-colors ml-1">
               Deploy Agency
             </Link>
           </p>

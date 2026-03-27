@@ -1,50 +1,68 @@
-import prisma from "@/lib/prisma";
 import { NextResponse } from "next/server";
+import prisma from "@/lib/prisma";
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "@/lib/authOptions";
 
+// GET: Fetch a specific client with their projects and payments
 export async function GET(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const session = await getServerSession(authOptions);
   const { id } = await params;
-  try {
-    // Await params if using Next.js 15 (otherwise it might be undefined)
-    const { id } = await params; 
-    
-    console.log("SEARCHING FOR ID:", id); // Check if this matches your DB exactly
 
+  if (!session?.user?.agencyId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  try {
     const client = await prisma.client.findUnique({
-      where: { id: String(id) }, // Force string type
+      where: { 
+        id: id,
+        agencyId: session.user.agencyId // THE WALL: Prevents cross-agency data leaks
+      },
       include: {
-        projects: true,
-        payments: true,
+        projects: {
+          orderBy: { createdAt: 'desc' }
+        },
+        payments: {
+          orderBy: { datePaid: 'desc' }
+        },
       },
     });
 
     if (!client) {
-      console.log("RESULT: NULL - Client not found in DB");
-      return NextResponse.json({ error: "Client not found" }, { status: 404 });
+      return NextResponse.json({ error: "Client not found in your workspace" }, { status: 404 });
     }
 
     return NextResponse.json(client);
   } catch (error: any) {
-    console.error("API ROUTE ERROR:", error.message);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    console.error("GET_CLIENT_DETAIL_ERROR:", error.message);
+    return NextResponse.json({ error: "Failed to fetch client" }, { status: 500 });
   }
 }
 
+// PATCH: Update client details
 export async function PATCH(
   req: Request,
-  { params }: { params: Promise<{ id: string }> } // Define as a Promise
+  { params }: { params: Promise<{ id: string }> }
 ) {
+  const session = await getServerSession(authOptions);
+  const { id } = await params;
+
+  if (!session?.user?.agencyId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   try {
-    // 1. Await the params to get the actual ID
-    const { id } = await params; 
-    
     const body = await req.json();
 
-    // 2. Perform the update
+    // Use updateMany or update with an agencyId filter in the 'where' clause
     const updatedClient = await prisma.client.update({
-      where: { id: id }, // Now id will be "cmn3t2wg5..."
+      where: { 
+        id: id,
+        agencyId: session.user.agencyId // THE WALL: Only update if it belongs to THIS agency
+      }, 
       data: {
         clientName: body.clientName,
         accountType: body.accountType,
@@ -54,7 +72,8 @@ export async function PATCH(
 
     return NextResponse.json(updatedClient);
   } catch (error: any) {
-    console.error("Update Error:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    console.error("PATCH_CLIENT_ERROR:", error);
+    // If the record exists but the agencyId doesn't match, Prisma throws a P2025 error
+    return NextResponse.json({ error: "Update failed. Record not found or unauthorized." }, { status: 500 });
   }
 }

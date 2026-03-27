@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
+import { useJsApiLoader, Autocomplete } from "@react-google-maps/api";
 
 // --- TYPES ---
 interface Client {
@@ -24,10 +25,48 @@ interface TaskInput {
   endTime?: string;
   employeeId?: string;
   assetIds: string[];
-  grossRevenue: string; // Ensure this is editable in the UI
-  margin: string;       // Ensure this is editable in the UI
+  grossRevenue: string;
+  margin: string;
   notes: string;
   rentals: RentalInput[];
+  locationName?: string;
+  latitude?: number;
+  longitude?: number;
+  isSearching?: boolean;
+}
+
+
+
+
+
+// Helper Component for the Search Input
+function OSMLocationSearch({ onSearch, defaultValue }: { onSearch: (val: string) => void, defaultValue?: string }) {
+  const [val, setVal] = useState(defaultValue || "");
+
+  return (
+    <div className="flex gap-2">
+      <input
+        type="text"
+        placeholder="Search location (e.g. Selena Bay)..."
+        value={val}
+        onChange={(e) => setVal(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            onSearch(val);
+          }
+        }}
+        className="flex-1 bg-transparent text-xs font-bold outline-none border-b border-emerald-600/20 pb-1"
+      />
+      <button 
+        type="button"
+        onClick={() => onSearch(val)}
+        className="text-[9px] bg-emerald-600 text-white px-2 py-1 rounded hover:bg-emerald-700 transition-colors"
+      >
+        SEARCH
+      </button>
+    </div>
+  );
 }
 
 const DEPARTMENTS = ["Consultation", "Video", "Photo", "Design", "Sponsor", "Copy Writer", "Content preparation"];
@@ -46,6 +85,7 @@ export default function NewProjectPage() {
   const [projectStory, setProjectStory] = useState("");
   const [cloudLink, setCloudLink] = useState(""); // Added cloudLink state
   const [selectedTasks, setSelectedTasks] = useState<Record<string, TaskInput>>({});
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // --- RENTAL HELPER FUNCTIONS ---
   const addRental = (dept: string) => {
@@ -66,32 +106,51 @@ export default function NewProjectPage() {
     updateTaskField(dept, "rentals", updatedRentals);
   };
 
+  
+
   useEffect(() => {
     if (status !== "authenticated" || !session?.user?.agencyId) return;
 
-    async function loadData() {
-      setLoading(true);
-      const agencyId = session!.user.agencyId;
+    // Replace your loadData block with this:
+async function loadData() {
+  setLoading(true);
+  const agencyId = session!.user.agencyId;
 
-      try {
-        const [clientRes, employeeRes, assetRes] = await Promise.all([
-          fetch(`/api/clients?agencyId=${agencyId}`),
-          fetch(`/api/employees?agencyId=${agencyId}`),
-          fetch(`/api/assets?agencyId=${agencyId}`)
-        ]);
+  try {
+    const [clientRes, employeeRes, assetRes] = await Promise.all([
+      fetch(`/api/clients?agencyId=${agencyId}`),
+      fetch(`/api/employees?agencyId=${agencyId}`),
+      fetch(`/api/assets?agencyId=${agencyId}`)
+    ]);
 
-        if (clientRes.ok) setClients(await clientRes.json());
-        if (employeeRes.ok) setDbEmployees(await employeeRes.json());
-        if (assetRes.ok) {
-          const assetsData = await assetRes.json();
-          setDbAssets(assetsData.assets || assetsData);
-        }
-      } catch (err) {
-        console.error("Data Fetch Error:", err);
-      } finally {
-        setLoading(false);
-      }
+    // 1. Handle Clients
+    if (clientRes.ok) {
+      const data = await clientRes.json();
+      setClients(Array.isArray(data) ? data : data.clients || []);
     }
+
+    // 2. Handle Employees (The fix for your error)
+    if (employeeRes.ok) {
+      const data = await employeeRes.json();
+      // Ensure we set an array even if the API returns { employees: [...] }
+      setDbEmployees(Array.isArray(data) ? data : data.employees || []);
+    }
+
+    // 3. Handle Assets
+    if (assetRes.ok) {
+      const data = await assetRes.json();
+      setDbAssets(Array.isArray(data) ? data : data.assets || []);
+    }
+  } catch (err) {
+    console.error("Data Fetch Error:", err);
+    // Initialize as empty arrays on error to prevent .map crashes
+    setDbEmployees([]);
+    setClients([]);
+    setDbAssets([]);
+  } finally {
+    setLoading(false);
+  }
+}
 
     loadData();
   }, [status, session]);
@@ -125,6 +184,94 @@ export default function NewProjectPage() {
     });
   };
 
+  const handleUseCurrentLocation = (type: string) => {
+  if (!navigator.geolocation) {
+    return alert("Geolocation is not supported by your browser.");
+  }
+
+  updateTaskField(type, "isSearching", true);
+
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      const { latitude, longitude } = pos.coords;
+      setSelectedTasks(prev => ({
+        ...prev,
+        [type]: { 
+          ...prev[type], 
+          latitude,
+          longitude,
+          locationName: `Manual GPS Pin (${latitude.toFixed(4)}, ${longitude.toFixed(4)})`,
+          isSearching: false 
+        }
+      }));
+    },
+    (err) => {
+      console.error(err);
+      updateTaskField(type, "isSearching", false);
+      alert("Unable to retrieve your location. Please check your browser permissions.");
+    },
+    { enableHighAccuracy: true } // Better for outdoor shoots
+  );
+};
+
+  // Inside NewProjectPage
+  const handleSearch = async (query: string, type: string) => {
+  if (!query || query.length < 3) return;
+
+  updateTaskField(type, "isSearching", true);
+
+  // 1. COORDINATE DETECTION: Check if the user pasted "29.987, 31.211"
+  const coordRegex = /^(-?\d+(\.\d+)?),\s*(-?\d+(\.\d+)?)$/;
+  const isCoords = coordRegex.test(query.trim());
+
+  if (isCoords) {
+    const [lat, lon] = query.trim().split(',').map(n => parseFloat(n.trim()));
+    setSelectedTasks(prev => ({
+      ...prev,
+      [type]: { 
+        ...prev[type], 
+        latitude: lat,
+        longitude: lon,
+        locationName: `📍 Exact Pin: ${lat}, ${lon}`,
+        isSearching: false 
+      }
+    }));
+    return; // Exit early since we have the exact location
+  }
+
+  // 2. PLUS CODE & CLEANING (Existing Logic)
+  const plusCodeRegex = /[A-Z0-9]{4,}\+[A-Z0-9]{2,}/g;
+  let cleanQuery = query.replace(plusCodeRegex, "").trim();
+  cleanQuery = cleanQuery.replace(/(after|beside|behind|امام|بجوار|خلف|بعد)/gi, "").replace(/[،,]/g, " ").trim();
+
+  try {
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(cleanQuery)}&countrycodes=eg&limit=1&addressdetails=1&accept-language=ar,en`
+    );
+    const data = await res.json();
+    
+    if (data && data.length > 0) {
+      const { lat, lon, display_name } = data[0];
+      setSelectedTasks(prev => ({
+        ...prev,
+        [type]: { 
+          ...prev[type], 
+          latitude: parseFloat(lat),
+          longitude: parseFloat(lon),
+          locationName: display_name,
+          isSearching: false 
+        }
+      }));
+    } else {
+      // Fallback... (Same as your previous logic)
+      updateTaskField(type, "isSearching", false);
+    }
+  } catch (err) {
+    console.error("Search Error:", err);
+    updateTaskField(type, "isSearching", false);
+  }
+};
+
   const updateTaskField = (dept: string, field: keyof TaskInput, value: any) => {
     setSelectedTasks(prev => ({
       ...prev,
@@ -132,10 +279,14 @@ export default function NewProjectPage() {
     }));
   };
 
+  
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!session?.user?.agencyId) return alert("Session expired.");
     if (!clientId || !projectName) return alert("Missing required fields.");
+
+    setIsSubmitting(true);
 
     const formattedTasks = Object.entries(selectedTasks).map(([type, detail]) => ({
       taskType: type,
@@ -146,6 +297,13 @@ export default function NewProjectPage() {
       description: detail.notes,
       assigneeId: detail.employeeId || null,
       assetIds: detail.assetIds,
+      
+      // NEW: Location mapping
+      locationName: detail.locationName || null,
+      latitude: detail.latitude || null,
+      longitude: detail.longitude || null,
+      radius: 200, // Default 200m radius for production lock
+
       externalRentals: detail.rentals.map(r => ({
         itemName: r.name,
         cost: parseFloat(r.cost) || 0
@@ -182,6 +340,7 @@ export default function NewProjectPage() {
       else alert("Failed to save project.");
     } catch (err) {
       console.error("Submission error:", err);
+      setIsSubmitting(false);
     }
   };
 
@@ -240,8 +399,23 @@ export default function NewProjectPage() {
               </div>
             </div>
 
-            <button onClick={handleSubmit} className="w-full mt-8 bg-foreground text-background py-5 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-blue-600 hover:text-white transition-all">
-              Initialize Production
+            <button 
+              onClick={handleSubmit} 
+              disabled={isSubmitting}
+              className={`w-full mt-8 py-5 rounded-2xl font-black uppercase text-[10px] tracking-widest transition-all flex items-center justify-center gap-3
+                ${isSubmitting 
+                  ? "bg-muted text-muted-foreground cursor-not-allowed" 
+                  : "bg-foreground text-background hover:bg-blue-600 hover:text-white"
+                }`}
+            >
+              {isSubmitting ? (
+                <>
+                  <div className="w-3 h-3 border-2 border-muted-foreground border-t-transparent rounded-full animate-spin" />
+                  Syncing with Prisma...
+                </>
+              ) : (
+                "Initialize Production"
+              )}
             </button>
           </div>
         </div>
@@ -258,7 +432,7 @@ export default function NewProjectPage() {
                 onClick={() => addRental(type)}
                 className="text-[10px] font-black text-blue-600 hover:bg-blue-600 hover:text-white px-3 py-1 rounded-full border border-blue-600 transition-all"
               >
-                + ADD EXTERNAL RENTAL
+                + ADD EXPENCES
               </button>
               </div>
 
@@ -295,9 +469,9 @@ export default function NewProjectPage() {
                       value={detail.employeeId}
                       onChange={(e) => updateTaskField(type, "employeeId", e.target.value)}
                     >
-                      <option value="">NO ASSIGNEE</option>
+                      <option className="bg-card " value="">NO ASSIGNEE</option>
                       {dbEmployees.map(emp => (
-                        <option key={emp.id} value={emp.id}>{emp.name}</option>
+                        <option className="bg-card  " key={emp.id} value={emp.id}>{emp.name}</option>
                       ))}
                     </select>
                   </div>
@@ -359,7 +533,7 @@ export default function NewProjectPage() {
                         value={r.name} 
                         onChange={(e) => updateRentalField(type, r.id, "name", e.target.value)} 
                       />
-                      <div className="flex items-center gap-1 bg-white px-3 py-1 rounded-lg border border-border">
+                      <div className="flex items-center gap-1 px-3 py-1 rounded-lg border border-border">
                         <span className="text-[10px] font-bold opacity-30">$</span>
                         <input 
                           placeholder="Cost" 
@@ -381,6 +555,83 @@ export default function NewProjectPage() {
                   </div>
               )}
 
+              {/* LOCATION & GEOFENCING */}
+              {(type === "Video" || type === "Photo") && (
+                <div className="space-y-3 p-4 bg-emerald-600/5 border border-emerald-600/10 rounded-2xl">
+                  <div className="flex justify-between items-center">
+                    <label className="text-[9px] font-black uppercase text-emerald-600 tracking-widest">
+                      Egypt Production Location
+                    </label>
+                    {detail.isSearching && (
+                      <div className="flex items-center gap-2 text-[8px] font-bold text-emerald-600 animate-pulse">
+                        <div className="w-2 h-2 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin" />
+                        MAPPING...
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex gap-2">
+                    {/* GPS AUTO-PIN BUTTON */}
+                    <button
+                      type="button"
+                      onClick={() => handleUseCurrentLocation(type)}
+                      className="h-8 w-8 flex items-center justify-center bg-white border border-emerald-600/20 text-emerald-600 rounded-lg hover:bg-emerald-600 hover:text-white transition-all shadow-sm"
+                      title="Use Current Location"
+                    >
+                      <span className="text-xs">◎</span>
+                    </button>
+
+                    <input
+                      type="text"
+                      placeholder="Search (e.g. Fish Market, Sheraton Street)..."
+                      className="flex-1 bg-transparent text-xs font-bold outline-none border-b border-emerald-600/20 pb-1"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleSearch((e.target as HTMLInputElement).value, type);
+                        }
+                      }}
+                    />
+                    <button 
+                      type="button"
+                      disabled={detail.isSearching}
+                      onClick={(e) => {
+                        const input = e.currentTarget.previousElementSibling as HTMLInputElement;
+                        handleSearch(input.value, type);
+                      }}
+                      className="h-8 w-20 bg-emerald-600 text-white text-[10px] font-black rounded-lg hover:bg-emerald-700 transition-all flex items-center justify-center disabled:opacity-50"
+                    >
+                      {detail.isSearching ? "..." : "SEARCH"}
+                    </button>
+                  </div>
+
+                  {/* VERIFICATION LINK */}
+                  {detail.latitude && (
+                    <a 
+                      href={`https://www.google.com/maps?q=${detail.latitude},${detail.longitude}`} 
+                      target="_blank" 
+                      className="text-[7px] font-bold text-blue-500 underline mt-1 block"
+                    >
+                      VIEW ON GOOGLE MAPS
+                    </a>
+                  )}
+
+                  {/* Result Display */}
+                  <div className="flex flex-col gap-1">
+                    {detail.locationName && !detail.isSearching && (
+                      <p className="text-[9px] font-bold text-emerald-700 bg-emerald-100/50 p-2 rounded-lg border border-emerald-600/10 truncate">
+                        📍 {detail.locationName}
+                      </p>
+                    )}
+                    
+                    <div className="flex gap-4 px-1">
+                      <span className="text-[7px] font-mono opacity-50 uppercase">Lat: {detail.latitude?.toFixed(6) || "---"}</span>
+                      <span className="text-[7px] font-mono opacity-50 uppercase">Lng: {detail.longitude?.toFixed(6) || "---"}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
                 <textarea placeholder="Notes..." className="w-full p-4 bg-muted/20 border border-border rounded-2xl text-sm min-h-[80px]" value={detail.notes} onChange={e => updateTaskField(type, "notes", e.target.value)} />
               </div>
             </div>
@@ -390,3 +641,4 @@ export default function NewProjectPage() {
     </div>
   );
 }
+
