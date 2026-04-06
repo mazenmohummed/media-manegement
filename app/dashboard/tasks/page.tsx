@@ -200,7 +200,9 @@ export default function TaskManagementPage() {
         <thead className="bg-muted/30 text-[10px] uppercase font-black text-muted-foreground border-b border-border">
           <tr>
             <th className="p-6">Task Node</th>
-            <th className="p-6">Status/Progress</th>
+            <th className="p-6">Priority</th> {/* NEW COLUMN */}
+            <th className="p-6">Progress</th> {/* NEW COLUMN */}
+            <th className="p-6">Status</th>
             <th className="p-6">Last Update</th>
             <th className="p-6">Assignee</th>
           </tr>
@@ -208,7 +210,7 @@ export default function TaskManagementPage() {
         <tbody className="divide-y divide-border">
           {filteredTasks.length === 0 ? (
             <tr>
-              <td colSpan={4} className="p-20 text-center text-muted-foreground font-black uppercase text-[10px]">
+              <td colSpan={6} className="p-20 text-center text-muted-foreground font-black uppercase text-[10px]">
                 No Nodes matching current filters
               </td>
             </tr>
@@ -216,25 +218,57 @@ export default function TaskManagementPage() {
             filteredTasks.map((task) => (
               <tr 
                 key={task.id} 
-                // 3. Add the click handler for redirection
                 onClick={() => router.push(`/dashboard/tasks/${task.id}`)}
-                // 4. Added 'cursor-pointer' to improve UX
                 className="hover:bg-muted/10 transition-colors group cursor-pointer"
               >
+                {/* 1. TASK NODE */}
                 <td className="p-6">
                   <div className="font-bold text-sm">{task.taskType}</div>
                   <div className="text-[9px] text-muted-foreground font-bold uppercase">
                     {task.project?.projectName}
                   </div>
                 </td>
+
+                {/* 2. PRIORITY (NEW) */}
                 <td className="p-6">
-                  <span className="text-[8px] font-black uppercase px-2 py-1 rounded-md bg-blue-50 text-blue-700 border border-blue-200">
-                    {task.status}
+                  <span className={`text-[8px] font-black uppercase px-2 py-1 rounded-md border ${
+                    task.priority === 'URGENT' 
+                      ? "bg-red-50 text-red-600 border-red-200" 
+                      : task.priority === 'HIGH'
+                      ? "bg-orange-50 text-orange-600 border-orange-200"
+                      : "bg-blue-50 text-blue-600 border-blue-200"
+                  }`}>
+                    {task.priority || 'MEDIUM'}
                   </span>
-                  <div className="w-24 bg-muted h-1 rounded-full mt-2 overflow-hidden">
-                    <div className="h-full bg-foreground" style={{ width: `${task.progress}%` }} />
+                </td>
+
+                {/* 3. PROGRESS (NEW) */}
+                <td className="p-6">
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1 min-w-[80px] bg-muted h-1.5 rounded-full overflow-hidden">
+                      <div 
+                        className={`h-full transition-all duration-500 ${
+                          task.progress === 100 ? "bg-emerald-500" : "bg-foreground"
+                        }`} 
+                        style={{ width: `${task.progress}%` }} 
+                      />
+                    </div>
+                    <span className="text-[10px] font-black w-8">{task.progress}%</span>
                   </div>
                 </td>
+
+                {/* 4. STATUS */}
+                <td className="p-6">
+                  <span className={`text-[8px] font-black uppercase px-2 py-1 rounded-md border ${
+                    task.status === 'COMPLETED' 
+                      ? "bg-emerald-50 text-emerald-700 border-emerald-200" 
+                      : "bg-muted text-muted-foreground border-border"
+                  }`}>
+                    {task.status}
+                  </span>
+                </td>
+
+                {/* 5. LAST UPDATE */}
                 <td className="p-6">
                   <div className="text-[10px] font-bold text-foreground uppercase tracking-tight">
                     {task.lastUpdateTimestamp 
@@ -245,8 +279,20 @@ export default function TaskManagementPage() {
                     {task.lastUpdateTimestamp && moment(task.lastUpdateTimestamp).format("hh:mm A")}
                   </div>
                 </td>
+
+                {/* 6. ASSIGNEE */}
                 <td className="p-6 text-sm font-bold text-blue-600">
-                  {task.assignee?.name || "UNASSIGNED"}
+                  {task.assignees && task.assignees.length > 0 ? (
+                    <div className="flex flex-col gap-1">
+                      {task.assignees.map((user: any) => (
+                        <span key={user.id} className="block">
+                          {user.name || "Unknown User"}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="text-muted-foreground italic font-medium">UNASSIGNED</span>
+                  )}
                 </td>
               </tr>
             ))

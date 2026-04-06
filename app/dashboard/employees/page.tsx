@@ -5,6 +5,7 @@ import Link from "next/link";
 import { UserPlus, Search, ArrowUpRight, UserCheck, X } from "lucide-react";
 import { format } from "date-fns";
 import { useSession } from "next-auth/react";
+import PerformanceTable from "@/components/main/employees/PerformanceTable";
 
 interface Employee {
   id: string;
@@ -15,10 +16,15 @@ interface Employee {
   efficiencyRate: number;
   salary: number;
   verifiedSkills: string[];
-  tasks: { grossRevenue: number; status: string; paymentStatus: string }[];
-  attendanceLogs: { type: string; date: string }[];
+  workingHours: number;
+  extraPayouts: number;
+  expenses: number;
+  lateDays: number;
+  totalRevenue: number;
+  profitContribution: number;
+  tasks: { internalCost: number; status: string; paymentStatus: string }[];
+  attendanceLogs: { type: string; date: string; isLate: boolean; totalHours: number }[];
 }
-
 export default function EmployeesDirectory() {
   const { data: session, status } = useSession();
   const agencyId = session?.user?.agencyId;
@@ -34,17 +40,23 @@ export default function EmployeesDirectory() {
 
   useEffect(() => {
     async function loadDirectory() {
-      if (!agencyId) return;
-      try {
-        const res = await fetch(`/api/employees?agencyId=${agencyId}`);
-        const data = await res.json();
-        setEmployees(Array.isArray(data) ? data : []);
-      } catch (err) {
-        console.error("Directory Sync Failed:", err);
-      } finally {
-        setLoading(false);
-      }
+  if (!agencyId) return;
+  try {
+    const res = await fetch(`/api/employees?agencyId=${agencyId}`);
+    const data = await res.json();
+    
+    // The API now returns { employees: [...], metrics: {...} }
+    if (data.employees && Array.isArray(data.employees)) {
+      setEmployees(data.employees);
+    } else {
+      setEmployees([]);
     }
+  } catch (err) {
+    console.error("Directory Sync Failed:", err);
+  } finally {
+    setLoading(false);
+  }
+}
     if (status === "authenticated") loadDirectory();
     else if (status === "unauthenticated") setLoading(false);
   }, [agencyId, status]);
@@ -57,16 +69,19 @@ export default function EmployeesDirectory() {
   }, [search, employees]);
 
   // Logic for Total Payroll calculation
-  const totalPayroll = useMemo(() => {
-    return employees.reduce((acc, emp) => {
-      if (emp.userType === "FREELANCER") {
-        const pending = emp.tasks?.reduce((sum, t) => 
-          t.paymentStatus === "Pending" ? sum + (t.grossRevenue || 0) : sum, 0) || 0;
-        return acc + pending;
-      }
-      return acc + (emp.salary || 0);
-    }, 0);
-  }, [employees]);
+// Inside EmployeesDirectory component
+const totalPayroll = useMemo(() => {
+  return employees.reduce((acc, emp) => {
+    if (emp.userType === "FREELANCER") {
+      // Freelancers get paid per task internalCost if payment is Pending
+      const pending = emp.tasks?.reduce((sum, t) => 
+        t.paymentStatus === "Pending" ? sum + (t.internalCost || 0) : sum, 0) || 0;
+      return acc + pending;
+    }
+    // All other types (FULL_TIME, PART_TIME, etc.) use the base salary
+    return acc + (emp.salary || 0);
+  }, 0);
+}, [employees]);
 
   const handleAddEmployee = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -249,6 +264,31 @@ export default function EmployeesDirectory() {
         />
       </div>
 
+      
+     
+        <PerformanceTable 
+  performanceData={employees.map(emp => ({
+    name: emp.name,
+    skills: emp.verifiedSkills || [],
+    // FIX: Ensure status casing matches your DB (usually "COMPLETED")
+    tasksCompleted: emp.tasks?.filter(t => t.status === "COMPLETED").length || 0,
+    tasksCount: emp.tasks?.length || 0,
+    
+    // FIX: Ensure this property name matches what PerformanceTable expects
+    // If PerformanceTable expects 'revenue', use that. 
+    // Based on your current code, you are passing totalRevenue:
+    revenueGenerated: emp.totalRevenue || 0, 
+    
+    workingHours: emp.workingHours || 0,
+    lateDays: emp.lateDays || 0,
+    baseSalary: emp.salary || 0, 
+    extraPayouts: emp.extraPayouts || 0,
+    expenses: emp.expenses || 0,
+    efficiency: emp.efficiencyRate || 0,
+    activeLeaves: emp.attendanceLogs?.filter(log => log.type === "Vacation").length || 0,
+  }))} 
+/>
+
       {/* GRID ENGINE */}
       <section className="space-y-6">
         <h2 className="text-[10px] font-black text-primary uppercase tracking-[0.3em] flex items-center gap-2 px-2">
@@ -261,19 +301,21 @@ export default function EmployeesDirectory() {
 
            const tasks = emp.tasks || [];
 
-            // 1. ACTIVE: Count tasks where status is "ACTIVE"
+           /// ACTIVE: Now strictly matches "ACTIVE"
             const activeTasksCount = tasks.filter(t => 
-              t.status?.toUpperCase() === "ACTIVE"
+              t.status === "ACTIVE"
             ).length;
 
-            // 2. DONE: Count tasks where status is "FINISHED"
+            // 2. DONE: Change "FINISHED" to "COMPLETED" to match your API logic
             const doneTasksCount = tasks.filter(t => 
+              t.status?.toUpperCase() === "COMPLETED" || 
               t.status?.toUpperCase() === "FINISHED"
             ).length;
 
-            // 3. DUE: Count tasks where status is "PENDING"
+            // 3. DUE: Usually tasks that are "PENDING" or "TODO"
             const dueTasksCount = tasks.filter(t => 
-              t.status?.toUpperCase() === "PENDING"
+              t.status?.toUpperCase() === "PENDING" || 
+              t.status?.toUpperCase() === "TODO"
             ).length;
 
             // Due Tasks: Active status AND Pending payment (Default "Pending" in schema)
@@ -282,10 +324,12 @@ export default function EmployeesDirectory() {
               t.paymentStatus?.toLowerCase() === "pending"
             ).length;
 
-            const totalTaskFees = emp.tasks?.reduce((sum, t) => {
-              return t.paymentStatus === "Pending" ? sum + (t.grossRevenue || 0) : sum;
-            }, 0) || 0;
-
+  
+            // Logic for individual card payouts
+            const totalTaskFees = tasks.reduce((sum, t) => {
+            // Note: ensure we use internalCost as defined in your GET API
+            return t.paymentStatus === "Pending" ? sum + (t.internalCost || 0) : sum;
+          }, 0);
             const pendingMoney = emp.userType === "FREELANCER" ? totalTaskFees : (emp.salary || 0);
             const paymentLabel = emp.userType === "FREELANCER" ? "Pending Fees" : "Monthly Payout";
 

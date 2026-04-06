@@ -27,57 +27,75 @@ export default function ProjectsPage() {
     async function loadProjects() {
       try {
         const res = await fetch('/api/projects');
+        if (!res.ok) throw new Error("Failed to fetch");
         const data = await res.json();
-        setProjects(data);
+        setProjects(data || []); 
       } catch (error) {
         console.error("Failed to load projects", error);
+        setProjects([]);
       } finally {
         setLoading(false);
       }
     }
     loadProjects();
   }, []);
-
-  // --- CALCULATIONS & FILTERING ---
+ // --- CALCULATIONS & FILTERING ---
   const { filteredProjects, stats } = useMemo(() => {
-    // 1. Filter the projects first
-    const filtered = projects.filter((project) => {
-      const projectDate = new Date(project.createdAt);
-      const matchesSearch = project.projectName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                            project.client?.clientName?.toLowerCase().includes(searchQuery.toLowerCase());
-      
-      if (!matchesSearch) return false;
+    // 1. Filter and Map projects to include pre-calculated row totals
+    const filtered = projects
+      .filter((project) => {
+        const projectDate = new Date(project.createdAt);
+        const matchesSearch = 
+          project.projectName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          project.client?.clientName?.toLowerCase().includes(searchQuery.toLowerCase());
+        
+        if (!matchesSearch) return false;
 
-      if (filterMode === "MONTH") return projectDate.getMonth() === parseInt(selectedMonth);
-      if (filterMode === "CUSTOM" && dateRange.start && dateRange.end) {
-        return projectDate >= new Date(dateRange.start) && projectDate <= new Date(dateRange.end);
-      }
-      if (filterMode === "PRESET") {
-        if (activePreset === "ALL") return true;
-        const month = projectDate.getMonth();
-        if (activePreset === "Q1") return month >= 0 && month <= 2;
-        if (activePreset === "Q2") return month >= 3 && month <= 5;
-      }
-      return true;
-    });
+        if (filterMode === "MONTH") return projectDate.getMonth() === parseInt(selectedMonth);
+        if (filterMode === "CUSTOM" && dateRange.start && dateRange.end) {
+          return projectDate >= new Date(dateRange.start) && projectDate <= new Date(dateRange.end);
+        }
+        if (filterMode === "PRESET") {
+          if (activePreset === "ALL") return true;
+          const month = projectDate.getMonth();
+          if (activePreset === "Q1") return month >= 0 && month <= 2;
+          if (activePreset === "Q2") return month >= 3 && month <= 5;
+        }
+        return true;
+      })
+      .map((project) => {
+          const tasks = project.tasks ?? [];
+          const taskCount = tasks.length;
 
-    // 2. Calculate totals from the filtered list
+          // 1. Calculate Average Progress (%)
+          const totalTaskProgress = tasks.reduce((sum: number, t: any) => sum + (t.progress || 0), 0);
+          const avgProgress = taskCount > 0 ? Math.round(totalTaskProgress / taskCount) : 0;
+
+          // 2. Determine Overall Status
+          // If there are tasks and all of them are "COMPLETED", the project is COMPLETED.
+          // Otherwise, if there's at least one task, it's ACTIVE.
+          const allTasksDone = taskCount > 0 && tasks.every((t: any) => t.status === "COMPLETED");
+          const derivedStatus = allTasksDone ? "COMPLETED" : "ACTIVE";
+
+          // 3. Calculate Profit (Existing logic)
+          const calculatedNetProfit = tasks.reduce(
+            (sum: number, t: any) => sum + (t.taskNetProfit || 0), 
+            0
+          );
+
+          return { 
+            ...project, 
+            calculatedNetProfit, 
+            avgProgress, 
+            derivedStatus 
+          };
+        });
+
+    // 2. Calculate global totals for the StatCards
     const totals = filtered.reduce((acc, project) => {
-      const projectFinancials = (project.tasks ?? []).reduce((taskAcc: any, t: any) => {
-        const rentalCost = (t.taskExpenses ?? []).reduce((sum: number, r: any) => sum + (r.cost || 0), 0);
-        const internalBase = t.internalCost || 0;
-        const combinedCost = internalBase + rentalCost;
-        const marginAmount = combinedCost * ((t.margin || 0) / 100);
-
-        return {
-          revenue: taskAcc.revenue + (combinedCost + marginAmount),
-          profit: taskAcc.profit + marginAmount
-        };
-      }, { revenue: 0, profit: 0 });
-
       return {
-        totalRevenue: acc.totalRevenue + projectFinancials.revenue,
-        totalProfit: acc.totalProfit + projectFinancials.profit,
+        totalRevenue: acc.totalRevenue + (project.totalValue || 0),
+        totalProfit: acc.totalProfit + project.calculatedNetProfit, // Using the pre-calculated value
         totalTasks: acc.totalTasks + (project.tasks?.length || 0)
       };
     }, { totalRevenue: 0, totalProfit: 0, totalTasks: 0 });
@@ -118,8 +136,8 @@ export default function ProjectsPage() {
       {/* STATS SUMMARY */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         <StatCard label="Pipeline" value={`${filteredProjects.length} Entities`} icon={<Layers size={14} />} />
-        <StatCard label="Gross Revenue" value={`$${stats.totalRevenue.toLocaleString()}`} icon={<DollarSign size={14} />} color="blue" />
-        <StatCard label="Net Profit" value={`$${stats.totalProfit.toLocaleString()}`} icon={<TrendingUp size={14} />} color="emerald" />
+        <StatCard label="total Revenue" value={`$${stats.totalRevenue.toLocaleString()}`} icon={<DollarSign size={14} />} color="blue" />
+        <StatCard label="Gross Revenue" value={`$${stats.totalProfit.toLocaleString()}`} icon={<TrendingUp size={14} />} color="emerald" />
         <StatCard label="Avg Margin" value={`${stats.totalRevenue > 0 ? ((stats.totalProfit / stats.totalRevenue) * 100).toFixed(1) : 0}%`} icon={<PieChart size={14} />} color="purple" />
       </div>
 
@@ -172,40 +190,79 @@ export default function ProjectsPage() {
               <tr className="text-[10px] font-black uppercase text-muted-foreground tracking-widest bg-muted/30">
                 <th className="px-8 py-5">Project / Story</th>
                 <th className="px-8 py-5">Client</th>
-                <th className="px-8 py-5">Workflow</th>
+                <th className="px-8 py-5">Completion Status</th>
+                <th className="px-8 py-5">Financials</th>
                 <th className="px-8 py-5 text-right">Revenue</th>
               </tr>
             </thead>
             <tbody className="divide-y border-t">
-              {filteredProjects.map((project) => (
+            {filteredProjects.map((project) => {
+              // 1. Calculate the total profit for THIS specific project row
+              const projectProfit = (project.tasks ?? []).reduce((pAcc: number, t: any) => {
+                return pAcc + (t.taskNetProfit || 0);
+              }, 0);
+
+              return (
                 <tr key={project.id} className="hover:bg-muted/10 transition-colors group">
                   <td className="px-8 py-6">
                     <Link href={`/dashboard/projects/${project.id}`}>
-                        <span className="font-black text-sm uppercase tracking-tight group-hover:text-blue-600 block">
-                          {project.projectName}
-                        </span>
-                        <p className="text-[10px] text-muted-foreground line-clamp-1 mt-0.5 italic">
-                          {project.projectStory || "No mission brief provided."}
-                        </p>
+                      <span className="font-black text-sm uppercase tracking-tight group-hover:text-blue-600 block">
+                        {project.projectName}
+                      </span>
+                      <p className="text-[10px] text-muted-foreground line-clamp-1 mt-0.5 italic">
+                        {project.projectStory || "No mission brief provided."}
+                      </p>
                     </Link>
                   </td>
                   <td className="px-8 py-6 uppercase font-bold text-xs">{project.client?.clientName}</td>
+                  
+               
+                  {/* --- PROGRESS COLUMN --- */}
                   <td className="px-8 py-6">
-                    <div className="flex -space-x-2">
-                        {project.tasks?.map((task: any) => (
-                            <div key={task.id} title={task.taskType} className="w-7 h-7 rounded-full border-2 border-background bg-blue-100 flex items-center justify-center text-[8px] font-black text-blue-600 uppercase">
-                                {task.taskType.charAt(0)}
-                            </div>
-                        ))}
+                    <div className="w-full max-w-[140px] space-y-1.5">
+                      <div className="flex justify-between items-center text-[9px] font-black uppercase tracking-tighter">
+                        <span className={project.derivedStatus === "COMPLETED" ? "text-emerald-600" : "text-blue-600"}>
+                            {project.derivedStatus === "COMPLETED" ? "Deployment Complete" : "Active Deployment"}
+                        </span>
+                        <span className="text-foreground">{project.avgProgress}%</span>
+                      </div>
+                      
+                      <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden">
+                        <div 
+                          className={`h-full transition-all duration-500 rounded-full ${
+                            project.derivedStatus === "COMPLETED" ? "bg-emerald-500" : "bg-blue-600"
+                          }`}
+                          style={{ width: `${project.avgProgress}%` }}
+                        />
+                      </div>
                     </div>
                   </td>
+
+                  {/* --- FINANCIALS UI FIXED --- */}
+                  <td className="px-8 py-6">
+                    <div className="flex flex-col">
+                      <span className="font-black text-sm tracking-tight">
+                        {/* Optional chaining added for safety */}
+                        ${(project.totalValue || 0).toLocaleString()}
+                      </span>
+                      <div className="flex items-center gap-1 text-[10px] font-bold text-emerald-600 uppercase">
+                        <TrendingUp size={10} />
+                        {/* Use the calculated variable projectProfit here */}
+                        <span>${(project.calculatedNetProfit || 0).toLocaleString()} Net</span>
+                      </div>
+                    </div>
+                  </td>
+
                   <td className="px-8 py-6 text-right">
-                    <p className="font-black italic text-lg tracking-tighter">${stats.totalRevenue.toLocaleString()}</p>
+                    <p className="font-black italic text-lg tracking-tighter">
+                      ${(project.totalValue || 0).toLocaleString()}
+                    </p>
                     <p className="text-[9px] font-black uppercase text-muted-foreground">{project.invoiceStatus}</p>
                   </td>
                 </tr>
-              ))}
-            </tbody>
+              );
+            })}
+</tbody>
           </table>
         </div>
       </div>

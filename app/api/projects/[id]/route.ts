@@ -1,92 +1,74 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "@/lib/authOptions";
 
+/**
+ * GET: Fetch a single project by ID
+ * Restricted to the user's specific Agency
+ */
 export async function GET(
   req: Request,
-  // Make sure this is defined correctly
-  { params }: { params: Promise<{ id: string }> } 
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    // 1. Await the params object
-    const { id } = await params;
+    const session = await getServerSession(authOptions);
+    const agencyId = session?.user?.agencyId;
 
-    // 2. Validate the ID exists
-    if (!id) {
-      return NextResponse.json({ error: "ID is required" }, { status: 400 });
+    // 1. Authorization Check
+    if (!agencyId) {
+      return NextResponse.json(
+        { error: "Unauthorized: No Agency linked to user session" }, 
+        { status: 401 }
+      );
     }
 
+    const { id } = await params;
+
+    // 2. Database Query
     const project = await prisma.project.findUnique({
-      where: { id: id }, // Now id will be a string, not undefined
+      where: { 
+        id: id,
+        agencyId: agencyId // Security: Ensure users can't see projects from other agencies
+      },
       include: {
         client: true,
+        agency: true,
         tasks: {
           include: {
-            assignee: true,
-            assets: true,
+            assignees: true,
             taskExpenses: true,
-            comments: {
-              include: { author: true },
-              orderBy: { createdAt: "desc" }
-            }
+            todos: true,
+            assets: true,
+            agency: true,
           }
         }
       }
     });
 
+    // 3. Response Handling
     if (!project) {
-      return NextResponse.json({ error: "Project not found" }, { status: 404 });
+      return NextResponse.json(
+        { error: "Project not found or access denied" }, 
+        { status: 404 }
+      );
     }
 
     return NextResponse.json(project);
-  } catch (error) {
-    console.error("FETCH_PROJECT_ERROR:", error);
-    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
-  }
-}
 
-export async function DELETE(
-  req: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const resolvedParams = await params;
-    const id = resolvedParams.id;
+  } catch (error: any) {
+    console.error("ROUTE_ERROR_PROJECT_BY_ID:", error);
 
-    if (!id) {
-      return NextResponse.json({ error: "No ID provided" }, { status: 400 });
+    // 4. Handle MongoDB Atlas Specific Errors (P2010 = Timeout/Connection)
+    if (error.code === 'P2010' || error.message.includes('timeout')) {
+      return NextResponse.json(
+        { error: "Database connection timeout. Please verify your Network Access in Atlas." }, 
+        { status: 503 }
+      );
     }
 
-    // Use a Transaction to ensure either everything is deleted or nothing is
-    await prisma.$transaction(async (tx) => {
-      // 1. Delete Expenses linked to any Task in this Project
-      await tx.taskExpense.deleteMany({
-        where: {
-          task: {
-            projectId: id,
-          },
-        },
-      });
-
-      // 2. Delete Tasks linked to this Project
-      await tx.task.deleteMany({
-        where: {
-          projectId: id,
-        },
-      });
-
-      // 3. Finally, delete the Project itself
-      await tx.project.delete({
-        where: {
-          id: id,
-        },
-      });
-    });
-
-    return NextResponse.json({ message: "Project and all related data purged." });
-  } catch (error) {
-    console.error("Delete Project Error:", error);
     return NextResponse.json(
-      { error: "Failed to purge project data." },
+      { error: "An internal server error occurred" }, 
       { status: 500 }
     );
   }

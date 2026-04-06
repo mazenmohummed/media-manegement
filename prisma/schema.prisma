@@ -66,6 +66,7 @@ model Agency {
     comments       Comment[]
     notifications  Notification[]
     agencyInvoices AgencyInvoice[]
+    todos          Todo[]
 }
 
 type WorkingDay {
@@ -167,8 +168,10 @@ model User {
     agencyId String
     agency   Agency @relation(fields: [agencyId], references: [id])
 
+    taskIds String[] @map("taskIds")
+    tasks   Task[]   @relation(fields: [taskIds], references: [id])
+
     attendanceLogs AttendanceLog[]
-    tasks          Task[]
     comments       Comment[]
 
     createdAt     DateTime       @default(now())
@@ -206,9 +209,14 @@ model AttendanceLog {
     agencyId String
     agency   Agency @relation(fields: [agencyId], references: [id])
 
+    taskId String? @map("taskId")
+    task   Task?   @relation(fields: [taskId], references: [id])
+
     // Geo-Validation
-    checkInLat Float?
-    checkInLng Float?
+    checkInLat  Float?
+    checkInLng  Float?
+    checkOutLat Float?
+    checkOutLng Float?
 
     totalHours Float? // Calculated on check-out
 
@@ -280,19 +288,30 @@ model Project {
 // 4. Production & Rentals
 // --------------------------------------
 
+enum TaskStatus {
+    PENDING
+    ACTIVE
+    COMPLETED
+    CANCELLED
+}
+
 model Task {
-    id          String  @id @default(cuid()) @map("_id")
+    id          String     @id @default(cuid()) @map("_id")
     taskNo      String?
     taskType    String // UI: "CONSULTATION", "VIDEO", etc.
-    progress    Int     @default(0)
-    status      String
-    actualHours Float   @default(0.0) // Total hours logged here
+    progress    Int        @default(0)
+    status      TaskStatus @default(PENDING)
+    actualHours Float      @default(0.0) // Total hours logged here
 
     paymentStatus String @default("Pending")
 
     // UI: FINANCIALS PER DEPT
-    internalCost Float @default(0.0) // UI: "GROSS REVENUE ($)"
-    margin       Float @default(30.0) // UI: "MARGIN (%)"
+    totalValue    Float @default(0.0)
+    internalCost  Float @default(0.0) // UI: "GROSS REVENUE ($)"
+    margin        Float @default(30.0) // UI: "MARGIN (%)"
+    marginAmount  Float @default(0.0) // Calculation: (internalCost * margin) / 100
+    taskNetProfit Float @default(0.0)
+    realCost      Float @default(0.0)
 
     // UI: TIMELINE
     startDate DateTime // UI: "DEPLOYMENT START"
@@ -318,8 +337,8 @@ model Task {
     projectId String
     project   Project @relation(fields: [projectId], references: [id])
 
-    assigneeId String?
-    assignee   User?   @relation(fields: [assigneeId], references: [id])
+    assigneeIds String[] @map("assigneeIds")
+    assignees   User[]   @relation(fields: [assigneeIds], references: [id])
 
     assetIds String[]
     assets   Asset[]  @relation(fields: [assetIds], references: [id])
@@ -333,7 +352,9 @@ model Task {
     comments            Comment[]
     lastUpdateTimestamp DateTime  @updatedAt
 
-    createdAt DateTime @default(now())
+    createdAt      DateTime        @default(now())
+    attendanceLogs AttendanceLog[]
+    todos          Todo[]
 }
 
 model TaskExpense {
@@ -366,6 +387,25 @@ model Comment {
 
     agencyId String
     agency   Agency @relation(fields: [agencyId], references: [id])
+}
+
+model Todo {
+    id          String  @id @default(cuid()) @map("_id")
+    text        String // The content of the todo
+    description String?
+    completed   Boolean @default(false)
+    priority    String  @default("MEDIUM") // "HIGH", "MEDIUM", "LOW"
+    order       Int     @default(0) // For manual sorting in the UI
+
+    // Relations
+    taskId String
+    task   Task   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+    agencyId String
+    agency   Agency @relation(fields: [agencyId], references: [id])
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
 }
 
 // --------------------------------------

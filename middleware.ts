@@ -1,23 +1,28 @@
-// middleware.ts
 import { withAuth } from "next-auth/middleware";
 import { NextResponse } from "next/server";
+
+// middleware.ts
 
 export default withAuth(
   function middleware(req) {
     const token = req.nextauth.token;
     const { pathname } = req.nextUrl;
 
-    // 1. Define the Onboarding path
+    const isApiRoute = pathname.startsWith("/api");
     const isOnboardingPage = pathname === "/onboarding";
 
-    // 2. The "Redirect to Onboarding" Logic
-    // If they are logged in BUT have no agencyId, and AREN'T already on onboarding...
-    if (token && !token.agencyId && !isOnboardingPage) {
+    // 1. Redirect to Onboarding: ONLY for Pages, NEVER for API
+    if (token && !token.agencyId && !isOnboardingPage && !isApiRoute) {
       return NextResponse.redirect(new URL("/onboarding", req.url));
     }
 
-    // 3. The "Already Finished" Logic
-    // If they HAVE an agencyId but try to go back to /onboarding, send them to dashboard
+    // 2. STOP: If it's an API route, do not allow any redirects to happen here.
+    // If the token is missing, withAuth's 'authorized' callback handles the 401.
+    if (isApiRoute) {
+      return NextResponse.next(); 
+    }
+
+    // 3. Prevent Re-onboarding for Pages
     if (token?.agencyId && isOnboardingPage) {
       return NextResponse.redirect(new URL("/dashboard", req.url));
     }
@@ -26,17 +31,24 @@ export default withAuth(
   },
   {
     callbacks: {
-      // This ensures the middleware only triggers for authenticated users
       authorized: ({ token }) => !!token,
     },
   }
 );
 
-// 2. The Secure Matcher
+
 export const config = {
   matcher: [
+    /*
+     * Match all request paths except for the ones starting with:
+     * - api/auth (NextAuth internal routes)
+     * - _next/static (static files)
+     * - _next/image (image optimization files)
+     * - favicon.ico (favicon file)
+     * - public folder files
+     */
     "/dashboard/:path*", 
-    "/onboarding",        // <--- Essential: Must be here to check token status
+    "/onboarding",
     "/api/finance/:path*",
     "/api/projects/:path*",
     "/api/employees/:path*",

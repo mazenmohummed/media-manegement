@@ -1,51 +1,145 @@
 "use client";
 
-import React, { useEffect, useState, use } from "react";
+import React, { useEffect, useState, use, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import moment from "moment";
+import { TaskForm } from "@/components/main/task/task-details";
+import { FeedbackStream } from "@/components/main/task/feedback-stream";
+import { DeploymentSession } from "@/components/main/task/deployment-session";
+import { FinancialProtocol } from "@/components/main/task/financial-protocol";
+import { DeploymentHistory } from "@/components/main/task/deployment-history";
+import { ProjectCore } from "@/components/main/task/project-core";
+import { ExternalExpenses,  } from "@/components/main/task/external-expeses";
+import { TodoList } from "@/components/main/task/TodoList";
+import { useSession } from "next-auth/react";
+import { ExpenseModal } from "@/components/main/task/expense-modal";
+
+// --- HELPERS ---
+function getDistance(lat1: number, lon1: number, lat2: number, lon2: number) {
+  const R = 6371e3; // metres
+  const φ1 = (lat1 * Math.PI) / 180;
+  const φ2 = (lat2 * Math.PI) / 180;
+  const Δφ = ((lat2 - lat1) * Math.PI) / 180;
+  const Δλ = ((lon2 - lon1) * Math.PI) / 180;
+
+  const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+            Math.cos(φ1) * Math.cos(φ2) *
+            Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+  return R * c; 
+}
+
 
 export default function TaskDetailsPage({ params }: { params: Promise<{ id: string }> }) {
   const unwrappedParams = use(params);
+  const taskIdFromUrl = unwrappedParams.id;
   const id = unwrappedParams.id;
   const router = useRouter();
+
+ 
+  const { data: session } = useSession();
+  const currentUser = session?.user;
 
   const [task, setTask] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [newComment, setNewComment] = useState("");
+  const [isWorking, setIsWorking] = useState(false);
+  const [geoStatus, setGeoStatus] = useState<{distance: number, radius: number, name: string} | null>(null);
+  const [activeSeconds, setActiveSeconds] = useState(0); 
+
 
   const [showRentalModal, setShowRentalModal] = useState(false);
-  const [rentalData, setRentalData] = useState({ itemName: "", cost: "" });
+  const [rentalData, setRentalData] = useState({ itemName: "", cost: "", category: "RENTAL", description: "" });
 
+  const totalTodos = task?.todos?.length || 0;
+  const completedTodos = task?.todos?.filter((t: any) => t.completed).length || 0;
+  const calculatedProgress = useMemo(() => {
+  if (totalTodos > 0) {
+    return Math.min(100, Math.max(0, Math.round((completedTodos / totalTodos) * 100)));
+  }
+  // 1. Fix the fallback inside the function
+  return Math.min(100, Math.max(0, task?.progress || 0));
+  
+// 2. Fix the dependency array here:
+}, [totalTodos, completedTodos, task?.progress]);
   useEffect(() => {
-    fetchTask();
+    if (id) fetchTask();
   }, [id]);
 
-  const fetchTask = () => {
-    fetch(`/api/tasks/${id}`)
-      .then((res) => res.json())
-      .then((data) => {
-        setTask(data);
-        setLoading(false);
-      });
-  };
+  useEffect(() => {
+  const onFocus = () => fetchTask();
+  window.addEventListener("focus", onFocus);
+  return () => window.removeEventListener("focus", onFocus);
+}, [id]);
 
-  const handleUpdate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSaving(true);
+  
+useEffect(() => {
+  if (!task || !currentUser?.id) return; // Wait for both task and session
+
+  let interval: NodeJS.Timeout;
+
+  const activeLog = task?.attendanceLogs?.find(
+  (log: any) => log.userId === currentUser?.id && !log.checkOutTime
+);
+
+  if (activeLog) {
+    setIsWorking(true);
+    const calculateElapsed = () => {
+      const startTime = new Date(activeLog.checkInTime).getTime();
+      const secondsElapsed = Math.floor((Date.now() - startTime) / 1000);
+      setActiveSeconds(Math.max(0, secondsElapsed));
+    };
+    calculateElapsed(); 
+    interval = setInterval(calculateElapsed, 1000);
+  } else {
+    if (!saving) {
+      setIsWorking(false);
+      setActiveSeconds(0);
+    }
+  }
+
+  return () => clearInterval(interval);
+}, [task?.attendanceLogs, currentUser?.id, saving]);// Watch specific property
+
+
+  const fetchTask = async () => {
     try {
-      await fetch(`/api/tasks/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(task),
-      });
-      router.refresh();
+      const res = await fetch(`/api/tasks/${id}`);
+      if (!res.ok) throw new Error("Node unreachable");
+      const data = await res.json();
+      setTask(data);
     } catch (err) {
-      console.error(err);
+      console.error("Transmission Error:", err);
     } finally {
-      setSaving(false);
+      setLoading(false);
     }
   };
+
+  // Inside TaskDetailsPage.tsx
+
+const handleUpdate = async (e: React.FormEvent) => {
+  e.preventDefault();
+  setSaving(true);
+  try {
+    await fetch(`/api/tasks/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ 
+        ...task, 
+        progress: parseInt(task.progress),
+        // Ensure assigneeIds is sent as the array Prisma expects
+        assigneeIds: task.assigneeIds 
+      }),
+    });
+    fetchTask();
+  } catch (err) { 
+    console.error("Sync Error:", err); 
+  } finally { 
+    setSaving(false); 
+  }
+};
 
   const postComment = async () => {
     if (!newComment.trim()) return;
@@ -56,296 +150,288 @@ export default function TaskDetailsPage({ params }: { params: Promise<{ id: stri
         body: JSON.stringify({ text: newComment }),
       });
       if (res.ok) {
-        const added = await res.json();
-        setTask((prev: any) => ({
-          ...prev,
-          comments: [...(prev.comments || []), added],
-        }));
         setNewComment("");
+        fetchTask();
       }
-    } catch (err) {
-      console.error(err);
-    }
+    } catch (err) { console.error(err); }
   };
 
   const addRental = async () => {
+    setSaving(true);
     try {
       const res = await fetch(`/api/tasks/${id}/rentals`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(rentalData),
+        body: JSON.stringify({ ...rentalData, cost: parseFloat(rentalData.cost) }),
       });
       if (res.ok) {
         setShowRentalModal(false);
-        setRentalData({ itemName: "", cost: "" });
+        setRentalData({ itemName: "", cost: "", category: "RENTAL", description: "" });
         fetchTask();
       }
-    } catch (err) {
-      console.error(err);
-    }
+    } catch (err) { console.error(err); }
+    finally { setSaving(false); }
   };
 
-  if (loading)
-    return (
-      <div className="p-20 text-center font-black animate-pulse uppercase tracking-widest">
-        Accessing Production Node...
-      </div>
-    );
+  const toggleWorkSession = async () => {
+  if (!navigator.geolocation) return alert("Geolocation not supported.");
+  if (!task) return; 
+  
+  setSaving(true);
+
+  navigator.geolocation.getCurrentPosition(
+    async (pos) => {
+      const { latitude: uLat, longitude: uLng } = pos.coords;
+
+      // 1. HANDLE STOP ACTION
+      if (isWorking) {
+        console.log("Initiating STOP action...");
+        await executeSessionUpdate("STOP", uLat, uLng);
+        return; // Exit here
+      }
+
+      // 2. HANDLE START ACTION
+      console.log("Initiating START logic...");
+      
+      const tLat = task.latitude ? parseFloat(task.latitude) : NaN;
+      const tLng = task.longitude ? parseFloat(task.longitude) : NaN;
+      const aLat = task.agency?.latitude ? parseFloat(task.agency.latitude) : NaN;
+      const aLng = task.agency?.longitude ? parseFloat(task.agency.longitude) : NaN;
+
+      let isWithinRange = false;
+      let activeLocationName = "Remote/Field";
+      let activeDistance = 0;
+      let activeRadius = 200;
+
+      // Check Task Site
+      if (!isNaN(tLat) && !isNaN(tLng)) {
+        const tRad = parseFloat(task.radius) || 200;
+        activeDistance = getDistance(uLat, uLng, tLat, tLng);
+        if (activeDistance <= tRad) {
+          isWithinRange = true;
+          activeLocationName = task.locationName || "Task Site";
+          activeRadius = tRad;
+        }
+      }
+
+      // Check Agency (if not in task site)
+      if (!isWithinRange && !isNaN(aLat) && !isNaN(aLng)) {
+        const aRad = parseFloat(task.agency.radius) || 100;
+        const distToAgency = getDistance(uLat, uLng, aLat, aLng);
+        if (distToAgency <= aRad) {
+          isWithinRange = true;
+          activeLocationName = "Agency Office";
+          activeDistance = distToAgency;
+          activeRadius = aRad;
+        }
+      }
+
+      setGeoStatus({ distance: activeDistance, radius: activeRadius, name: activeLocationName });
+
+      // Protocol Enforcement
+      const userType = task.assignees?.find((u: any) => u.id === currentUser?.id)?.userType || "FREELANCER";
+      const isStaff = userType === "FULL_TIME" || userType === "PART_TIME";
+      const hasDefinedTargets = !isNaN(tLat) || !isNaN(aLat);
+
+      if (hasDefinedTargets && (isStaff || !isNaN(tLat)) && !isWithinRange) {
+        setSaving(false);
+        const distMsg = activeDistance ? `${Math.round(activeDistance)}m` : "an unknown distance";
+        return alert(`Access Denied: You are ${distMsg} away from authorized zones.`);
+      }
+
+      // Only START if we haven't exited from a STOP
+      await executeSessionUpdate("START", uLat, uLng);
+    },
+    (error) => {
+      setSaving(false);
+      alert(error.code === 1 ? "Please enable GPS permissions." : "GPS Timeout. Try again.");
+    },
+    { enableHighAccuracy: true, timeout: 10000 }
+  );
+};
+
+  const executeSessionUpdate = async (action: "START" | "STOP", lat: number, lng: number) => {
+  try {
+    const res = await fetch(`/api/tasks/${id}/work-session`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, lat, lng }),
+    });
+
+    if (res.ok) {
+      if (action === "STOP") {
+        setActiveSeconds(0);
+        setGeoStatus(null);
+      }
+      await fetchTask(); // ← re-fetch so attendanceLogs updates and useEffect drives isWorking correctly
+    } else {
+      const errData = await res.json();
+      alert(errData.error || "Session update failed");
+    }
+  } catch (err) {
+    console.error("Network Error:", err);
+  } finally {
+    setSaving(false);
+  }
+};
+
+  if (loading) return (
+    <div className="p-20 text-center font-black animate-pulse uppercase tracking-widest">
+      Accessing Production Node...
+    </div>
+  );
+
+  const internalCost = task.internalCost || 0;
+  const externalRentalsTotal = (task.taskExpenses || []).reduce((acc: number, curr: any) => acc + curr.cost, 0);
+  const totalBase = internalCost + externalRentalsTotal;
+  const profitMargin = totalBase * (task.margin / 100);
+
+
+
+  // Total Hours Calculation (Summing all completed logs + active session)
+  const historicalSeconds = (task.attendanceLogs || []).reduce((acc: number, log: any) => {
+    if (log.checkOutTime) {
+      return acc + (new Date(log.checkOutTime).getTime() - new Date(log.checkInTime).getTime()) / 1000;
+    }
+    return acc;
+  }, 0);
+
+  const totalElapsedSeconds = historicalSeconds + activeSeconds;
+  const formattedTotalHours = (totalElapsedSeconds / 3600).toFixed(2);
 
   return (
     <div className="max-w-6xl mx-auto p-8 space-y-8 bg-background min-h-screen relative">
-      {/* HEADER */}
-      <div className="flex justify-between items-center border-b border-border pb-6">
-        <button
-          onClick={() => router.back()}
-          className="text-[10px] font-black uppercase hover:underline opacity-50"
-        >
-          ← Back to Console
-        </button>
-        <span className="text-[10px] font-black uppercase bg-blue-600 text-white px-4 py-1.5 rounded-full shadow-lg shadow-blue-500/20">
-          {task.status}
-        </span>
-      </div>
+  {/* TOP BAR */}
+  <div className="flex justify-between items-center border-b border-border pb-6">
+    <button onClick={() => router.back()} className="text-[10px] font-black uppercase hover:underline opacity-50">
+      ← Back to Console
+    </button>
+    {/* The background color logic for the status badge */}
+  <span className={`text-[10px] font-black uppercase text-white px-4 py-1.5 rounded-full shadow-lg 
+    ${task.status === "ACTIVE" ? "bg-emerald-500 shadow-emerald-500/20" : "bg-blue-600 shadow-blue-500/20"}`}>
+    {task.status}
+  </span>
+  </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* LEFT COLUMN */}
-        <div className="lg:col-span-2 space-y-8">
-          <form
-            onSubmit={handleUpdate}
-            className="space-y-6 bg-card border border-border p-8 rounded-[2.5rem] shadow-sm"
-          >
-            <div>
-              <h1 className="text-4xl font-black uppercase italic tracking-tighter leading-none">
-                {task.taskType}
-              </h1>
-              <p className="text-blue-600 font-bold uppercase text-[10px] tracking-[0.3em] mt-2">
-                {task.project?.projectName}
-              </p>
-            </div>
+  <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+    
+    {/* LEFT SIDE: MAIN CONTROLS (2/3 width) */}
+    <div className="lg:col-span-2 space-y-8">
+      {/* UPDATE FORM */}
+      <TaskForm 
+            task={task} 
+            setTask={setTask} 
+            saving={saving} 
+            calculatedProgress={calculatedProgress}
+            totalTodos={totalTodos}
+            completedTodos={completedTodos}
+            handleUpdate={async (e: any) => {
+              e.preventDefault();
+              setSaving(true);
+              await fetch(`/api/tasks/${id}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(task),
+              });
+              fetchTask();
+              setSaving(false);
+            }}
+          />
 
-            <div className="grid grid-cols-2 gap-6 pt-4">
-              <div className="space-y-2">
-                <label className="text-[10px] font-black text-muted-foreground uppercase">
-                  Progress {task.progress}%
-                </label>
-                <input
-                  type="range"
-                  min="0"
-                  max="100"
-                  value={task.progress}
-                  onChange={(e) => setTask({ ...task, progress: e.target.value })}
-                  className="w-full accent-blue-600 cursor-none"
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-[10px] font-black text-muted-foreground uppercase">
-                  Node Status
-                </label>
-                <select
-                  value={task.status}
-                  onChange={(e) => setTask({ ...task, status: e.target.value })}
-                  className="w-full bg-muted border-none rounded-xl p-3 text-xs font-black uppercase outline-none"
-                >
-                  <option value="PENDING">Pending</option>
-                  <option value="IN_PROGRESS">Active</option>
-                  <option value="COMPLETED">Finished</option>
-                </select>
-              </div>
-            </div>
 
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-muted-foreground uppercase">
-                Production Scope
-              </label>
-              <textarea
-                className="w-full bg-muted border-none rounded-[1.5rem] p-4 text-sm font-medium min-h-[100px] outline-none"
-                value={task.description || ""}
-                onChange={(e) => setTask({ ...task, description: e.target.value })}
-              />
-            </div>
-            <button
-              type="submit"
-              disabled={saving}
-              className="w-full py-4 bg-foreground text-background rounded-2xl font-black uppercase text-[10px] tracking-widest hover:invert transition-all"
-            >
-              {saving ? "Syncing..." : "Commit Update"}
-            </button>
-          </form>
+          <TodoList 
+            taskId={id} 
+            todos={task.todos || []} 
+            onUpdate={fetchTask}
+            onCommit={() => handleUpdate({ preventDefault: () => {} } as any)} 
+          />
 
-          {/* CHAT / COMMENTS BOX */}
-          <section className="bg-card border border-border rounded-[2.5rem] overflow-hidden flex flex-col h-[450px]">
-            <div className="p-6 border-b border-border bg-muted/30">
-              <h3 className="text-[10px] font-black uppercase tracking-widest">
-                Live Feedback Stream
-              </h3>
-            </div>
-            <div className="flex-1 overflow-y-auto p-6 space-y-4">
-              {task.comments?.map((c: any) => (
-                <div key={c.id} className="flex flex-col gap-1 max-w-[80%]">
-                  <span className="text-[8px] font-black uppercase text-blue-600">
-                    {c.author?.name || "Mazen"}
-                  </span>
-                  <div className="bg-muted p-3 rounded-2xl rounded-tl-none text-xs font-medium">
-                    {c.text}
-                  </div>
-                  <span className="text-[7px] font-bold text-muted-foreground">
-                    {moment(c.createdAt).fromNow()}
-                  </span>
-                </div>
-              ))}
-            </div>
-            <div className="p-4 bg-muted/50 border-t border-border flex gap-2">
-              <input
-                type="text"
-                placeholder="Update node status..."
-                className="flex-1 bg-background border-none rounded-xl px-4 py-2 text-xs font-bold outline-none"
-                value={newComment}
-                onChange={(e) => setNewComment(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && postComment()}
-              />
-              <button
-                onClick={postComment}
-                className="bg-blue-600 text-white px-4 rounded-xl text-[10px] font-black uppercase"
-              >
-                Send
-              </button>
-            </div>
-          </section>
-        </div>
+          
 
-        {/* RIGHT COLUMN */}
-        <div className="space-y-6">
-          {/* PROJECT RESOURCES */}
-          <div className="bg-blue-600 text-white p-8 rounded-[2.5rem] shadow-xl space-y-4">
-            <h3 className="text-[10px] font-black uppercase tracking-widest opacity-70">
-              Project Core
-            </h3>
-            <div className="space-y-4">
-              <div>
-                <p className="text-[8px] font-black uppercase opacity-60 mb-1">
-                  Project Story
-                </p>
-                <p className="text-xs font-bold italic line-clamp-4">
-                  "{task.project?.projectStory || "No story defined."}"
-                </p>
-              </div>
-              
-              {/* UTILIZED ASSETS REPLACING PRIMARY CLOUD */}
-              <div>
-                <p className="text-[10px] font-black uppercase text-white mb-3 tracking-widest opacity-80">Utilized Assets</p>
-                <div className="flex flex-wrap gap-2">
-                  {task.assets?.map((asset: any) => (
-                    <span key={asset.id} className="px-3 py-1 bg-white/20 text-white text-[10px] font-bold rounded-lg border border-white/30">
-                      {asset.assetName}
-                    </span>
-                  ))}
-                  {(!task.assets || task.assets.length === 0) && (
-                    <p className="text-[10px] italic opacity-50 uppercase font-black">No internal assets assigned.</p>
-                  )}
-                </div>
-              </div>
-
-              {task.project?.cloudLink && (
-                <a
-                  href={task.project.cloudLink}
-                  target="_blank"
-                  className="block w-full bg-white/10 hover:bg-white/20 text-center py-3 rounded-xl text-[10px] font-black uppercase transition-all border border-white/10"
-                >
-                  Project Cloud ↗
-                </a>
-              )}
-            </div>
-          </div>
-
-          {/* FINANCIALS */}
-          <div className="bg-foreground text-background p-8 rounded-[2.5rem] shadow-xl space-y-6">
-            <h3 className="text-[10px] font-black uppercase tracking-widest opacity-60">
-              Financial Protocol
-            </h3>
-            <div className="space-y-4">
-              <div>
-                <p className="text-[8px] font-black opacity-60 uppercase">Gross Revenue</p>
-                <p className="text-2xl font-black">${task.grossRevenue}</p>
-              </div>
-              <div className="pt-4 border-t border-background/10">
-                <p className="text-[8px] font-black opacity-60 uppercase">Net Potential (at {task.margin}%)</p>
-                <p className="text-2xl font-black text-emerald-400">
-                  ${(task.grossRevenue * (task.margin / 100)).toFixed(2)}
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* RENTALS */}
-          <div className="bg-card border border-border p-8 rounded-[2.5rem] space-y-6 shadow-sm">
-            <div className="flex justify-between items-center">
-              <h3 className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">
-                External Rentals
-              </h3>
-              <button
-                onClick={() => setShowRentalModal(true)}
-                className="text-[18px] font-black text-blue-600 hover:scale-125 transition-transform"
-              >
-                +
-              </button>
-            </div>
-            <div className="space-y-3">
-              {task.externalRentals?.length > 0 ? (
-                task.externalRentals.map((r: any) => (
-                  <div
-                    key={r.id}
-                    className="flex justify-between items-center bg-muted/50 p-4 rounded-2xl border border-border/50"
-                  >
-                    <span className="text-[10px] font-bold uppercase">{r.itemName}</span>
-                    <span className="text-xs font-black text-emerald-600">${r.cost}</span>
-                  </div>
-                ))
-              ) : (
-                <p className="text-[10px] font-black uppercase opacity-30 text-center py-4">No external assets</p>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* RENTAL MODAL OVERLAY */}
-      {showRentalModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-card border border-border w-full max-w-md rounded-[2.5rem] p-8 space-y-6 shadow-2xl">
-            <h2 className="text-xl font-black uppercase italic">Provision Asset</h2>
-            <div className="space-y-4">
-              <input
-                type="text"
-                placeholder="Item Name (e.g. Sony A7IV)"
-                className="w-full bg-muted p-4 rounded-2xl text-xs font-bold outline-none"
-                value={rentalData.itemName}
-                onChange={(e) => setRentalData({ ...rentalData, itemName: e.target.value })}
-              />
-              <input
-                type="number"
-                placeholder="Cost ($)"
-                className="w-full bg-muted p-4 rounded-2xl text-xs font-bold outline-none"
-                value={rentalData.cost}
-                onChange={(e) => setRentalData({ ...rentalData, cost: e.target.value })}
-              />
-            </div>
-            <div className="flex gap-3 pt-2">
-              <button
-                onClick={() => setShowRentalModal(false)}
-                className="flex-1 py-4 text-[10px] font-black uppercase opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={addRental}
-                className="flex-1 py-4 bg-blue-600 text-white rounded-2xl text-[10px] font-black uppercase shadow-lg shadow-blue-500/30"
-              >
-                Commit Asset
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* FEEDBACK STREAM */}
+      <FeedbackStream 
+    comments={task.comments}
+    newComment={newComment}
+    setNewComment={setNewComment}
+    postComment={postComment}
+  />
     </div>
+
+    {/* RIGHT SIDE: PROTOCOLS & DATA (1/3 width) */}
+    <div className="space-y-6">
+      {/* RESOURCE UTILIZATION */}
+      <div className="bg-foreground text-background p-8 rounded-[2.5rem] shadow-sm space-y-8">
+        <h3 className="text-[10px] font-black uppercase tracking-widest opacity-60">Resource Utilization</h3>
+        <div className="flex justify-between items-end">
+          <div>
+            <p className="text-[8px] font-black opacity-60 uppercase">Aggregated Labor</p>
+            <p className="text-4xl font-black">{formattedTotalHours}<span className="text-sm ml-1">HRS</span></p>
+          </div>
+          <div className="text-right">
+            <p className="text-[8px] font-black opacity-60 uppercase">Session Count</p>
+            <p className="text-xl font-black">{task.attendanceLogs?.length || 0}</p>
+          </div>
+        </div>
+      </div>
+
+      {/* DEPLOYMENT SESSION */}
+      <DeploymentSession 
+    isWorking={isWorking}
+    actualHours={task.actualHours}
+    activeSeconds={activeSeconds}
+    saving={saving}
+    geoStatus={geoStatus}
+    toggleWorkSession={toggleWorkSession}
+  />
+
+      {/* DEPLOYMENT HISTORY */}
+      <DeploymentHistory logs={task.attendanceLogs} />
+
+      {/* PROJECT CORE */}
+      <ProjectCore project={task.project} assets={task.assets} />
+
+      {/* FINANCIAL PROTOCOL */}
+      <FinancialProtocol 
+        internalCost={internalCost} 
+        margin={task.margin} 
+      />
+
+      {/* EXTERNAL RENTALS */}
+      <ExternalExpenses 
+            expenses={task.taskExpenses} 
+            onAddClick={() => setShowRentalModal(true)} 
+          />
+            
+          
+          {showRentalModal && (
+            <ExpenseModal
+              isOpen={showRentalModal}
+              onClose={() => setShowRentalModal(false)}
+              saving={saving}
+              onSave={async (data) => {
+                setSaving(true);
+                try {
+                  const res = await fetch(`/api/tasks/${id}/rentals`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ ...data, cost: parseFloat(data.cost) }),
+                  });
+                  if (res.ok) {
+                    setShowRentalModal(false);
+                    fetchTask(); // Refresh the list
+                  }
+                } catch (err) {
+                  console.error(err);
+                } finally {
+                  setSaving(false);
+                }
+              }}
+            />
+          )}
+
+    </div>
+
+  </div>
+</div>
   );
 }

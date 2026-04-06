@@ -15,36 +15,59 @@ export async function GET(req: Request) {
       where: { agencyId: agencyId },
       include: {
         tasks: {
-          select: {
-            internalCost: true, // Updated from grossRevenue
-            margin: true,
-            status: true,
-          }
+          include: {
+            taskExpenses: true, // Fetch expenses linked to tasks
+          },
         },
-        attendanceLogs: {
-          take: 10,
-          orderBy: { date: 'desc' }
-        }
+        attendanceLogs: true, // Fetch all logs to calculate total hours
+        payouts: true,        // Fetch payouts (bonuses, commissions, etc.)
       },
       orderBy: { name: "asc" },
     });
 
     const formattedEmployees = employees.map((emp) => {
-      // Calculate Revenue generated based on internalCost of completed tasks
+      // 1. Calculate Revenue
       const totalRevenue = emp.tasks
-        .filter((t) => t.status === "COMPLETED")
+        .filter((t) => t.status?.toUpperCase() === "COMPLETED") // Forces case-insensitive check
         .reduce((sum, t) => sum + (t.internalCost || 0), 0);
 
-      // Profit Contribution: (Cost * Margin%)
+      // 2. Calculate Working Hours from AttendanceLogs
+      const workingHours = emp.attendanceLogs.reduce(
+        (acc, log) => acc + (log.totalHours || 0), 
+        0
+      );
+
+      // 3. Calculate Extra Payouts (Bonuses/Commissions)
+      const extraPayouts = emp.payouts.reduce(
+        (acc, p) => acc + (p.amount || 0), 
+        0
+      );
+
+      // 4. Calculate Task-based Expenses
+      const expenses = emp.tasks.reduce((acc, t) => {
+        const taskExpenseSum = (t.taskExpenses || []).reduce(
+          (sum, exp) => sum + (exp.cost || 0), 
+          0
+        );
+        return acc + taskExpenseSum;
+      }, 0);
+
+      // 5. Profit Contribution
       const profitContribution = emp.tasks
         .filter((t) => t.status === "COMPLETED")
         .reduce((sum, t) => sum + ((t.internalCost || 0) * ((t.margin || 0) / 100)), 0);
+
+      // 6. Late Days Count
+      const lateDays = emp.attendanceLogs.filter(log => log.isLate).length;
 
       return {
         ...emp,
         totalRevenue,
         profitContribution,
-        // Using efficiencyRate from schema, or defaulting to 1.0
+        workingHours: parseFloat(workingHours.toFixed(1)),
+        extraPayouts,
+        expenses,
+        lateDays,
         efficiencyRate: emp.efficiencyRate || 1.0,
       };
     });

@@ -1,9 +1,38 @@
-import type { NextAuthOptions } from "next-auth";
+import { NextAuthOptions, DefaultSession } from "next-auth";
 import { PrismaAdapter } from "@next-auth/prisma-adapter";
 import { db } from "@/lib/db"; 
 import CredentialsProvider from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
+import { UserRole } from "@prisma/client";
 
+// --- TYPESCRIPT AUGMENTATION ---
+declare module "next-auth" {
+  interface Session {
+    user: {
+      id: string;
+      agencyId: string;
+      agencyName?: string | null;
+      role: UserRole | "SUPERADMIN";
+    } & DefaultSession["user"]
+  }
+
+  interface User {
+    id: string;
+    agencyId: string;
+    role: UserRole;
+  }
+}
+
+declare module "next-auth/jwt" {
+  interface JWT {
+    id: string;
+    agencyId: string;
+    agencyName: string | null; // This now matches Session perfectly
+    role: UserRole | "SUPERADMIN";
+  }
+}
+
+// --- CONFIGURATION ---
 export const authOptions: NextAuthOptions = {
   adapter: PrismaAdapter(db),
   session: { strategy: "jwt" },
@@ -44,35 +73,36 @@ export const authOptions: NextAuthOptions = {
   ],
   callbacks: {
     async jwt({ token, user, trigger, session }) {
-      // 1. INITIAL SIGN-IN & SUPERADMIN ELEVATION
+      // 1. Initial Sign-in logic
       if (user) {
         token.id = user.id;
         token.agencyId = user.agencyId;
         
-        // --- MAZEN'S SUPERADMIN CHECK ---
-        // Change "mazen@example.com" to your actual email
+        // Superadmin check for Mazen
         if (user.email === "mazn39998@gmail.com") {
           token.role = "SUPERADMIN";
         } else {
-          token.role = user.role;
+          token.role = user.role as UserRole;
         }
       }
 
-      // 2. CLIENT-SIDE UPDATES (Onboarding/Settings)
+      // 2. Handle Client Updates
       if (trigger === "update" && session) {
         if (session.agencyId) token.agencyId = session.agencyId;
         if (session.agencyName) token.agencyName = session.agencyName;
         if (session.role) token.role = session.role;
       }
 
-      // 3. PERSISTENCE & AGENCY NAME LOOKUP
-      // Only lookup agency name if they aren't a Superadmin (or if you want a system name)
+      // 3. Agency Name lookup logic (Database fetch)
       if (token.agencyId && !token.agencyName) {
         const agency = await db.agency.findUnique({
-          where: { id: token.agencyId as string },
+          where: { id: token.agencyId },
           select: { agencyName: true }
         });
-        token.agencyName = agency?.agencyName || "System Infrastructure";
+        
+        // Ensure we provide a string or null, never 'undefined' 
+        // to avoid triggering type modifier conflicts
+        token.agencyName = agency?.agencyName ?? null;
       } else if (token.role === "SUPERADMIN" && !token.agencyName) {
         token.agencyName = "Global Command";
       }
@@ -82,10 +112,10 @@ export const authOptions: NextAuthOptions = {
 
     async session({ session, token }) {
       if (token && session.user) {
-        session.user.id = token.id as string;
-        session.user.agencyId = token.agencyId as string;
-        session.user.agencyName = token.agencyName as string;
-        session.user.role = token.role as string;
+        session.user.id = token.id;
+        session.user.agencyId = token.agencyId;
+        session.user.agencyName = token.agencyName;
+        session.user.role = token.role;
       }
       return session;
     }

@@ -3,6 +3,17 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/authOptions";
 import { db } from "@/lib/db"; // Point to your Prisma client
 
+
+const DEFAULT_WORKING_HOURS = [
+  { day: "Monday", openTime: "09:00", closeTime: "17:00", isClosed: false },
+  { day: "Tuesday", openTime: "09:00", closeTime: "17:00", isClosed: false },
+  { day: "Wednesday", openTime: "09:00", closeTime: "17:00", isClosed: false },
+  { day: "Thursday", openTime: "09:00", closeTime: "17:00", isClosed: false },
+  { day: "Friday", openTime: "09:00", closeTime: "17:00", isClosed: false },
+  { day: "Saturday", openTime: "09:00", closeTime: "17:00", isClosed: true },
+  { day: "Sunday", openTime: "09:00", closeTime: "17:00", isClosed: true },
+];
+
 export async function POST(req: Request) {
   const session = await getServerSession(authOptions);
   
@@ -36,6 +47,7 @@ export async function POST(req: Request) {
           agencyName,
           operatorName: session.user.name || "System Admin",
           email: session.user.email!,
+          workingHours: DEFAULT_WORKING_HOURS,
         },
       });
 

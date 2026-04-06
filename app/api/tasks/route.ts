@@ -21,7 +21,7 @@ export async function GET(req: Request) {
         project: {
           select: { projectName: true, projectNo: true }
         },
-        assignee: {
+       assignees: {
           select: { name: true, role: true, userType: true }
         },
         assets: true,
