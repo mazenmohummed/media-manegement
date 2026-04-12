@@ -14,21 +14,24 @@ export async function GET() {
   const agencyId = session.user.agencyId;
 
   try {
-    // 2. FETCH DATA (All filtered by agencyId)
+    // 2. FETCH DATA (All scoped by agencyId)
     const [tasks, attendance, usersWithLeaves] = await Promise.all([
-      // Fetch Production Tasks
+      // Fetch Production Tasks with their assigned creatives
       prisma.task.findMany({
         where: { agencyId },
-        include: { project: true, assignee: true },
+        include: { 
+          project: true, 
+          assignees: true // Plural to match your many-to-many schema
+        },
       }),
       
-      // Fetch Attendance Logs
+      // Fetch Attendance Logs for office presence
       prisma.attendanceLog.findMany({
         where: { agencyId },
         include: { user: true },
       }),
       
-      // Fetch Team Leaves (Filtering the User model by agencyId)
+      // Fetch Team Leaves
       prisma.user.findMany({
         where: { agencyId },
         select: { name: true, leaves: true },
@@ -45,8 +48,11 @@ export async function GET() {
       resource: { 
         type: "TASK", 
         status: t.status, 
-        assignee: t.assignee?.name,
-        color: "#2563eb" // Blue for Production
+        // Handles multiple creatives on one shoot/task
+        assignee: t.assignees.length > 0 
+          ? t.assignees.map(u => u.name).join(", ") 
+          : "Unassigned",
+        color: "#2563eb" 
       },
     }));
 
@@ -60,7 +66,7 @@ export async function GET() {
       resource: { 
         type: "ATTENDANCE", 
         status: a.status,
-        color: "#16a34a" // Green for Attendance
+        color: "#16a34a" 
       },
     }));
 
@@ -75,16 +81,19 @@ export async function GET() {
         resource: { 
           type: "LEAVE", 
           status: l.status,
-          color: "#dc2626" // Red for Leaves
+          color: "#dc2626" 
         },
       }))
     );
 
-    // Combine all events into one flat array for the Calendar UI
+    // Combine all production, attendance, and leave data for the Master Calendar
     return NextResponse.json([...taskEvents, ...attendanceEvents, ...leaveEvents]);
 
   } catch (error) {
     console.error("CALENDAR_SYNC_ERROR:", error);
-    return NextResponse.json({ error: "Failed to sync calendar" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Failed to sync calendar" }, 
+      { status: 500 }
+    );
   }
 }

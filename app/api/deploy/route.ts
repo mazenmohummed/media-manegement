@@ -14,7 +14,7 @@ export async function POST(req: Request) {
       plan = "FREE" 
     } = body;
 
-    // 1. PRE-DEPLOYMENT CHECKS
+    // 1. PRE-DEPLOYMENT CHECKS (Check for existing entities)
     const [existingUser, existingAgency] = await Promise.all([
       prisma.user.findUnique({ where: { email: operatorEmail } }),
       prisma.agency.findUnique({ where: { email: agencyEmail } })
@@ -26,7 +26,7 @@ export async function POST(req: Request) {
       }, { status: 400 });
     }
 
-    // 2. GENERATE IDENTIFIERS
+    // 2. DATA PREPARATION
     const randomSuffix = Math.floor(1000 + Math.random() * 9000);
     const generatedAgencyNo = `MAG-${randomSuffix}`;
     const hashedPassword = await bcrypt.hash(password, 10);
@@ -36,61 +36,67 @@ export async function POST(req: Request) {
       PRO: { maxUsers: 20, maxProjects: 200, hasAssetAccess: true, geo: true },
       UNLIMITED: { maxUsers: 9999, maxProjects: 9999, hasAssetAccess: true, geo: true },
     };
+    
     const selectedPlan = planConfig[plan as keyof typeof planConfig] || planConfig.FREE;
 
-    // 3. ATOMIC DEPLOYMENT
+    // 3. ATOMIC DEPLOYMENT (Using $transaction for MongoDB)
     const result = await prisma.$transaction(async (tx) => {
-      // 1. Prepare data
-      const agencyData: any = {
-        agencyNo: generatedAgencyNo,
-        agencyName,
-        email: agencyEmail,
-        subscription: {
-          create: {
-            plan: plan as any,
-            status: plan === "FREE" ? "ACTIVE" : "TRIALING",
-            maxUsers: selectedPlan.maxUsers,
-            maxProjects: selectedPlan.maxProjects,
-            hasAssetAccess: selectedPlan.hasAssetAccess,
-            geoFencingEnabled: selectedPlan.geo,
+      // Create Agency and Subscription together
+      const newAgency = await tx.agency.create({
+        data: {
+          agencyNo: generatedAgencyNo,
+          agencyName,
+          email: agencyEmail,
+          subscription: {
+            create: {
+              plan: plan as any,
+              status: plan === "FREE" ? "ACTIVE" : "TRIALING",
+              maxUsers: selectedPlan.maxUsers,
+              maxProjects: selectedPlan.maxProjects,
+              hasAssetAccess: selectedPlan.hasAssetAccess,
+              geoFencingEnabled: selectedPlan.geo,
+            }
           }
         }
-      };
-
-      // 2. CRITICAL SAFEGUARD: Remove keys that cause MongoDB unique null collisions
-      delete agencyData.stripeCustomerId;
-      if (agencyData.subscription?.create) {
-        delete agencyData.subscription.create.stripeSubscriptionId;
-      }
-
-      const newAgency = await tx.agency.create({
-        data: agencyData
       });
 
+      // Create Admin User linked to the new Agency
       const adminUser = await tx.user.create({
         data: {
           userNo: `USR-${randomSuffix}`,
           name: operatorName,
           email: operatorEmail,
           password: hashedPassword,
-          role: "ADMIN",
+          role: "ADMIN", // Defaulting to ADMIN for the creator
           userType: "FULL_TIME",
           agencyId: newAgency.id,
         }
       });
 
-      return { newAgency, adminUser };
+      return { agency: newAgency, user: adminUser };
     });
 
-    return NextResponse.json(result, { status: 201 });
+    return NextResponse.json({
+      message: "Infrastructure deployed successfully",
+      ...result
+    }, { status: 201 });
 
   } catch (error: any) {
     console.error("DEPLOYMENT_FATAL", error);
-    
+
+    // Handle Prisma-specific connection/timeout errors (P2010 / P2024)
+    if (error.code === 'P2010' || error.message.includes('timeout')) {
+      return NextResponse.json({ 
+        error: "Database connection timed out.", 
+        details: "Please verify MongoDB Atlas Network Access (IP Whitelist) for Hurghada." 
+      }, { status: 503 });
+    }
+
+    // Handle Unique Constraint (already exists)
     if (error.code === 'P2002') {
       return NextResponse.json({ 
         error: "Unique Constraint Collision", 
-        details: `Field ${error.meta?.target} already has a null or existing entry.` 
+        details: `The field ${error.meta?.target || 'unknown'} is already in use.` 
       }, { status: 409 });
     }
 

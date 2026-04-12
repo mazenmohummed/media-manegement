@@ -24,7 +24,7 @@ export default function EquipmentFinancePage() {
         const json = await res.json();
         setData(json);
       } catch (err) {
-        console.error("Failed to fetch equipment stats");
+        console.error("Failed to fetch equipment stats", err);
       } finally {
         setLoading(false);
       }
@@ -32,7 +32,7 @@ export default function EquipmentFinancePage() {
     fetchEquipmentData();
   }, []);
 
-  if (loading) {
+  if (loading || !data) {
     return (
       <div className="h-screen flex flex-col items-center justify-center space-y-4">
         <Loader2 className="animate-spin text-orange-500" size={40} />
@@ -42,7 +42,7 @@ export default function EquipmentFinancePage() {
   }
 
   return (
-    <div className="p-10 space-y-10 max-w-[1600px] mx-auto">
+    <div className="p-10 space-y-10 max-w-[1600px] mx-auto animate-in fade-in duration-700">
       {/* HEADER */}
       <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 border-b border-border pb-10">
         <div>
@@ -59,7 +59,7 @@ export default function EquipmentFinancePage() {
           <div className="bg-card border border-border px-6 py-3 rounded-2xl shadow-sm">
             <p className="text-[8px] font-black uppercase text-muted-foreground tracking-widest mb-1">Portfolio Valuation</p>
             <p className="text-2xl font-black font-mono text-foreground italic">
-              ${data.metrics.totalValuation.toLocaleString()}
+              ${(data?.metrics?.totalValuation ?? 0).toLocaleString()}
             </p>
           </div>
           <button className="bg-orange-500 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:scale-105 transition-all shadow-lg shadow-orange-500/20">
@@ -72,21 +72,21 @@ export default function EquipmentFinancePage() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <EquipmentStatCard 
           label="Rental Leakage" 
-          value={`$${data.metrics.totalLeakage.toLocaleString()}`} 
+          value={`$${(data?.metrics?.totalLeakage ?? 0).toLocaleString()}`} 
           sub="External Rental Costs" 
           color="rose" 
           icon={<ArrowDownRight size={18}/>} 
         />
         <EquipmentStatCard 
           label="Asset ROI" 
-          value={data.metrics.assetROI} 
+          value={data?.metrics?.assetROI ?? "0%"} 
           sub="Revenue vs Purchase Cost" 
           color="emerald" 
           icon={<ArrowUpRight size={18}/>} 
         />
         <EquipmentStatCard 
           label="Utilization Rate" 
-          value={`${data.metrics.avgUtilization}%`} 
+          value={`${data?.metrics?.avgUtilization ?? 0}%`} 
           sub="Assets in active tasks" 
           color="blue" 
           icon={<Repeat size={18}/>} 
@@ -112,15 +112,15 @@ export default function EquipmentFinancePage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-border font-mono text-sm">
-              {data.assets.map((asset: any) => (
+              {(data?.assets ?? []).map((asset: any) => (
                 <AssetRow 
                   key={asset.id}
                   name={asset.name} 
                   category={asset.category} 
-                  cost={`$${asset.cost.toLocaleString()}`} 
-                  revenue={`$${asset.revenue.toLocaleString()}`} 
-                  efficiency={`${asset.roi}%`} 
-                  status={asset.status} 
+                  cost={`$${(asset.cost ?? 0).toLocaleString()}`} 
+                  revenue={`$${(asset.revenue ?? 0).toLocaleString()}`} 
+                  efficiency={`${asset.roi ?? 0}%`} 
+                  status={asset.status ?? "N/A"} 
                 />
               ))}
             </tbody>
@@ -142,15 +142,20 @@ export default function EquipmentFinancePage() {
            </div>
            
            <div className="space-y-4">
-              {data.leakageItems.map((item: any) => (
-                <RentalIssue key={item.id} item={item.item} cost={`$${item.cost.toLocaleString()}`} project={item.project} />
+              {(data?.leakageItems ?? []).map((item: any) => (
+                <RentalIssue 
+                  key={item.id} 
+                  item={item.item} 
+                  cost={`$${(item.cost ?? 0).toLocaleString()}`} 
+                  project={item.project} 
+                />
               ))}
            </div>
 
            <div className="pt-6 border-t border-rose-200">
               <p className="text-[10px] font-black text-rose-900 uppercase italic">Buy vs Rent Intelligence:</p>
               <p className="text-xs font-bold text-rose-800/80 mt-1 uppercase leading-relaxed">
-                Your leakage is currently <span className="font-black text-rose-600">${data.metrics.totalLeakage.toLocaleString()}</span>. 
+                Your leakage is currently <span className="font-black text-rose-600">${(data?.metrics?.totalLeakage ?? 0).toLocaleString()}</span>. 
                 Internalizing these assets would increase project margins by approximately <span className="font-black underline">12.5%</span>.
               </p>
            </div>

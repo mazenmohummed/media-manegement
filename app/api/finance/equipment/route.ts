@@ -19,14 +19,14 @@ export async function GET() {
         include: {
           tasks: {
             where: { agencyId },
-            select: { internalCost: true } // Updated from grossRevenue
+            select: { internalCost: true }
           }
         }
       }),
-      prisma.taskExpense.findMany({ // Updated from externalRental
+      prisma.taskExpense.findMany({ 
         where: { 
           agencyId,
-          category: "RENTAL" // Specifically track equipment leakage
+          category: "RENTAL" 
         },
         include: {
           task: {
@@ -56,7 +56,8 @@ export async function GET() {
         id: asset.id,
         name: asset.assetName,
         category: asset.category,
-        valuation: currentValue, 
+        // CRITICAL FIX: Renamed valuation to cost to match Frontend toLocaleString calls
+        cost: currentValue, 
         revenue: totalRevenueGenerated,
         roi,
         status: totalRevenueGenerated > currentValue ? "Profitable" : "Recouping"
@@ -64,7 +65,7 @@ export async function GET() {
     });
 
     // 3. METRICS: Derived from scoped data
-    const totalValuation = assetStats.reduce((sum, a) => sum + a.valuation, 0);
+    const totalValuation = assetStats.reduce((sum, a) => sum + a.cost, 0);
     const totalLeakage = rentalExpenses.reduce((sum, r) => sum + (Number(r.cost) || 0), 0);
     
     // Utilization: % of owned assets currently assigned to at least one task
@@ -81,7 +82,7 @@ export async function GET() {
     return NextResponse.json({
       metrics: {
         totalValuation,
-        totalLeakage, // Money spent on external rentals
+        totalLeakage, 
         avgUtilization,
         assetROI: aggregateROI
       },
@@ -89,12 +90,12 @@ export async function GET() {
       leakageItems: rentalExpenses.map(r => ({
         id: r.id,
         item: r.itemName,
-        cost: r.cost,
+        cost: Number(r.cost) || 0,
         project: r.task?.project?.projectName || "Direct Task"
       }))
     });
 
-  } catch (error) {
+  } catch (error: any) {
     console.error("EQUIPMENT_FINANCE_ERROR:", error);
     return new NextResponse("Internal Server Error", { status: 500 });
   }

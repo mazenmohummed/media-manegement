@@ -29,13 +29,20 @@ export default function FinanceOverviewPage() {
     return (
       <div className="h-screen flex flex-col items-center justify-center gap-4">
         <Loader2 className="animate-spin text-blue-600" size={40} />
-        <p className="text-[10px] font-black uppercase tracking-[0.3em] animate-pulse">Calculating Fiscal Position...</p>
+        <p className="text-[10px] font-black uppercase tracking-[0.3em] animate-pulse text-muted-foreground">
+          Calculating Fiscal Position...
+        </p>
       </div>
     );
   }
 
-  const netPosition = data.clientStats.totalInvoiced - 
-    (data.employeeStats.monthlyPayroll + data.equipmentStats.rentalOutflow + data.overhead.fixedCosts);
+  // HARDENED CALCULATION: Prevents crash if any sub-object is missing
+  const totalInvoiced = data?.clientStats?.totalInvoiced ?? 0;
+  const payroll = data?.employeeStats?.monthlyPayroll ?? 0;
+  const equipment = data?.equipmentStats?.rentalOutflow ?? 0;
+  const overhead = data?.overhead?.fixedCosts ?? 0;
+  
+  const netPosition = totalInvoiced - (payroll + equipment + overhead);
 
   return (
     <div className="p-10 space-y-12 max-w-[1400px] animate-in fade-in duration-700">
@@ -68,7 +75,7 @@ export default function FinanceOverviewPage() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <PartitionCard 
           label="Clients" 
-          value={`$${data.clientStats.totalDue.toLocaleString()}`} 
+          value={`$${(data?.clientStats?.totalDue ?? 0).toLocaleString()}`} 
           sub="Total Due Balance" 
           trend="Live" 
           color="blue"
@@ -76,15 +83,15 @@ export default function FinanceOverviewPage() {
         />
         <PartitionCard 
           label="Employees" 
-          value={`$${data.employeeStats.monthlyPayroll.toLocaleString()}`} 
+          value={`$${(data?.employeeStats?.monthlyPayroll ?? 0).toLocaleString()}`} 
           sub="Monthly Payroll" 
-          trend={`Eff: ${data.employeeStats.averageEfficiency}x`} 
+          trend={`Eff: ${data?.employeeStats?.averageEfficiency ?? 0}x`} 
           color="rose"
           icon={<Activity size={18} />}
         />
         <PartitionCard 
           label="Equipment" 
-          value={`$${data.equipmentStats.rentalOutflow.toLocaleString()}`} 
+          value={`$${(data?.equipmentStats?.rentalOutflow ?? 0).toLocaleString()}`} 
           sub="External Rental Cost" 
           trend="Outflow" 
           color="orange"
@@ -92,7 +99,7 @@ export default function FinanceOverviewPage() {
         />
         <PartitionCard 
           label="Overhead" 
-          value={`$${data.overhead.fixedCosts.toLocaleString()}`} 
+          value={`$${(data?.overhead?.fixedCosts ?? 0).toLocaleString()}`} 
           sub="Fixed Agency Costs" 
           trend="Burn" 
           color="slate"
@@ -111,13 +118,13 @@ export default function FinanceOverviewPage() {
             <div className="flex justify-between items-center">
               <div>
                 <p className="text-xs font-bold text-muted-foreground uppercase mb-1">Total Invoiced YTD</p>
-                <p className="text-5xl font-black italic">${data.clientStats.totalInvoiced.toLocaleString()}</p>
+                <p className="text-5xl font-black italic">${(data?.clientStats?.totalInvoiced ?? 0).toLocaleString()}</p>
               </div>
             </div>
             <div className="grid grid-cols-3 gap-6 pt-6 border-t border-border">
-              <MiniStat label="Avg. Project Profit" value={`$${Math.round(data.clientStats.averageProjectProfit).toLocaleString()}`} />
-              <MiniStat label="Asset Valuation" value={`$${data.equipmentStats.assetValuation.toLocaleString()}`} />
-              <MiniStat label="Daily Burn" value={`$${Math.round(data.overhead.burnRate)}`} />
+              <MiniStat label="Avg. Project Profit" value={`$${Math.round(data?.clientStats?.averageProjectProfit ?? 0).toLocaleString()}`} />
+              <MiniStat label="Asset Valuation" value={`$${(data?.equipmentStats?.assetValuation ?? 0).toLocaleString()}`} />
+              <MiniStat label="Daily Burn" value={`$${Math.round(data?.overhead?.burnRate ?? 0)}`} />
             </div>
           </div>
         </section>
@@ -130,7 +137,9 @@ export default function FinanceOverviewPage() {
           <div className="bg-slate-950 rounded-[3rem] p-8 text-white space-y-8 h-full">
             <div>
               <p className="text-[9px] font-black text-rose-400 uppercase tracking-widest mb-4">Top Earner</p>
-              <p className="text-3xl font-black italic uppercase text-emerald-400">{data.employeeStats.topEarner}</p>
+              <p className="text-3xl font-black italic uppercase text-emerald-400">
+                {data?.employeeStats?.topEarner ?? "Analyzing..."}
+              </p>
               <p className="text-xs font-bold opacity-60 uppercase mt-2">Highest Profit Contribution</p>
             </div>
           </div>
@@ -140,7 +149,7 @@ export default function FinanceOverviewPage() {
   );
 }
 
-// Sub-components as defined in your previous snippet...
+// Sub-components
 function PartitionCard({ label, value, sub, trend, color, icon }: any) {
   const colorMap: any = {
     blue: "text-blue-600 border-blue-500/20",
