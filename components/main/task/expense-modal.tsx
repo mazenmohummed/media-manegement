@@ -2,11 +2,18 @@
 
 import React, { useState } from "react";
 import { X } from "lucide-react";
+// Import the type if you moved it to a types file, or define locally:
+import { TaskExpenseCategory } from "./external-expeses"; 
 
 interface ExpenseModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (data: any) => void;
+  onSave: (data: { 
+    itemName: string; 
+    cost: string; 
+    category: TaskExpenseCategory; 
+    description: string 
+  }) => void;
   saving: boolean;
 }
 
@@ -14,7 +21,7 @@ export const ExpenseModal = ({ isOpen, onClose, onSave, saving }: ExpenseModalPr
   const [formData, setFormData] = useState({
     itemName: "",
     cost: "",
-    category: "RENTAL",
+    category: "EQUIPMENT" as TaskExpenseCategory, // Set default to one of your new keys
     description: "",
   });
 
@@ -65,16 +72,23 @@ export const ExpenseModal = ({ isOpen, onClose, onSave, saving }: ExpenseModalPr
               </div>
               <div className="space-y-1">
                 <label className="text-[8px] font-black uppercase ml-2 opacity-50">Category</label>
-                <select
-                  value={formData.category}
-                  onChange={(e) => setFormData({ ...formData, category: e.target.value })}
-                  className="w-full bg-muted/50 border border-border rounded-2xl px-4 py-3 text-xs font-bold focus:border-blue-500 outline-none transition-all appearance-none"
-                >
-                  <option value="RENTAL">RENTAL</option>
-                  <option value="TRAVEL">TRAVEL</option>
-                  <option value="HOSPITALITY">HOSPITALITY</option>
-                  <option value="MISC">MISC</option>
-                </select>
+                <div className="relative">
+                  <select
+                    value={formData.category}
+                    onChange={(e) => setFormData({ ...formData, category: e.target.value as TaskExpenseCategory })}
+                    className="w-full bg-muted/50 border border-border rounded-2xl px-4 py-3 text-xs font-bold focus:border-blue-500 outline-none transition-all appearance-none cursor-pointer"
+                  >
+                    <option value="EQUIPMENT">Equipment</option>
+                    <option value="LOCATION">Location/Studio</option>
+                    <option value="TRANSPORT">Transport</option>
+                    <option value="CATERING">Catering</option>
+                    <option value="TALENT">Talent/Model</option>
+                  </select>
+                  {/* Custom Arrow for select */}
+                  <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none opacity-30 text-[8px]">
+                    ▼
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -84,7 +98,7 @@ export const ExpenseModal = ({ isOpen, onClose, onSave, saving }: ExpenseModalPr
                 value={formData.description}
                 onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                 className="w-full bg-muted/50 border border-border rounded-2xl px-4 py-3 text-xs font-bold focus:border-blue-500 outline-none transition-all min-h-[80px] resize-none"
-                placeholder="Optional details..."
+                placeholder="Optional details (Vendor name, duration, etc...)"
               />
             </div>
 

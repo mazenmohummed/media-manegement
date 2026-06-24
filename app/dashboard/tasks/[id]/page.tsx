@@ -119,6 +119,8 @@ useEffect(() => {
 
   // Inside TaskDetailsPage.tsx
 
+
+
 const handleUpdate = async (e: React.FormEvent) => {
   e.preventDefault();
   setSaving(true);
@@ -156,22 +158,21 @@ const handleUpdate = async (e: React.FormEvent) => {
     } catch (err) { console.error(err); }
   };
 
-  const addRental = async () => {
-    setSaving(true);
-    try {
-      const res = await fetch(`/api/tasks/${id}/rentals`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...rentalData, cost: parseFloat(rentalData.cost) }),
-      });
-      if (res.ok) {
-        setShowRentalModal(false);
-        setRentalData({ itemName: "", cost: "", category: "RENTAL", description: "" });
-        fetchTask();
-      }
-    } catch (err) { console.error(err); }
-    finally { setSaving(false); }
-  };
+const handleDeleteExpense = async (expenseId: string, cost: number) => {
+  setSaving(true);
+  try {
+    const res = await fetch(`/api/tasks/${id}/expenses`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ expenseId }),
+    });
+    if (res.ok) await fetchTask();
+  } catch (err) {
+    console.error("Delete expense error:", err);
+  } finally {
+    setSaving(false);
+  }
+};
 
   const toggleWorkSession = async () => {
   if (!navigator.geolocation) return alert("Geolocation not supported.");
@@ -276,15 +277,18 @@ const handleUpdate = async (e: React.FormEvent) => {
 };
 
   if (loading) return (
-    <div className="p-20 text-center font-black animate-pulse uppercase tracking-widest">
-      Accessing Production Node...
-    </div>
+  <div className="p-20 text-center font-black animate-pulse uppercase tracking-widest">
+    Accessing Production Node...
+  </div>
   );
 
-  const internalCost = task.internalCost || 0;
-  const externalRentalsTotal = (task.taskExpenses || []).reduce((acc: number, curr: any) => acc + curr.cost, 0);
-  const totalBase = internalCost + externalRentalsTotal;
-  const profitMargin = totalBase * (task.margin / 100);
+  if (!task) return (
+    <div className="p-20 text-center font-bold uppercase">Task not found.</div>
+  );
+
+  
+  
+  
 
 
 
@@ -392,14 +396,22 @@ const handleUpdate = async (e: React.FormEvent) => {
 
       {/* FINANCIAL PROTOCOL */}
       <FinancialProtocol 
-        internalCost={internalCost} 
+        internalCost={task.internalCost}
         margin={task.margin} 
+        marginAmount={task.marginAmount}
+        totalInvoice={task.totalInvoice}
+        taskNetProfit={task.taskNetProfit}
+        realCost={task.realCost}
+        taskExpenses={task.taskExpenses || []}
+        
+
       />
 
       {/* EXTERNAL RENTALS */}
       <ExternalExpenses 
             expenses={task.taskExpenses} 
             onAddClick={() => setShowRentalModal(true)} 
+            onDeleteExpense={handleDeleteExpense}
           />
             
           
@@ -409,23 +421,26 @@ const handleUpdate = async (e: React.FormEvent) => {
               onClose={() => setShowRentalModal(false)}
               saving={saving}
               onSave={async (data) => {
-                setSaving(true);
-                try {
-                  const res = await fetch(`/api/tasks/${id}/rentals`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ ...data, cost: parseFloat(data.cost) }),
-                  });
-                  if (res.ok) {
-                    setShowRentalModal(false);
-                    fetchTask(); // Refresh the list
+                  setSaving(true);
+                  try {
+                    const res = await fetch(`/api/tasks/${id}/expenses`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ ...data, cost: parseFloat(data.cost) }),
+                    });
+                    
+                    if (res.ok) {
+                      setShowRentalModal(false);
+                      // This triggers the re-fetch of the Task, 
+                      // which now contains the updated totalValue, taskNetProfit, and realCost
+                      await fetchTask(); 
+                    }
+                  } catch (err) {
+                    console.error("Expense Sync Error:", err);
+                  } finally {
+                    setSaving(false);
                   }
-                } catch (err) {
-                  console.error(err);
-                } finally {
-                  setSaving(false);
-                }
-              }}
+                }}
             />
           )}
 

@@ -41,7 +41,7 @@ export default function ProjectsPage() {
   }, []);
  // --- CALCULATIONS & FILTERING ---
   const { filteredProjects, stats } = useMemo(() => {
-    // 1. Filter and Map projects to include pre-calculated row totals
+    // 1. Filter and Map projects
     const filtered = projects
       .filter((project) => {
         const projectDate = new Date(project.createdAt);
@@ -64,38 +64,36 @@ export default function ProjectsPage() {
         return true;
       })
       .map((project) => {
-          const tasks = project.tasks ?? [];
-          const taskCount = tasks.length;
+        const tasks = project.tasks ?? [];
+        
+        // Aggregating task-level financials for the row
+        const rowTotals = tasks.reduce((acc: any, t: any) => ({
+          totalNetProfit: acc.totalNetProfit + (t.taskNetProfit || 0),
+          totalRealCost: acc.totalRealCost + (t.realCost || 0),
+          totalInvoice: acc.totalInvoice + (t.totalInvoice || 0),
+        }), { totalNetProfit: 0, totalRealCost: 0, totalInvoice: 0 });
 
-          // 1. Calculate Average Progress (%)
-          const totalTaskProgress = tasks.reduce((sum: number, t: any) => sum + (t.progress || 0), 0);
-          const avgProgress = taskCount > 0 ? Math.round(totalTaskProgress / taskCount) : 0;
+        const taskCount = tasks.length;
+        const totalTaskProgress = tasks.reduce((sum: number, t: any) => sum + (t.progress || 0), 0);
+        const avgProgress = taskCount > 0 ? Math.round(totalTaskProgress / taskCount) : 0;
+        const allTasksDone = taskCount > 0 && tasks.every((t: any) => t.status === "COMPLETED");
+        const derivedStatus = allTasksDone ? "COMPLETED" : "ACTIVE";
 
-          // 2. Determine Overall Status
-          // If there are tasks and all of them are "COMPLETED", the project is COMPLETED.
-          // Otherwise, if there's at least one task, it's ACTIVE.
-          const allTasksDone = taskCount > 0 && tasks.every((t: any) => t.status === "COMPLETED");
-          const derivedStatus = allTasksDone ? "COMPLETED" : "ACTIVE";
+        return { 
+          ...project, 
+          ...rowTotals, 
+          avgProgress, 
+          derivedStatus 
+        };
+      });
 
-          // 3. Calculate Profit (Existing logic)
-          const calculatedNetProfit = tasks.reduce(
-            (sum: number, t: any) => sum + (t.taskNetProfit || 0), 
-            0
-          );
-
-          return { 
-            ...project, 
-            calculatedNetProfit, 
-            avgProgress, 
-            derivedStatus 
-          };
-        });
-
-    // 2. Calculate global totals for the StatCards
+    // 2. Calculate global totals for StatCards (FIXED KEYS)
     const totals = filtered.reduce((acc, project) => {
       return {
-        totalRevenue: acc.totalRevenue + (project.totalValue || 0),
-        totalProfit: acc.totalProfit + project.calculatedNetProfit, // Using the pre-calculated value
+        // totalInvoice is the top-line billed amount
+        totalRevenue: acc.totalRevenue + (project.totalInvoice || 0),
+        // totalNetProfit is what remains after realCost
+        totalProfit: acc.totalProfit + (project.totalNetProfit || 0),
         totalTasks: acc.totalTasks + (project.tasks?.length || 0)
       };
     }, { totalRevenue: 0, totalProfit: 0, totalTasks: 0 });
@@ -238,26 +236,46 @@ export default function ProjectsPage() {
                     </div>
                   </td>
 
-                  {/* --- FINANCIALS UI FIXED --- */}
+                  {/* --- FINANCIALS UI --- */}
                   <td className="px-8 py-6">
-                    <div className="flex flex-col">
-                      <span className="font-black text-sm tracking-tight">
-                        {/* Optional chaining added for safety */}
-                        ${(project.totalValue || 0).toLocaleString()}
-                      </span>
-                      <div className="flex items-center gap-1 text-[10px] font-bold text-emerald-600 uppercase">
-                        <TrendingUp size={10} />
-                        {/* Use the calculated variable projectProfit here */}
-                        <span>${(project.calculatedNetProfit || 0).toLocaleString()} Net</span>
+                    <div className="flex flex-col gap-1">
+                      {/* Real Cost Section */}
+                      <div className="flex items-center gap-1.5">
+                        <div className="w-1 h-3 bg-red-500/50 rounded-full" />
+                        <div className="flex flex-col">
+                          <span className="text-[9px] font-black uppercase text-muted-foreground leading-none">Real Cost</span>
+                          <span className="font-bold text-xs text-red-600/80">
+                            ${(project.totalRealCost || 0).toLocaleString()}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Net Profit Section */}
+                      <div className="flex items-center gap-1.5">
+                        <div className="w-1 h-3 bg-emerald-500 rounded-full" />
+                        <div className="flex flex-col">
+                          <span className="text-[9px] font-black uppercase text-muted-foreground leading-none">Net Profit</span>
+                          <span className="font-black text-xs text-emerald-600">
+                            +${(project.totalNetProfit || 0).toLocaleString()}
+                          </span>
+                        </div>
                       </div>
                     </div>
                   </td>
 
+                  {/* --- REVENUE UI (Total Invoice) --- */}
                   <td className="px-8 py-6 text-right">
-                    <p className="font-black italic text-lg tracking-tighter">
-                      ${(project.totalValue || 0).toLocaleString()}
-                    </p>
-                    <p className="text-[9px] font-black uppercase text-muted-foreground">{project.invoiceStatus}</p>
+                    <div className="flex flex-col">
+                      <span className="text-[10px] font-black uppercase text-blue-600 tracking-widest leading-none mb-1">
+                        Total Invoice
+                      </span>
+                      <p className="font-black italic text-xl tracking-tighter text-foreground">
+                        ${(project.totalInvoice || 0).toLocaleString()}
+                      </p>
+                      <div className="flex justify-end items-center gap-1 opacity-60">
+                          <span className="text-[9px] font-bold uppercase">{project.tasks?.length || 0} Tasks Logged</span>
+                      </div>
+                    </div>
                   </td>
                 </tr>
               );

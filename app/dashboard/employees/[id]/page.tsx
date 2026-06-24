@@ -3,7 +3,7 @@
 import React, { useEffect, useState, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { 
-  ArrowLeft, Edit3, Trash2, UserCheck, Wallet, ArrowUpRight, ShieldCheck 
+  ArrowLeft, Edit3, Trash2, UserCheck, Wallet, ArrowUpRight, ShieldCheck, CalendarPlus, Check, X
 } from "lucide-react";
 
 export default function EmployeeProfile() {
@@ -17,7 +17,7 @@ export default function EmployeeProfile() {
   const [isSaving, setIsSaving] = useState(false);
   const [isTerminating, setIsTerminating] = useState(false);
 
-  // --- EDIT MODAL STATES ---
+  // --- EDIT PROFILE MODAL STATES ---
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState({
     name: "",
@@ -33,6 +33,24 @@ export default function EmployeeProfile() {
   const [filterMode, setFilterMode] = useState<"PRESET" | "MONTH">("PRESET");
   const [activePreset, setActivePreset] = useState("ALL");
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
+
+  // --- LEAVE REQUEST STATES ---
+  const [isSubmittingLeave, setIsSubmittingLeave] = useState(false);
+  const [leaveForm, setLeaveForm] = useState({
+    startDate: "",
+    endDate: "",
+    type: "Annual",
+  });
+
+  // --- FIXED: INLINE LEAVE EDITING STATES ---
+  const [editingLeaveIndex, setEditingLeaveIndex] = useState<number | null>(null);
+  const [editLeaveForm, setEditLeaveForm] = useState({
+    targetStartDate: "",
+    startDate: "",
+    endDate: "",
+    type: "",
+    status: ""
+  });
 
   // --- DATA FETCHING ---
   const fetchDetails = async () => {
@@ -58,7 +76,7 @@ export default function EmployeeProfile() {
   };
 
   useEffect(() => {
-    fetchDetails();
+    if (id) fetchDetails();
   }, [id]);
 
   // --- ACTIONS ---
@@ -103,6 +121,84 @@ export default function EmployeeProfile() {
     }
   };
 
+  const handleRequestLeave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!leaveForm.startDate || !leaveForm.endDate) {
+      alert("Please select both start and end dates.");
+      return;
+    }
+
+    setIsSubmittingLeave(true);
+    try {
+      const res = await fetch(`/api/employees/${id}/leaves`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(leaveForm),
+      });
+
+      if (res.ok) {
+        setLeaveForm({ startDate: "", endDate: "", type: "Annual" });
+        await fetchDetails();
+      } else {
+        const errData = await res.json();
+        alert(errData.error || "Failed to submit leave request");
+      }
+    } catch (err) {
+      console.error("Leave request failed", err);
+    } finally {
+      setIsSubmittingLeave(false);
+    }
+  };
+
+  const handleUpdateLeave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const res = await fetch(`/api/employees/${id}/leaves`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(editLeaveForm)
+      });
+
+      if (res.ok) {
+        setEditingLeaveIndex(null);
+        await fetchDetails();
+      } else {
+        const errData = await res.json();
+        alert(errData.error || "Update failed");
+      }
+    } catch (err) {
+      console.error("Failed updating leave row status", err);
+    }
+  };
+
+  // Quick Action for Admin Approval/Rejection without opening full editing sub-row
+  const handleQuickStatusUpdate = async (leave: any, newStatus: "Approved" | "Rejected") => {
+    const payload = {
+      targetStartDate: leave.startDate,
+      startDate: new Date(leave.startDate).toISOString().split('T')[0],
+      endDate: new Date(leave.endDate).toISOString().split('T')[0],
+      type: leave.type,
+      status: newStatus
+    };
+
+    try {
+      const res = await fetch(`/api/employees/${id}/leaves`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+
+      if (res.ok) {
+        await fetchDetails();
+      } else {
+        const errData = await res.json();
+        alert(errData.error || `Failed to ${newStatus.toLowerCase()} leave request`);
+      }
+    } catch (err) {
+      console.error("Failed quick updating leave status", err);
+    }
+  };
+
   // --- DYNAMIC CALCULATIONS ---
   const filteredTasks = useMemo(() => {
     if (!employee?.tasks) return [];
@@ -120,11 +216,13 @@ export default function EmployeeProfile() {
   }, [employee, filterMode, activePreset, selectedMonth]);
 
   const financeStats = useMemo(() => {
-    const gross = filteredTasks.reduce((acc: number, t: any) => acc + (t.grossRevenue || 0), 0);
-    const net = filteredTasks.reduce((acc: number, t: any) => {
-      const margin = t.margin || 0;
-      return acc + (t.grossRevenue * (margin / 100));
-    }, 0);
+    if (!filteredTasks || filteredTasks.length === 0) {
+      return { gross: 0, net: 0 };
+    }
+    
+    const gross = filteredTasks.reduce((acc: number, t: any) => acc + (t.internalCost || 0), 0);
+    const net = filteredTasks.reduce((acc: number, t: any) => acc + (t.marginAmount || 0), 0);
+
     return { gross, net };
   }, [filteredTasks]);
 
@@ -169,7 +267,7 @@ export default function EmployeeProfile() {
            <ArrowUpRight className="absolute -right-2 -top-2 w-24 h-24 opacity-10 group-hover:scale-110 transition-transform" />
            <p className="text-[10px] font-black uppercase tracking-widest opacity-80">Total Revenue Generated</p>
            <h2 className="text-4xl font-black italic tracking-tighter mt-1">
-             ${financeStats.gross.toLocaleString()}
+             ${financeStats.gross.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
            </h2>
            <p className="text-[9px] font-bold mt-2 uppercase opacity-70">Across {filteredTasks.length} Projects</p>
         </div>
@@ -177,14 +275,14 @@ export default function EmployeeProfile() {
         <div className="bg-card border border-border p-6 rounded-[2rem] flex flex-col justify-center">
            <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Net Agency Profit</p>
            <h2 className="text-4xl font-black italic tracking-tighter mt-1 text-emerald-600">
-             ${financeStats.net.toLocaleString()}
+             ${financeStats.net.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
            </h2>
         </div>
 
         <div className="bg-card border border-border p-6 rounded-[2rem] flex flex-col justify-center">
            <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Efficiency Rating</p>
            <h2 className="text-4xl font-black italic tracking-tighter mt-1 text-blue-600">
-             {(financeStats.gross / (employee.salary || 1)).toFixed(1)}x
+             {employee.salary > 0 ? (financeStats.gross / employee.salary).toFixed(1) : "0.0"}x
            </h2>
         </div>
       </div>
@@ -245,7 +343,7 @@ export default function EmployeeProfile() {
           </section>
         </div>
 
-        {/* MIDDLE COLUMN: CONTENT TABS */}
+        {/* MIDDLE/RIGHT COLUMN: CONTENT TABS */}
         <div className="lg:col-span-3 space-y-6">
           <div className="bg-card border border-border p-4 rounded-[2rem] flex flex-wrap justify-between items-center gap-4">
             <div className="flex gap-2">
@@ -296,10 +394,12 @@ export default function EmployeeProfile() {
                     </div>
                     <div className="flex justify-between items-end border-t border-border pt-4 mt-2">
                        <span className="text-[9px] font-black uppercase px-2 py-1 bg-muted rounded-md">{task.status}</span>
-                       <div className="text-right">
-                          <p className="text-[8px] font-black text-muted-foreground uppercase">Revenue</p>
-                          <p className="text-sm font-black italic">${task.grossRevenue?.toLocaleString()}</p>
-                       </div>
+                     <div className="text-right">
+                        <p className="text-[8px] font-black text-muted-foreground uppercase">Revenue</p>
+                        <p className="text-sm font-black italic">
+                             ${task.internalCost?.toLocaleString(undefined, { minimumFractionDigits: 2 }) || "0.00"}
+                        </p>
+                    </div>
                     </div>
                   </div>
                 )) : (
@@ -336,33 +436,148 @@ export default function EmployeeProfile() {
             )}
 
             {activeTab === "LEAVES" && (
-              <div className="bg-card border border-border rounded-[2.5rem] overflow-hidden">
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="bg-muted/30 text-[9px] font-black uppercase tracking-widest text-muted-foreground">
-                      <th className="p-6">Period</th>
-                      <th className="p-6">Type</th>
-                      <th className="p-6">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border/50">
-                    {employee.leaves?.length > 0 ? (
-                      employee.leaves.map((leave: any, i: number) => (
-                        <tr key={i} className="text-[11px] font-bold uppercase hover:bg-muted/10 transition-colors">
-                          <td className="p-6">{new Date(leave.startDate).toLocaleDateString('en-GB')} - {new Date(leave.endDate).toLocaleDateString('en-GB')}</td>
-                          <td className="p-6"><span className="bg-blue-500/10 text-blue-600 px-2 py-1 rounded text-[9px] font-black">{leave.type}</span></td>
-                          <td className="p-6">
-                            <span className={`px-3 py-1 rounded-lg text-[9px] font-black ${leave.status === 'Approved' ? 'bg-emerald-500/10 text-emerald-600' : 'bg-amber-500/10 text-amber-600'}`}>
-                              {leave.status}
-                            </span>
-                          </td>
-                        </tr>
-                      ))
-                    ) : (
-                      <tr><td colSpan={3} className="p-20 text-center text-muted-foreground text-[10px] font-black uppercase italic">No leave records found</td></tr>
-                    )}
-                  </tbody>
-                </table>
+              <div className="space-y-6">
+                {/* REQUEST FORM */}
+                <form onSubmit={handleRequestLeave} className="bg-card border border-border p-6 rounded-[2rem] space-y-4">
+                  <h4 className="text-[10px] font-black uppercase tracking-widest flex items-center gap-2 text-primary">
+                    <CalendarPlus size={14} /> Request New Leave Period
+                  </h4>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+                    <div className="space-y-1">
+                      <label className="text-[8px] font-black uppercase text-muted-foreground">Start Date</label>
+                      <input type="date" value={leaveForm.startDate} onChange={(e) => setLeaveForm({ ...leaveForm, startDate: e.target.value })} className="w-full bg-muted/30 border border-border p-2.5 rounded-xl text-[11px] font-bold outline-none" required />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[8px] font-black uppercase text-muted-foreground">End Date</label>
+                      <input type="date" value={leaveForm.endDate} onChange={(e) => setLeaveForm({ ...leaveForm, endDate: e.target.value })} className="w-full bg-muted/30 border border-border p-2.5 rounded-xl text-[11px] font-bold outline-none" required />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[8px] font-black uppercase text-muted-foreground">Leave Type</label>
+                      <select value={leaveForm.type} onChange={(e) => setLeaveForm({ ...leaveForm, type: e.target.value })} className="w-full bg-muted/30 border border-border p-2.5 rounded-xl text-[11px] font-bold outline-none cursor-pointer">
+                        <option value="Annual">Annual Leave</option>
+                        <option value="Sick">Sick Leave</option>
+                        <option value="Unpaid">Unpaid Leave</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="flex justify-end pt-2">
+                    <button type="submit" disabled={isSubmittingLeave} className="px-6 py-3 bg-primary text-white rounded-xl text-[10px] font-black uppercase tracking-widest shadow-md hover:opacity-90 disabled:opacity-50 transition-all">
+                      {isSubmittingLeave ? "Submitting..." : "Submit Request"}
+                    </button>
+                  </div>
+                </form>
+
+                {/* HISTORICAL RECORDS & INLINE EDITING CONTROL */}
+                <div className="bg-card border border-border rounded-[2.5rem] overflow-hidden">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-muted/30 text-[9px] font-black uppercase tracking-widest text-muted-foreground">
+                        <th className="p-6">Period</th>
+                        <th className="p-6">Type</th>
+                        <th className="p-6">Status</th>
+                        <th className="p-6 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/50">
+                      {employee.leaves?.length > 0 ? (
+                        employee.leaves.map((leave: any, i: number) => (
+                          <tr key={i} className="text-[11px] font-bold uppercase hover:bg-muted/10 transition-colors">
+                            {editingLeaveIndex === i ? (
+                              /* EDITING SUB-ROW VIEW */
+                              <td colSpan={4} className="p-6">
+                                <form onSubmit={handleUpdateLeave} className="flex flex-wrap items-end gap-4 bg-muted/20 p-4 rounded-xl">
+                                  <div className="flex-1 min-w-[120px] space-y-1">
+                                    <label className="text-[7px] font-black text-muted-foreground block">START</label>
+                                    <input type="date" value={editLeaveForm.startDate} onChange={(e) => setEditLeaveForm({ ...editLeaveForm, startDate: e.target.value })} className="bg-background border p-1.5 rounded w-full text-[10px]" />
+                                  </div>
+                                  <div className="flex-1 min-w-[120px] space-y-1">
+                                    <label className="text-[7px] font-black text-muted-foreground block">END</label>
+                                    <input type="date" value={editLeaveForm.endDate} onChange={(e) => setEditLeaveForm({ ...editLeaveForm, endDate: e.target.value })} className="bg-background border p-1.5 rounded w-full text-[10px]" />
+                                  </div>
+                                  <div className="flex-1 min-w-[120px] space-y-1">
+                                    <label className="text-[7px] font-black text-muted-foreground block">TYPE</label>
+                                    <select value={editLeaveForm.type} onChange={(e) => setEditLeaveForm({ ...editLeaveForm, type: e.target.value })} className="bg-background border p-1.5 rounded text-[10px]">
+                                      <option value="Annual">Annual</option>
+                                      <option value="Sick">Sick</option>
+                                      <option value="Unpaid">Unpaid</option>
+                                    </select>
+                                  </div>
+                                  <div className="space-y-1">
+                                    <label className="text-[7px] font-black text-muted-foreground block">STATUS</label>
+                                    <select value={editLeaveForm.status} onChange={(e) => setEditLeaveForm({ ...editLeaveForm, status: e.target.value })} className="bg-background border p-1.5 rounded text-[10px]">
+                                      <option value="Pending">Pending</option>
+                                      <option value="Approved">Approved</option>
+                                      <option value="Rejected">Rejected</option>
+                                    </select>
+                                  </div>
+                                  <div className="flex gap-2 ml-auto">
+                                    <button type="submit" className="bg-emerald-600 text-white px-3 py-1.5 rounded text-[9px] font-black">SAVE</button>
+                                    <button type="button" onClick={() => setEditingLeaveIndex(null)} className="bg-zinc-500 text-white px-3 py-1.5 rounded text-[9px] font-black">CANCEL</button>
+                                  </div>
+                                </form>
+                              </td>
+                            ) : (
+                              /* STANDARD STATIC ROW VIEW WITH QUICK ADMIN CONTROLS */
+                              <>
+                                <td className="p-6">
+                                  {new Date(leave.startDate).toLocaleDateString('en-GB')} - {new Date(leave.endDate).toLocaleDateString('en-GB')}
+                                </td>
+                                <td className="p-6">
+                                  <span className="bg-blue-500/10 text-blue-600 px-2 py-1 rounded text-[9px] font-black">{leave.type}</span>
+                                </td>
+                                <td className="p-6">
+                                  <span className={`px-3 py-1 rounded-lg text-[9px] font-black ${leave.status === 'Approved' ? 'bg-emerald-500/10 text-emerald-600' : leave.status === 'Rejected' ? 'bg-red-500/10 text-red-600' : 'bg-amber-500/10 text-amber-600'}`}>
+                                    {leave.status || 'Pending'}
+                                  </span>
+                                </td>
+                                <td className="p-6 text-right">
+                                  <div className="flex items-center justify-end gap-3">
+                                    {/* Show Quick Approval Buttons if Status is Pending */}
+                                    {(leave.status === 'Pending' || !leave.status) && (
+                                      <div className="flex gap-1.5 border-r border-border pr-3 mr-1">
+                                        <button 
+                                          onClick={() => handleQuickStatusUpdate(leave, "Approved")}
+                                          title="Approve Leave"
+                                          className="p-1.5 bg-emerald-500/10 hover:bg-emerald-500 hover:text-white rounded-lg text-emerald-600 transition-colors"
+                                        >
+                                          <Check size={12} className="stroke-[3]" />
+                                        </button>
+                                        <button 
+                                          onClick={() => handleQuickStatusUpdate(leave, "Rejected")}
+                                          title="Reject Leave"
+                                          className="p-1.5 bg-red-500/10 hover:bg-red-500 hover:text-white rounded-lg text-red-600 transition-colors"
+                                        >
+                                          <X size={12} className="stroke-[3]" />
+                                        </button>
+                                      </div>
+                                    )}
+                                    <button 
+                                      onClick={() => {
+                                        setEditingLeaveIndex(i);
+                                        setEditLeaveForm({
+                                          targetStartDate: leave.startDate,
+                                          startDate: new Date(leave.startDate).toISOString().split('T')[0],
+                                          endDate: new Date(leave.endDate).toISOString().split('T')[0],
+                                          type: leave.type,
+                                          status: leave.status || 'Pending'
+                                        });
+                                      }}
+                                      className="text-primary hover:underline text-[9px] font-black uppercase tracking-wider"
+                                    >
+                                      Edit
+                                    </button>
+                                  </div>
+                                </td>
+                              </>
+                            )}
+                          </tr>
+                        ))
+                      ) : (
+                        <tr><td colSpan={4} className="p-20 text-center text-muted-foreground text-[10px] font-black uppercase italic">No leave records found</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
           </div>

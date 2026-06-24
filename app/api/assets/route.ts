@@ -11,18 +11,47 @@ export async function GET() {
   }
 
   try {
-    const assets = await prisma.asset.findMany(
-      {
-    where: {
-      agencyId: session.user.agencyId // <--- The "Wall"
-    }
-  }
-    ); 
+    // 1. Fetch assets for the agency
+    const assets = await prisma.asset.findMany({
+      where: {
+        agencyId: session.user.agencyId
+      }
+    });
+
+    // 2. Fetch all tasks for the agency to guarantee clean cross-referencing
+    const allTasks = await prisma.task.findMany({
+      where: {
+        agencyId: session.user.agencyId
+      },
+      select: {
+        id: true,
+        taskNo: true,
+        taskType: true,
+        startDate: true,
+        endDate: true,
+        taskNetProfit: true,
+        status: true,
+        assetIds: true // Needed for structural mapping below
+      }
+    });
+
+    // 3. Manually map tasks to assets if either side holds the relational ID reference array
+    const assetsWithTasks = assets.map(asset => {
+      const relatedTasks = allTasks.filter(task => 
+        (asset.taskIds && asset.taskIds.includes(task.id)) || 
+        (task.assetIds && task.assetIds.includes(asset.id))
+      );
+
+      return {
+        ...asset,
+        tasks: relatedTasks
+      };
+    });
 
     const totalInvestment = assets.reduce((sum, a) => sum + (Number(a.currentValue) || 0), 0);
     
     return NextResponse.json({
-      assets,
+      assets: assetsWithTasks,
       metrics: {
         totalInvestment,
         currentValue: totalInvestment,
@@ -45,9 +74,9 @@ export async function POST(req: Request) {
         assetName,
         category,
         purchaseDate: new Date(purchaseDate),
-        currentValue: parseFloat(purchasePrice), // Initializing current value as purchase price
+        currentValue: parseFloat(purchasePrice),
         availabilityStatus: availabilityStatus || "Available",
-        agencyId, // Ensure you pass the active agency ID
+        agencyId,
       },
     });
 

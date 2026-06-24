@@ -15,6 +15,7 @@ export async function POST(req: Request) {
     } = body;
 
     // 1. PRE-DEPLOYMENT CHECKS (Check for existing entities)
+    // Run these outside the transaction to keep the transaction lifecycle short
     const [existingUser, existingAgency] = await Promise.all([
       prisma.user.findUnique({ where: { email: operatorEmail } }),
       prisma.agency.findUnique({ where: { email: agencyEmail } })
@@ -27,6 +28,7 @@ export async function POST(req: Request) {
     }
 
     // 2. DATA PREPARATION
+    // Moving bcrypt hashing here is CRITICAL because it's CPU intensive and slow
     const randomSuffix = Math.floor(1000 + Math.random() * 9000);
     const generatedAgencyNo = `MAG-${randomSuffix}`;
     const hashedPassword = await bcrypt.hash(password, 10);
@@ -39,7 +41,8 @@ export async function POST(req: Request) {
     
     const selectedPlan = planConfig[plan as keyof typeof planConfig] || planConfig.FREE;
 
-    // 3. ATOMIC DEPLOYMENT (Using $transaction for MongoDB)
+    // 3. ATOMIC DEPLOYMENT
+    // Increased timeout to 20s to account for latency (especially important for MongoDB Atlas)
     const result = await prisma.$transaction(async (tx) => {
       // Create Agency and Subscription together
       const newAgency = await tx.agency.create({
@@ -67,13 +70,16 @@ export async function POST(req: Request) {
           name: operatorName,
           email: operatorEmail,
           password: hashedPassword,
-          role: "ADMIN", // Defaulting to ADMIN for the creator
+          role: "ADMIN",
           userType: "FULL_TIME",
           agencyId: newAgency.id,
         }
       });
 
       return { agency: newAgency, user: adminUser };
+    }, {
+      maxWait: 5000, // Time to wait for a connection from the pool
+      timeout: 20000 // Time allowed for the transaction to execute (20 seconds)
     });
 
     return NextResponse.json({
@@ -84,11 +90,19 @@ export async function POST(req: Request) {
   } catch (error: any) {
     console.error("DEPLOYMENT_FATAL", error);
 
-    // Handle Prisma-specific connection/timeout errors (P2010 / P2024)
+    // Specific Handling for Transaction Timeouts (P2028)
+    if (error.code === 'P2028') {
+      return NextResponse.json({ 
+        error: "Transaction Expired", 
+        details: "The database operation took too long. Please try again or check your connection latency." 
+      }, { status: 504 });
+    }
+
+    // Handle Prisma-specific connection errors
     if (error.code === 'P2010' || error.message.includes('timeout')) {
       return NextResponse.json({ 
         error: "Database connection timed out.", 
-        details: "Please verify MongoDB Atlas Network Access (IP Whitelist) for Hurghada." 
+        details: "Verify MongoDB Atlas Network Access (IP Whitelist) for your current location." 
       }, { status: 503 });
     }
 

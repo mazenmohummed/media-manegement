@@ -14,7 +14,7 @@ interface Employee {
   email: string;
   userType: "FULL_TIME" | "PART_TIME" | "FREELANCER" | "INTERN";
   efficiencyRate: number;
-  salary: number;
+  salary: number; // For freelancers, this acts as their current accumulated balance
   verifiedSkills: string[];
   workingHours: number;
   extraPayouts: number;
@@ -25,6 +25,7 @@ interface Employee {
   tasks: { internalCost: number; status: string; paymentStatus: string }[];
   attendanceLogs: { type: string; date: string; isLate: boolean; totalHours: number }[];
 }
+
 export default function EmployeesDirectory() {
   const { data: session, status } = useSession();
   const agencyId = session?.user?.agencyId;
@@ -40,23 +41,22 @@ export default function EmployeesDirectory() {
 
   useEffect(() => {
     async function loadDirectory() {
-  if (!agencyId) return;
-  try {
-    const res = await fetch(`/api/employees?agencyId=${agencyId}`);
-    const data = await res.json();
-    
-    // The API now returns { employees: [...], metrics: {...} }
-    if (data.employees && Array.isArray(data.employees)) {
-      setEmployees(data.employees);
-    } else {
-      setEmployees([]);
+      if (!agencyId) return;
+      try {
+        const res = await fetch(`/api/employees?agencyId=${agencyId}`);
+        const data = await res.json();
+        
+        if (data.employees && Array.isArray(data.employees)) {
+          setEmployees(data.employees);
+        } else {
+          setEmployees([]);
+        }
+      } catch (err) {
+        console.error("Directory Sync Failed:", err);
+      } finally {
+        setLoading(false);
+      }
     }
-  } catch (err) {
-    console.error("Directory Sync Failed:", err);
-  } finally {
-    setLoading(false);
-  }
-}
     if (status === "authenticated") loadDirectory();
     else if (status === "unauthenticated") setLoading(false);
   }, [agencyId, status]);
@@ -68,20 +68,10 @@ export default function EmployeesDirectory() {
     );
   }, [search, employees]);
 
-  // Logic for Total Payroll calculation
-// Inside EmployeesDirectory component
-const totalPayroll = useMemo(() => {
-  return employees.reduce((acc, emp) => {
-    if (emp.userType === "FREELANCER") {
-      // Freelancers get paid per task internalCost if payment is Pending
-      const pending = emp.tasks?.reduce((sum, t) => 
-        t.paymentStatus === "Pending" ? sum + (t.internalCost || 0) : sum, 0) || 0;
-      return acc + pending;
-    }
-    // All other types (FULL_TIME, PART_TIME, etc.) use the base salary
-    return acc + (emp.salary || 0);
-  }, 0);
-}, [employees]);
+  // SOURCE OF TRUTH PAYROLL CRITERIA: Read directly from database table field balance
+  const totalPayroll = useMemo(() => {
+    return employees.reduce((acc, emp) => acc + (emp.salary || 0), 0);
+  }, [employees]);
 
   const handleAddEmployee = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -264,30 +254,22 @@ const totalPayroll = useMemo(() => {
         />
       </div>
 
-      
-     
-        <PerformanceTable 
-  performanceData={employees.map(emp => ({
-    name: emp.name,
-    skills: emp.verifiedSkills || [],
-    // FIX: Ensure status casing matches your DB (usually "COMPLETED")
-    tasksCompleted: emp.tasks?.filter(t => t.status === "COMPLETED").length || 0,
-    tasksCount: emp.tasks?.length || 0,
-    
-    // FIX: Ensure this property name matches what PerformanceTable expects
-    // If PerformanceTable expects 'revenue', use that. 
-    // Based on your current code, you are passing totalRevenue:
-    revenueGenerated: emp.totalRevenue || 0, 
-    
-    workingHours: emp.workingHours || 0,
-    lateDays: emp.lateDays || 0,
-    baseSalary: emp.salary || 0, 
-    extraPayouts: emp.extraPayouts || 0,
-    expenses: emp.expenses || 0,
-    efficiency: emp.efficiencyRate || 0,
-    activeLeaves: emp.attendanceLogs?.filter(log => log.type === "Vacation").length || 0,
-  }))} 
-/>
+      <PerformanceTable 
+        performanceData={employees.map(emp => ({
+          name: emp.name,
+          skills: emp.verifiedSkills || [],
+          tasksCompleted: emp.tasks?.filter(t => t.status === "COMPLETED").length || 0,
+          tasksCount: emp.tasks?.length || 0,
+          revenueGenerated: emp.totalRevenue || 0, 
+          workingHours: emp.workingHours || 0,
+          lateDays: emp.lateDays || 0,
+          baseSalary: emp.salary || 0, 
+          extraPayouts: emp.extraPayouts || 0,
+          expenses: emp.expenses || 0,
+          efficiency: emp.efficiencyRate || 0,
+          activeLeaves: emp.attendanceLogs?.filter(log => log.type === "Vacation").length || 0,
+        }))} 
+      />
 
       {/* GRID ENGINE */}
       <section className="space-y-6">
@@ -298,39 +280,15 @@ const totalPayroll = useMemo(() => {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {filtered.map((emp) => {
             const isAway = emp.attendanceLogs?.some(log => log.date === TODAY_STR && log.type === "Vacation");
+            const tasks = emp.tasks || [];
 
-           const tasks = emp.tasks || [];
+            const activeTasksCount = tasks.filter(t => t.status === "ACTIVE").length;
+            const doneTasksCount = tasks.filter(t => t.status?.toUpperCase() === "COMPLETED" || t.status?.toUpperCase() === "FINISHED").length;
+            const dueTasksCount = tasks.filter(t => t.status?.toUpperCase() === "PENDING" || t.status?.toUpperCase() === "TODO").length;
 
-           /// ACTIVE: Now strictly matches "ACTIVE"
-            const activeTasksCount = tasks.filter(t => 
-              t.status === "ACTIVE"
-            ).length;
-
-            // 2. DONE: Change "FINISHED" to "COMPLETED" to match your API logic
-            const doneTasksCount = tasks.filter(t => 
-              t.status?.toUpperCase() === "COMPLETED" || 
-              t.status?.toUpperCase() === "FINISHED"
-            ).length;
-
-            // 3. DUE: Usually tasks that are "PENDING" or "TODO"
-            const dueTasksCount = tasks.filter(t => 
-              t.status?.toUpperCase() === "PENDING" || 
-              t.status?.toUpperCase() === "TODO"
-            ).length;
-
-            // Due Tasks: Active status AND Pending payment (Default "Pending" in schema)
-            const dueTasks = tasks.filter(t => 
-              t.status?.toUpperCase() === "ACTIVE" && 
-              t.paymentStatus?.toLowerCase() === "pending"
-            ).length;
-
-  
-            // Logic for individual card payouts
-            const totalTaskFees = tasks.reduce((sum, t) => {
-            // Note: ensure we use internalCost as defined in your GET API
-            return t.paymentStatus === "Pending" ? sum + (t.internalCost || 0) : sum;
-          }, 0);
-            const pendingMoney = emp.userType === "FREELANCER" ? totalTaskFees : (emp.salary || 0);
+            // TRACK VALUE FROM DB ENGINE DIRECTLY: 
+            // Freelancer payout pulls from `emp.salary` which stores accrued pay natively.
+            const accumulatedPay = emp.salary || 0;
             const paymentLabel = emp.userType === "FREELANCER" ? "Pending Fees" : "Monthly Payout";
 
             return (
@@ -387,8 +345,8 @@ const totalPayroll = useMemo(() => {
                         <p className="text-[8px] font-black text-muted-foreground uppercase mb-1 italic">
                           {paymentLabel}
                         </p>
-                        <p className={`text-xl font-black font-mono ${pendingMoney > 0 ? 'text-orange-600' : 'text-foreground'}`}>
-                          ${pendingMoney.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        <p className={`text-xl font-black font-mono ${accumulatedPay > 0 ? 'text-orange-600' : 'text-foreground'}`}>
+                          ${accumulatedPay.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                         </p>
                       </div>
                       <div className="text-right">

@@ -20,7 +20,7 @@ export async function GET(
         project: true,
         agency: { include: { users: true } },
         assignees: { 
-          select: { id: true, name: true, userType: true } 
+          select: { id: true, name: true, userType: true, salary: true } 
         },
         todos: { orderBy: { createdAt: 'asc' } },
         taskExpenses: true,
@@ -42,58 +42,31 @@ export async function GET(
     if (task.todos.length > 0) {
       const newProgress = Math.round((task.todos.filter(t => t.completed).length / task.todos.length) * 100);
       if (newProgress !== task.progress) {
-        await prisma.task.update({ where: { id }, data: { progress: newProgress } });
+        const updatedTaskWithProgress = await prisma.task.update({ 
+          where: { id }, 
+          data: { progress: newProgress },
+          include: {
+            project: true,
+            agency: { include: { users: true } },
+            assignees: { select: { id: true, name: true, userType: true, salary: true } },
+            todos: { orderBy: { createdAt: 'asc' } },
+            taskExpenses: true,
+            assets: true,
+            comments: {
+              include: { author: { select: { name: true, role: true } } },
+              orderBy: { createdAt: 'asc' }
+            },
+            attendanceLogs: {
+              include: { user: true },
+              orderBy: { checkInTime: 'desc' }
+            }
+          }
+        });
+        return NextResponse.json(updatedTaskWithProgress);
       }
     }
 
-    // 2. FINANCIAL RECALCULATION LOGIC
-    const primaryAssignee = task.assignees?.[0];
-    const userType = primaryAssignee?.userType || "FREELANCER";
-    
-    const sumExpenses = task.taskExpenses.reduce((sum, e) => sum + e.cost, 0);
-    const internalCost = task.internalCost || 0;
-    const marginPercent = task.margin || 0;
-
-    // marginAmount = ((internalCost + expenses) * margin) / 100
-    const marginAmount = ((internalCost + sumExpenses) * marginPercent) / 100;
-    
-    // totalValue = internalCost + expenses + marginAmount
-    const totalValue = internalCost + sumExpenses + marginAmount;
-
-    let taskNetProfit = 0;
-    let realCost = 0;
-
-    if (userType === "FULL_TIME" || userType === "PART_TIME") {
-      taskNetProfit = totalValue - sumExpenses;
-      realCost = sumExpenses;
-    } else {
-      // FREELANCER
-      taskNetProfit = marginAmount;
-      realCost = sumExpenses + internalCost;
-    }
-
-    // 3. Update task with the calculated values
-    const updatedTask = await prisma.task.update({
-      where: { id: id }, 
-      data: { 
-        marginAmount,
-        totalValue,
-        taskNetProfit,
-        realCost
-      },
-      include: { 
-        project: true,
-        agency: { include: { users: true } },
-        assignees: true,
-        taskExpenses: true,
-        assets: true,
-        attendanceLogs: { include: { user: true } },
-        comments: { include: { author: true } },
-        todos: { orderBy: { createdAt: 'asc' } } 
-      }
-    });
-
-    return NextResponse.json(updatedTask);
+    return NextResponse.json(task);
   } catch (error) {
     console.error("GET_TASK_DETAIL_ERROR:", error);
     return new NextResponse("Internal Error", { status: 500 });
@@ -133,7 +106,6 @@ export async function PATCH(
       }
     });
 
-    // Notification Logic
     if (status === "COMPLETED" || parseInt(progress) === 100) {
       const admins = updatedTask.agency.users.filter(u => u.role === "ADMIN");
       if (admins.length > 0) {
@@ -154,5 +126,58 @@ export async function PATCH(
   } catch (error) {
     console.error("PATCH_TASK_DETAIL_ERROR:", error);
     return new NextResponse("Update Failed", { status: 500 });
+  }
+}
+
+export async function DELETE(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const session = await getServerSession(authOptions);
+    const agencyId = session?.user?.agencyId;
+
+    if (!agencyId) {
+      return NextResponse.json(
+        { error: "Unauthorized: No Agency linked to user session" }, 
+        { status: 401 }
+      );
+    }
+
+    const { id } = await params;
+
+    const existingProject = await prisma.project.findUnique({
+      where: { id: id }
+    });
+
+    if (!existingProject) {
+      return NextResponse.json(
+        { error: "Project not found" }, 
+        { status: 404 }
+      );
+    }
+
+    if (existingProject.agencyId !== agencyId) {
+      return NextResponse.json(
+        { error: "Forbidden: You do not have permission to delete this project" }, 
+        { status: 403 }
+      );
+    }
+
+    await prisma.project.delete({
+      where: { id: id }
+    });
+
+    return NextResponse.json(
+      { message: "Project deleted successfully" }, 
+      { status: 200 }
+    );
+
+  } catch (error: any) {
+    console.error("ROUTE_ERROR_DELETE_PROJECT:", error);
+    return NextResponse.json(
+      { error: "An internal server error occurred" }, 
+      { status: 500 }
+    );
   }
 }

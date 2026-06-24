@@ -4,7 +4,7 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/authOptions";
 import bcrypt from "bcryptjs";
 
-// GET: Fetch single employee with updated financial metrics
+
 export async function GET(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -27,34 +27,36 @@ export async function GET(
           take: 30,
           orderBy: { date: "desc" },
         },
+        // REMOVED: Nested orderBy from embedded collection to prevent Prisma validation runtime panic
         agency: true,
       },
     });
 
-    // THE WALL: Verify existence and agency ownership
     if (!employee || employee.agencyId !== agencyId) {
       return NextResponse.json({ error: "Employee not found in your workspace" }, { status: 404 });
     }
 
-    // Financial Analytics based on your actual Schema fields (internalCost & margin)
-    const totalInternalCostGenerated = employee.tasks.reduce((sum, t) => sum + (t.internalCost || 0), 0);
-    
-    // Calculate Margin Value: (InternalCost * (Margin % / 100))
-    const totalMarginValue = employee.tasks.reduce((sum, t) => {
-      const cost = t.internalCost || 0;
-      const marginPercent = t.margin || 0;
-      return sum + (cost * (marginPercent / 100));
-    }, 0);
+    // Safely sort embedded leaf entries in memory instead
+    const sortedLeaves = employee.leaves 
+      ? [...employee.leaves].sort((a: any, b: any) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime())
+      : [];
 
-    const { password, ...userFields } = employee;
+    // Server-Side calculated metrics based on your actual Schema fields
+    const totalGrossRevenue = employee.tasks.reduce((sum, t) => sum + (t.internalCost || 0), 0);
+
+    // Net Agency Profit: Summing up your pre-calculated marginAmount or taskNetProfit
+    const totalMarginValue = employee.tasks.reduce((sum, t) => sum + (t.marginAmount || 0), 0);
+
+    const { password, leaves, ...userFields } = employee;
 
     return NextResponse.json({
       ...userFields,
+      leaves: sortedLeaves, // Return the cleanly ordered leaves array here
       stats: {
-        totalInternalCostGenerated,
+        totalGrossRevenue,
         totalMarginValue,
         taskCount: employee.tasks.length,
-        efficiencyRate: employee.efficiencyRate
+        efficiencyRate: employee.efficiencyRate || 1.0
       },
     });
   } catch (error) {
@@ -92,7 +94,8 @@ export async function PUT(
       email: body.email,
       role: body.role,
       userType: body.userType,
-      salary: parseFloat(body.salary) || 0,
+      // FIX: Wrap inside Math.abs to strip out explicit or accidental negative numbers on manual input updates
+      salary: Math.abs(parseFloat(body.salary) || 0),
       efficiencyRate: parseFloat(body.efficiencyRate) || 1.0,
       verifiedSkills: Array.isArray(body.verifiedSkills) ? body.verifiedSkills : [],
     };

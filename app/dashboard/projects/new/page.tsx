@@ -23,6 +23,14 @@ interface RentalInput {
   id: string;
   name: string;
   cost: string;
+  category: string;     // Added
+  description: string;  // Added
+  status: string;       // Added
+}
+
+interface TaskEmployee {
+  id: string;
+  salary: string; 
 }
 
 interface TaskInput {
@@ -30,7 +38,7 @@ interface TaskInput {
   endDate: string;
   startTime?: string;
   endTime?: string;
-  employeeIds: string[];  
+  employeeIds: TaskEmployee[];  
   assetIds: string[];
   grossRevenue: string;
   margin: string;
@@ -84,47 +92,96 @@ export default function NewProjectPage() {
   const { data: session, status } = useSession();
   
   const [clients, setClients] = useState<Client[]>([]);
-  const [dbEmployees, setDbEmployees] = useState<{ id: string, name: string }[]>([]);
-  const [dbAssets, setDbAssets] = useState<{ id: string, assetName: string, category: string }[]>([]);
-  const [loading, setLoading] = useState(true);
+  
+  // Updated state types to match what TaskConfigCard expects
+  const [dbEmployees, setDbEmployees] = useState<{ 
+    id: string; 
+    name: string; 
+    userType: string; 
+    role: string; 
+    verifiedSkills: string[]; 
+  }[]>([]);
 
+  const [dbAssets, setDbAssets] = useState<{ 
+    id: string; 
+    assetName: string; 
+    category: string; 
+    availabilityStatus: string; 
+  }[]>([]);
+
+  const [loading, setLoading] = useState(true);
   const [projectName, setProjectName] = useState("");
   const [clientId, setClientId] = useState("");
   const [projectStory, setProjectStory] = useState("");
-  const [cloudLink, setCloudLink] = useState(""); // Added cloudLink state
+  const [cloudLink, setCloudLink] = useState(""); 
   const [selectedTasks, setSelectedTasks] = useState<Record<string, TaskInput>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
-
   const [conflicts, setConflicts] = useState<Record<string, { employees: string[], assets: string[] }>>({});
 
+  // Helper to extract simple IDs for availability validation
   const validateAvailability = async (dept: string, task: TaskInput) => {
-  if (!task.startDate || !task.endDate || (task.employeeIds.length === 0 && task.assetIds.length === 0)) return;
+    if (!task.startDate || !task.endDate) return;
 
-  try {
-    const res = await fetch("/api/projects/validate-availability", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" }, // Explicitly set headers
-      body: JSON.stringify({
-        startDate: combineDateTime(task.startDate, task.startTime),
-        endDate: combineDateTime(task.endDate, task.endTime),
-        employeeIds: task.employeeIds,
-        assetIds: task.assetIds
-      })
-    });
-    
-    // Check if response is OK before parsing JSON
-    if (!res.ok) {
-      const errorBody = await res.text();
-      console.error(`Server returned ${res.status}:`, errorBody);
-      return;
+    try {
+      const res = await fetch("/api/projects/validate-availability", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          startDate: combineDateTime(task.startDate, task.startTime),
+          endDate: combineDateTime(task.endDate, task.endTime),
+          employeeIds: task.employeeIds.map(e => e.id), // Extract IDs
+          assetIds: task.assetIds
+        })
+      });
+      
+      if (res.ok) {
+        const data = await res.json();
+        setConflicts(prev => ({ ...prev, [dept]: data }));
+      }
+    } catch (err) {
+      console.error("Validation failed:", err);
     }
+  };
 
-    const data = await res.json();
-    setConflicts(prev => ({ ...prev, [dept]: data }));
-  } catch (err) {
-    console.error("Fetch failed entirely:", err);
-  }
-};
+  // Logic for adding a rental with default values
+  const addRental = (dept: string) => {
+    const newRental: RentalInput = { 
+      id: Date.now().toString(), 
+      name: "", 
+      cost: "0",
+      category: "EQUIPMENT",
+      description: "",
+      status: "PENDING"
+    };
+    const currentRentals = selectedTasks[dept].rentals || [];
+    updateTaskField(dept, "rentals", [...currentRentals, newRental]);
+  };
+
+  const toggleTask = (dept: string) => {
+    setSelectedTasks((prev) => {
+      const next = { ...prev };
+      if (next[dept]) {
+        delete next[dept];
+      } else {
+        next[dept] = {
+          startDate: "",
+          endDate: "",
+          startTime: "09:00",
+          endTime: "18:00",
+          employeeIds: [],
+          assetIds: [],
+          grossRevenue: "0",
+          margin: "30",
+          notes: "",
+          rentals: [],
+          todos:[],
+        };
+      }
+      return next;
+    });
+  };
+
+ 
 // Update updateTaskField to trigger validation
 const updateTaskField = (dept: string, field: keyof TaskInput, value: any) => {
   setSelectedTasks(prev => {
@@ -140,11 +197,7 @@ const updateTaskField = (dept: string, field: keyof TaskInput, value: any) => {
 };
 
   // --- RENTAL HELPER FUNCTIONS ---
-  const addRental = (dept: string) => {
-    const newRental = { id: Date.now().toString(), name: "", cost: "0" };
-    const currentRentals = selectedTasks[dept].rentals || [];
-    updateTaskField(dept, "rentals", [...currentRentals, newRental]);
-  };
+  
 
   const removeRental = (dept: string, rentalId: string) => {
     const updatedRentals = selectedTasks[dept].rentals.filter(r => r.id !== rentalId);
@@ -222,30 +275,7 @@ async function loadData() {
   return isNaN(dt.getTime()) ? null : dt.toISOString();
 };
 
-  const toggleTask = (dept: string) => {
-    setSelectedTasks((prev) => {
-      const next = { ...prev };
-      if (next[dept]) {
-        delete next[dept];
-      } else {
-        next[dept] = {
-          startDate: "",
-          endDate: "",
-          startTime: "09:00",
-          endTime: "18:00",
-          employeeIds: [],
-          assetIds: [],
-          grossRevenue: "0", // Initialized
-          margin: "30",      // Initialized
-          notes: "",
-          rentals: [],
-          todos:[],
-        };
-      }
-      return next;
-    });
-  };
-
+ 
   const handleUseCurrentLocation = (type: string) => {
   if (!navigator.geolocation) {
     return alert("Geolocation is not supported by your browser.");

@@ -3,7 +3,6 @@ import prisma from "@/lib/prisma";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/authOptions";
 
-// Define an interface for the calculated data to satisfy TypeScript
 interface TaskCalculation {
   taskType: string;
   internalCost: number;
@@ -12,35 +11,40 @@ interface TaskCalculation {
   taskTotalValue: number;
   taskNetProfit: number;
   realCost: number;
-  userToUpdate: string | null;
+  freelancerUpdates: { id: string; amount: number }[]; // Track all freelancers in a task
   startDate: string | Date;
   endDate: string | Date;
   description?: string;
   latitude?: number;
   longitude?: number;
   locationName?: string;
-  assigneeIds?: string[];
+  assigneeIds: string[]; 
   externalRentals?: any[];
   todos?: { create: any[] };
 }
 
-// --- GET: Fetch all projects for the dashboard ---
 export async function GET() {
   try {
     const session = await getServerSession(authOptions);
-    if (!session?.user?.agencyId) {
+    const agencyId = session?.user?.agencyId;
+
+    if (!agencyId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const projects = await prisma.project.findMany({
-      where: { agencyId: session.user.agencyId },
+      where: { agencyId: agencyId },
       include: {
-        client: true,
+        client: { select: { clientName: true } },
         tasks: {
-          include: {
-            assignees: true,
-            taskExpenses: true,
-          },
+          select: {
+           id: true,
+          status: true,
+          progress: true,
+          taskNetProfit: true, // IMPORTANT
+          totalInvoice: true,  // IMPORTANT
+          realCost: true,
+                },
         },
       },
       orderBy: { createdAt: "desc" },
@@ -48,14 +52,14 @@ export async function GET() {
 
     return NextResponse.json(projects);
   } catch (error: any) {
-    console.error("DASHBOARD_FETCH_ERROR:", error);
-    return NextResponse.json({ error: "Failed to load ledger" }, { status: 500 });
+    console.error("PROJECTS_GET_ERROR:", error);
+    return NextResponse.json(
+      { error: "Internal Server Error", details: error.message },
+      { status: 500 }
+    );
   }
 }
 
-
-
-// --- POST: Create a new project ---
 export async function POST(req: Request) {
   try {
     const session = await getServerSession(authOptions);
@@ -65,132 +69,174 @@ export async function POST(req: Request) {
     const body = await req.json();
     const { projectName, clientId, projectStory, cloudLink, tasks = [] } = body;
 
-    const allAssigneeIds = tasks.flatMap((t: any) => t.assigneeIds || []);
-    const uniqueAssigneeIds = [...new Set(allAssigneeIds)] as string[];
+    // 1. Pre-fetch users to identify Freelancers for realCost calculation
+    const flatUserIds = tasks.flatMap((t: any) => 
+      (t.assigneeIds || []).map((a: any) => typeof a === 'string' ? a : a.id)
+    );
+    const uniqueIds = [...new Set(flatUserIds)] as string[];
+    
     const preFetchedUsers = await prisma.user.findMany({
-      where: { id: { in: uniqueAssigneeIds } },
+      where: { id: { in: uniqueIds } },
+      select: { id: true, userType: true }
     });
 
-    // Explicitly typing 'task' as any (from the request body) 
-    // and returning our TaskCalculation interface
-    const taskDataWithCalculations: TaskCalculation[] = tasks.map((task: any): TaskCalculation => {
+    // 2. Map tasks with your specific agency owner formulas
+    const taskDataWithCalculations = tasks.map((task: any) => {
+      const taskAssignees = task.assigneeIds || [];
+      let totalNegotiatedFreelancerPay = 0;
+      const freelancerUpdates: { id: string, amount: number }[] = [];
+
+      taskAssignees.forEach((assigneeObj: any) => {
+        const id = typeof assigneeObj === 'string' ? assigneeObj : assigneeObj.id;
+        const salary = parseFloat(assigneeObj.salary) || 0;
+        const user = preFetchedUsers.find((u) => u.id === id);
+        
+        if (user?.userType === "FREELANCER") {
+          totalNegotiatedFreelancerPay += salary;
+          freelancerUpdates.push({ id, amount: salary });
+        }
+      });
+
       const internalCost = parseFloat(task.internalCost) || 0;
       const marginPercent = parseFloat(task.margin) || 0;
-
+      
+      // Calculate expenses from the TaskExpense objects (actual external costs)
       const expenses = (task.externalRentals || []).reduce(
         (sum: number, e: any) => sum + (parseFloat(e.cost) || 0),
         0
       );
 
-      const marginAmount = ((internalCost + expenses) * marginPercent) / 100;
-      const taskTotalValue = internalCost + expenses + marginAmount;
-
-      let taskNetProfit = 0;
-      let realCost = 0; 
-
-      const primaryId = task.assigneeIds?.[0];
-      const user = preFetchedUsers.find((u) => u.id === primaryId);
-
-      if (user) {
-        if (user.userType === "FREELANCER") {
-          realCost = expenses + internalCost;
-          taskNetProfit = marginAmount;
-        } else {
-          realCost = expenses;
-          taskNetProfit = taskTotalValue - expenses;
-        }
-      }
+      // --- YOUR FINANCIAL FORMULAS ---
+      // 1. marginAmount = (internalCost * margin) / 100
+      const marginAmount = (internalCost * marginPercent) / 100;
+      
+      // 2. totalInvoice = internalCost + marginAmount
+      const totalInvoice = internalCost + marginAmount;
+      
+      // 3. realCost = freelancer salary + expenses
+      const realCost = totalNegotiatedFreelancerPay + expenses;
+      
+      // 4. taskNetProfit = totalInvoice - realCost
+      const taskNetProfit = totalInvoice - realCost; 
 
       return {
         ...task,
         internalCost,
         margin: marginPercent,
         marginAmount,
-        taskTotalValue,
+        totalInvoice,
         taskNetProfit,
         realCost,
-        userToUpdate: user?.userType === "FREELANCER" ? user.id : null,
+        assigneeIds: taskAssignees.map((a: any) => typeof a === 'string' ? a : a.id),
+        freelancerUpdates
       };
     });
 
-    // Added type 'number' for acc and 'TaskCalculation' for t
-    const totalProjectValue = taskDataWithCalculations.reduce(
-      (acc: number, t: TaskCalculation) => acc + t.taskTotalValue, 
-      0
+    // Project Total is now the sum of all Task Invoices
+    const projectTotalInvoice = taskDataWithCalculations.reduce(
+      (acc: number, t: any) => acc + t.totalInvoice, 0
     );
 
     const targetDeadline = tasks.length > 0
       ? new Date(Math.max(...tasks.map((t: any) => new Date(t.endDate).getTime())))
       : new Date();
 
+    // 3. Database Transaction
     const result = await prisma.$transaction(async (tx) => {
-      const projectCount = await tx.project.count({ where: { agencyId } });
-      const projectNo = `PRJ-${(projectCount + 1).toString().padStart(3, "0")}`;
+  const projectCount = await tx.project.count({ where: { agencyId } });
+  const projectNo = `PRJ-${(projectCount + 1).toString().padStart(3, "0")}`;
 
-      for (const t of taskDataWithCalculations) {
-        if (t.userToUpdate) {
-          await tx.user.update({
-            where: { id: t.userToUpdate },
-            data: { salary: { increment: t.internalCost } },
-          });
-        }
-      }
-
-      return await tx.project.create({
-        data: {
-          projectNo,
-          projectName,
-          projectStory,
-          cloudLink,
-          status: "ACTIVE",
-          totalValue: totalProjectValue,
-          targetDeadline,
-          agency: { connect: { id: agencyId } },
-          client: { connect: { id: clientId } },
-          tasks: {
-            // Explicitly typed 't' as TaskCalculation and 'index' as number
-            create: taskDataWithCalculations.map((t: TaskCalculation, index: number) => ({
-              taskNo: `${projectNo}-T${(index + 1).toString().padStart(2, "0")}`,
-              taskType: t.taskType,
-              status: "PENDING",
-              internalCost: t.internalCost,
-              margin: t.margin,
-              marginAmount: t.marginAmount,
-              taskNetProfit: t.taskNetProfit,
-              totalValue: t.taskTotalValue,
-              startDate: new Date(t.startDate),
-              endDate: new Date(t.endDate),
-              description: t.description,
-              realCost: t.realCost,
-              latitude: t.latitude ?? null,
-              longitude: t.longitude ?? null,
-              locationName: t.locationName || null,
-              agency: { connect: { id: agencyId } },
-              assignees: t.assigneeIds && t.assigneeIds.length > 0
-                ? { connect: t.assigneeIds.map((id: string) => ({ id })) }
-                : undefined,
-              taskExpenses: {
-                create: (t.externalRentals || []).map((exp: any) => ({
-                  itemName: exp.itemName,
-                  cost: parseFloat(exp.cost) || 0,
-                  category: exp.category || "RENTAL",
-                  agency: { connect: { id: agencyId } },
-                })),
-              },
-              todos: t.todos?.create ? { create: t.todos.create } : undefined
-            })),
-          },
-        },
-        include: {
-          tasks: {
-            include: { taskExpenses: true, assignees: true },
-          },
-        },
+  // Update Freelancer Balances
+  for (const t of taskDataWithCalculations) {
+    for (const update of t.freelancerUpdates) {
+      await tx.user.update({
+        where: { id: update.id },
+        data: { salary: { increment: update.amount } },
       });
-    }, {
-      maxWait: 5000,
-      timeout: 20000,
+    }
+  }
+
+// STEP 1: Create project + tasks WITHOUT taskExpenses
+    const project = await tx.project.create({
+      data: {
+        projectNo,
+        projectName,
+        projectStory,
+        cloudLink,
+        status: "ACTIVE",
+        totalValue: projectTotalInvoice,
+        targetDeadline,
+        agency: { connect: { id: agencyId } },
+        client: { connect: { id: clientId } },
+        tasks: {
+          create: taskDataWithCalculations.map((t: any, index: number) => ({
+            taskNo: `${projectNo}-T${(index + 1).toString().padStart(2, "0")}`,
+            taskType: t.taskType,
+            status: "PENDING",
+            internalCost: t.internalCost,
+            margin: t.margin,
+            marginAmount: t.marginAmount,
+            totalInvoice: t.totalInvoice,
+            taskNetProfit: t.taskNetProfit,
+            realCost: t.realCost,
+            startDate: new Date(t.startDate),
+            endDate: new Date(t.endDate),
+            description: t.description,
+            latitude: t.latitude ?? null,
+            longitude: t.longitude ?? null,
+            locationName: t.locationName || null,
+            agency: { connect: { id: agencyId } },
+            
+            // 1. CONNECT ASSIGNEES (Already here)
+            assignees: {
+              connect: t.assigneeIds.map((id: string) => ({ id }))
+            },
+
+            // 2. ADD THIS: CONNECT ASSETS AUTOMATICALLY TO MULTI-TENANT ARRAY
+            // Ensures that task.assetIds and asset.taskIds sync instantly in MongoDB
+            assets: t.assetIds && t.assetIds.length > 0 ? {
+              connect: t.assetIds.map((id: string) => ({ id }))
+            } : undefined,
+
+            todos: t.todos?.create ? { create: t.todos.create } : undefined
+          })),
+        },
+      },
+      include: { tasks: true }, // Get task IDs for step 2
     });
+
+  // STEP 2: Now create TaskExpenses with real project + task IDs
+  for (let i = 0; i < taskDataWithCalculations.length; i++) {
+    const t = taskDataWithCalculations[i];
+    const createdTask = project.tasks[i];
+
+    if (t.externalRentals && t.externalRentals.length > 0) {
+      await tx.taskExpense.createMany({
+        data: t.externalRentals.map((exp: any) => ({
+          itemName: exp.itemName,
+          cost: parseFloat(exp.cost) || 0,
+          category: exp.category || "EQUIPMENT",
+          taskId: createdTask.id,
+          projectId: project.id,
+          agencyId: agencyId,
+        })),
+      });
+    }
+  }
+
+  // STEP 3: Return the full project with everything included
+  return await tx.project.findUnique({
+    where: { id: project.id },
+    include: {
+      tasks: {
+        include: { taskExpenses: true, assignees: true },
+      },
+    },
+  });
+}, {
+  maxWait: 10000,
+  timeout: 30000,
+});
 
     return NextResponse.json(result, { status: 201 });
   } catch (error: any) {
@@ -198,3 +244,4 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
+

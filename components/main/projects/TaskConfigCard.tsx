@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useMemo, useState } from "react";
 
 interface TodoInput {
   id: string;
@@ -10,8 +10,16 @@ interface TodoInput {
 
 interface RentalInput {
   id: string;
-  name: string;
-  cost: string;
+  name: string;      // maps to resourceName
+  cost: string;      // maps to amount
+  category: string;
+  description: string;
+  status: string;
+}
+
+interface TaskEmployee {
+  id: string;
+  salary: string;
 }
 
 interface TaskInput {
@@ -19,7 +27,7 @@ interface TaskInput {
   endDate: string;
   startTime?: string;
   endTime?: string;
-  employeeIds: string[];
+  employeeIds: TaskEmployee[];
   assetIds: string[];
   grossRevenue: string;
   margin: string;
@@ -35,8 +43,14 @@ interface TaskInput {
 interface TaskConfigCardProps {
   type: string;
   detail: TaskInput;
-  dbEmployees: { id: string; name: string }[];
-  dbAssets: { id: string; assetName: string; category: string }[];
+  dbEmployees: { 
+  id: string; 
+  name: string; 
+  userType: string; 
+  role: string; 
+  verifiedSkills: string[] 
+}[];
+  dbAssets: { id: string; assetName: string; category: string, availabilityStatus: string, }[];
   updateTaskField: (dept: string, field: keyof TaskInput, value: any) => void;
   addRental: (dept: string) => void;
   removeRental: (dept: string, rentalId: string) => void;
@@ -67,6 +81,39 @@ export function TaskConfigCard({
   handleUseCurrentLocation,
   handleSearch,
 }: TaskConfigCardProps) {
+
+  
+
+  // ... inside your component
+const ITEMS_PER_PAGE = 4;
+const [currentPage, setCurrentPage] = useState(1);
+const [empSearch, setEmpSearch] = useState("");
+const [assetSearch, setAssetSearch] = useState("");
+
+
+const [currentAssetPage, setCurrentAssetPage] = useState(1);
+const ASSETS_PER_PAGE = 6;
+
+// 1. Filter the employees first
+const filteredEmployees = useMemo(() => {
+  return dbEmployees.filter(emp =>
+    emp.name.toLowerCase().includes(empSearch.toLowerCase())
+  );
+}, [dbEmployees, empSearch]);
+
+// 2. Calculate pagination boundaries
+const totalPages = Math.ceil(filteredEmployees.length / ITEMS_PER_PAGE);
+const paginatedEmployees = useMemo(() => {
+  const start = (currentPage - 1) * ITEMS_PER_PAGE;
+  return filteredEmployees.slice(start, start + ITEMS_PER_PAGE);
+}, [filteredEmployees, currentPage]);
+
+// Reset to page 1 when searching
+const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  setEmpSearch(e.target.value);
+  setCurrentPage(1);
+};
+  
 
   
 
@@ -108,96 +155,308 @@ export function TaskConfigCard({
           </div>
         </div>
 
-        {/* SPECIALIST & TIME */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-muted/30 rounded-2xl border border-border">
-          <div className="space-y-2">
-            <label className="text-[9px] font-black uppercase opacity-50">Assign Production Team/Creative</label>
-            <div className="flex flex-wrap gap-2">
-                {dbEmployees.map((emp) => {
-                  const isSelected = detail.employeeIds?.includes(emp.id);
-                  // This variable only exists inside this block!
-                  const hasConflict = conflicts?.employees.includes(emp.name);
+        {/* Assign Production Team/Creative */}
+        <div className="grid grid-cols-1 gap-4 p-4 bg-muted/30 rounded-2xl border border-border">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-4">
+            <div className="space-y-1">
+              <label className="text-[9px] font-black uppercase opacity-50 tracking-widest">
+                Assign Production Team/Creative
+              </label>
+              <p className="text-[8px] font-bold text-blue-600">
+                PAGE {currentPage} OF {totalPages || 1}
+              </p>
+            </div>
 
-                  return (
-                    <button
-                      key={emp.id}
-                      type="button"
-                      onClick={() => {
-                        // Correct way to toggle the selection
-                        const newIds = isSelected 
-                        ? detail.employeeIds.filter((id) => id !== emp.id) 
-                        : [...(detail.employeeIds || []), emp.id];
-                                            
-                        updateTaskField(type, "employeeIds", newIds);
-                      }}
-                      className={`px-3 py-2 rounded-lg text-[9px] font-bold border transition-all ${
-                        hasConflict 
-                          ? "bg-red-500 border-red-600 text-white animate-pulse" 
-                          : isSelected 
-                            ? "bg-blue-600 border-blue-600 text-white shadow-md" 
-                            : "bg-white border-border text-muted-foreground"
+            {/* SEARCH BAR */}
+            <div className="relative group w-full md:w-64">
+              <input
+                type="text"
+                placeholder="Search employees..."
+                className="w-full p-3 pl-10 rounded-xl bg-muted/30 border border-border text-[11px] font-bold outline-none focus:border-blue-600/50 transition-all"
+                value={empSearch}
+                onChange={handleSearchChange}
+              />
+              <span className="absolute left-4 top-1/2 -translate-y-1/2 opacity-30 text-xs">🔍</span>
+            </div>
+          </div>
+
+          {/* LIST AREA */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pr-2">
+            {paginatedEmployees.map((emp) => {
+              const hasConflict = conflicts?.employees.includes(emp.name);
+              // Find the existing selection object to access .salary and check existence
+              const selectedObj = detail.employeeIds.find((e) => e.id === emp.id);
+              const isSelected = !!selectedObj;
+
+              return (
+                <div key={emp.id} className="flex flex-col gap-2">
+                  <div
+                    onClick={() => {
+                      const newSelection = isSelected
+                        ? detail.employeeIds.filter((e) => e.id !== emp.id)
+                        : [...(detail.employeeIds || []), { id: emp.id, salary: "0" }];
+                      
+                      updateTaskField(type, "employeeIds", newSelection);
+                    }}
+                    className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
+                      isSelected
+                        ? "bg-blue-600/5 border-blue-600/40 shadow-sm"
+                        : "bg-muted/30 border-transparent hover:border-border"
+                    }`}
+                  >
+                    {/* CHECKBOX */}
+                    <div
+                      className={`w-4 h-4 rounded border flex items-center justify-center transition-all ${
+                        isSelected ? "bg-blue-600 border-blue-600" : "bg-white border-muted-foreground/30"
                       }`}
                     >
-                      {emp.name} {hasConflict && "⚠️"}
-                    </button>
-                  );
-                })}
-            </div>
+                      {isSelected && <span className="text-[10px] text-white">✓</span>}
+                    </div>
+
+                    {/* EMPLOYEE INFO */}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className={`text-[11px] font-black uppercase truncate ${hasConflict ? "text-red-500" : "text-foreground"}`}>
+                          {emp.name}
+                        </span>
+                        <span className="text-[7px] px-1.5 py-0.5 rounded bg-muted font-bold opacity-60 uppercase shrink-0">
+                          {emp.userType}
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        <span className="text-[8px] font-bold text-blue-600 bg-blue-600/10 px-1.5 py-0.5 rounded">
+                          {emp.role}
+                        </span>
+                        {emp.verifiedSkills?.slice(0, 2).map((skill) => (
+                          <span key={skill} className="text-[8px] font-medium text-emerald-600 bg-emerald-600/5 border border-emerald-600/10 px-1.5 py-0.5 rounded-full">
+                            {skill}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* CONFLICT ALERT */}
+                    {hasConflict && (
+                      <div className="flex flex-col items-end shrink-0">
+                        <span className="text-[14px]">⚠️</span>
+                        <span className="text-[7px] font-black text-red-500 animate-pulse uppercase">Booked</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* SALARY INPUT - Inlined underneath for better UX when selected */}
+                  {isSelected && (
+                    <div className="flex items-center gap-3 px-3 py-2 bg-blue-600/10 border border-blue-600/20 rounded-xl mx-1 animate-in slide-in-from-top-1">
+                      <label className="text-[8px] font-black text-blue-600 uppercase whitespace-nowrap">Day Rate $</label>
+                      <input
+                        type="number"
+                        className="w-full bg-transparent text-[10px] font-black outline-none text-blue-800 placeholder:text-blue-300"
+                        placeholder="0"
+                        value={selectedObj.salary}
+                        onClick={(e) => e.stopPropagation()} // Prevent deselecting when clicking input
+                        onChange={(e) => {
+                          const updated = detail.employeeIds.map((item) =>
+                            item.id === emp.id ? { ...item, salary: e.target.value } : item
+                          );
+                          updateTaskField(type, "employeeIds", updated);
+                        }}
+                      />
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
-          <div className="flex gap-4">
-            <div className="space-y-2 flex-1">
-              <label className="text-[9px] font-black uppercase opacity-50">Start Time</label>
-              <input 
-                type="time" 
-                className="w-full bg-transparent text-xs font-bold" 
-                value={detail.startTime} 
-                onChange={(e) => updateTaskField(type, "startTime", e.target.value)} 
-              />
+
+          {/* PAGINATION CONTROLS */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between px-4 py-2 border-t border-border/50 mt-2">
+              <button
+                type="button"
+                disabled={currentPage === 1}
+                onClick={() => setCurrentPage((prev) => prev - 1)}
+                className="text-[10px] font-black uppercase tracking-widest disabled:opacity-20 hover:text-blue-600 transition-all"
+              >
+                Prev
+              </button>
+
+              <div className="flex gap-1.5">
+                {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
+                  <button
+                    key={page}
+                    type="button"
+                    onClick={() => setCurrentPage(page)}
+                    className={`w-6 h-6 rounded-md text-[9px] font-black transition-all ${
+                      currentPage === page ? "bg-blue-600 text-white" : "bg-muted hover:bg-border text-foreground"
+                    }`}
+                  >
+                    {page}
+                  </button>
+                ))}
+              </div>
+
+              <button
+                type="button"
+                disabled={currentPage === totalPages}
+                onClick={() => setCurrentPage((prev) => prev + 1)}
+                className="text-[10px] font-black uppercase tracking-widest disabled:opacity-20 hover:text-blue-600 transition-all"
+              >
+                Next
+              </button>
             </div>
-            <div className="space-y-2 flex-1">
-              <label className="text-[9px] font-black uppercase opacity-50">End Time</label>
-              <input 
-                type="time" 
-                className="w-full bg-transparent text-xs font-bold" 
-                value={detail.endTime} 
-                onChange={(e) => updateTaskField(type, "endTime", e.target.value)} 
-              />
+          )}
+
+          {filteredEmployees.length === 0 && (
+            <div className="text-center py-10">
+              <p className="text-[10px] font-bold opacity-30 uppercase tracking-tighter text-muted-foreground">
+                No team members match your search
+              </p>
             </div>
-          </div>
+          )}
         </div>
 
         
         {/* INTERNAL ASSETS */}
-        <div className="space-y-3 p-4 bg-purple-600/5 border border-purple-600/10 rounded-2xl">
-          <label className="text-[9px] font-black uppercase text-purple-600 tracking-widest">Internal Assets</label>
-          <div className="flex flex-wrap gap-2">
-            {dbAssets.map((asset) => {
-              const isSelected = detail.assetIds.includes(asset.id);
-              // Optional chaining ensures this doesn't crash if conflicts is undefined
-              const hasConflict = conflicts?.assets?.includes(asset.assetName);
+        <div className="grid grid-cols-1 gap-4 p-4 bg-purple-600/5 border border-purple-600/10 rounded-2xl">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end px-2">
+            <div className="space-y-1">
+              <label className="text-[9px] font-black uppercase text-purple-600 tracking-widest block">
+                Internal Assets & Equipment
+              </label>
+              <span className="text-[8px] font-bold text-purple-400 uppercase">
+                {detail.assetIds.length} Selected • 6 Per Page
+              </span>
+            </div>
+
+            {/* ASSET SEARCH BAR */}
+            <div className="relative group">
+              <input
+                type="text"
+                placeholder="Search equipment..."
+                className="w-full p-3 pl-10 rounded-xl bg-muted/30 border border-border text-[11px] font-bold outline-none focus:border-blue-600/50 transition-all"
+                value={assetSearch}
+                onChange={(e) => {
+                  setAssetSearch(e.target.value);
+                  setCurrentAssetPage(1); // Reset to page 1 on search
+                }}
+              />
+              <span className="absolute left-4 top-1/2 -translate-y-1/2 opacity-30 text-xs">🔍</span>
+            </div>
+          </div>
+
+          {/* ASSET GRID */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 min-h-[160px]">
+            {(() => {
+              const filtered = dbAssets.filter((asset) =>
+                asset.assetName.toLowerCase().includes(assetSearch.toLowerCase())
+              );
+              
+              const totalAssetPages = Math.ceil(filtered.length / ASSETS_PER_PAGE);
+              const startIdx = (currentAssetPage - 1) * ASSETS_PER_PAGE;
+              const paginated = filtered.slice(startIdx, startIdx + ASSETS_PER_PAGE);
+
+              if (filtered.length === 0) {
+                return <p className="col-span-full text-center py-10 text-[10px] font-bold opacity-30 uppercase tracking-widest">No assets found</p>;
+              }
 
               return (
-                <button
-                  key={asset.id}
-                  type="button"
-                  onClick={() => {
-                    const newIds = isSelected 
-                      ? detail.assetIds.filter((id) => id !== asset.id) 
-                      : [...detail.assetIds, asset.id];
-                    updateTaskField(type, "assetIds", newIds);
-                  }}
-                  className={`px-3 py-2 rounded-lg text-[9px] font-bold border transition-all ${
-                    hasConflict
-                      ? "bg-red-500 border-red-600 text-white animate-pulse"
-                      : isSelected 
-                        ? "bg-purple-600 border-purple-600 text-white shadow-md" 
-                        : "bg-white border-border text-muted-foreground"
-                  }`}
-                >
-                  {asset.assetName} {hasConflict && "⚠️"}
-                </button>
+                <>
+                  {paginated.map((asset) => {
+                    const isSelected = detail.assetIds.includes(asset.id);
+                    const hasConflict = conflicts?.assets?.includes(asset.assetName);
+                    const isUnavailable = asset.availabilityStatus !== "Available";
+
+                    return (
+                      <div
+                        key={asset.id}
+                        onClick={() => {
+                          if (isUnavailable && !isSelected) return; 
+                          const newIds = isSelected
+                            ? detail.assetIds.filter((id) => id !== asset.id)
+                            : [...detail.assetIds, asset.id];
+                          updateTaskField(type, "assetIds", newIds);
+                        }}
+                        className={`flex items-start gap-3 p-3 rounded-xl border transition-all cursor-pointer group/card ${
+                          hasConflict
+                            ? "bg-red-500/10 border-red-500 animate-pulse"
+                            : isSelected
+                            ? "bg-purple-600 border-purple-600 text-white shadow-lg scale-[0.98]"
+                            : isUnavailable 
+                            ? "bg-muted/50 border-dashed border-border opacity-50 cursor-not-allowed"
+                            : "bg-muted/30  border-border hover:border-purple-600/30"
+                        }`}
+                      >
+                        {/* CHECKBOX UI */}
+                        <div className={`mt-0.5 w-3.5 h-3.5 rounded border flex items-center justify-center transition-all ${
+                          isSelected ? "bg-white border-white" : "bg-transparent border-purple-600/20"
+                        }`}>
+                          {isSelected && <span className="text-[10px] text-purple-600 font-bold">✓</span>}
+                        </div>
+
+                        <div className="flex-1 min-w-0">
+                          <span className={`text-[10px] font-black uppercase truncate block ${isSelected ? "text-white" : "text-foreground"}`}>
+                            {asset.assetName}
+                          </span>
+                          
+                          <div className="flex items-center gap-2 mt-1">
+                            <span className={`text-[7px] font-bold px-1.5 py-0.5 rounded uppercase ${
+                              isSelected ? "bg-white/20 text-white" : "bg-purple-600/10 text-purple-600"
+                            }`}>
+                              {asset.category}
+                            </span>
+                            <span className={`text-[7px] font-black ${
+                              isUnavailable ? "text-red-500" : isSelected ? "text-purple-200" : "text-emerald-500"
+                            }`}>
+                              {isUnavailable ? asset.availabilityStatus : "● ONLINE"}
+                            </span>
+                          </div>
+                        </div>
+
+                        {hasConflict && (
+                          <span className="text-[7px] font-black text-red-500 bg-white px-1 rounded shadow-sm">
+                            CONFLICT
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+
+                  {/* ASSET PAGINATION CONTROLS */}
+                  {totalAssetPages > 1 && (
+                    <div className="col-span-full flex items-center justify-between pt-4 px-2 border-t border-purple-600/10 mt-2">
+                      <button
+                        type="button"
+                        disabled={currentAssetPage === 1}
+                        onClick={() => setCurrentAssetPage(prev => prev - 1)}
+                        className="text-[9px] font-black uppercase tracking-tighter disabled:opacity-20 hover:text-purple-600 transition-colors"
+                      >
+                        ← Prev
+                      </button>
+                      
+                      <div className="flex gap-1">
+                        {Array.from({ length: totalAssetPages }, (_, i) => (
+                          <div
+                            key={i}
+                            className={`h-1 rounded-full transition-all ${
+                              currentAssetPage === i + 1 ? "bg-purple-600 w-4" : "bg-purple-200 w-1"
+                            }`}
+                          />
+                        ))}
+                      </div>
+
+                      <button
+                        type="button"
+                        disabled={currentAssetPage === totalAssetPages}
+                        onClick={() => setCurrentAssetPage(prev => prev + 1)}
+                        className="text-[9px] font-black uppercase tracking-tighter disabled:opacity-20 hover:text-purple-600 transition-colors"
+                      >
+                        Next →
+                      </button>
+                    </div>
+                  )}
+                </>
               );
-            })}
+            })()}
           </div>
         </div>
 
@@ -212,6 +471,7 @@ export function TaskConfigCard({
               onChange={(e) => updateTaskField(type, "startDate", e.target.value)} 
             />
           </div>
+          
           <div className="space-y-1">
             <label className="text-[8px] font-black opacity-40 uppercase">End Date</label>
             <input 
@@ -221,6 +481,26 @@ export function TaskConfigCard({
               onChange={(e) => updateTaskField(type, "endDate", e.target.value)} 
             />
           </div>
+          
+            <div className="space-y-2  ">
+              <label className="text-[9px] font-black uppercase opacity-50">Start Time</label>
+              <input 
+                type="time" 
+                className="w-full bg-transparent text-xs font-bold" 
+                value={detail.startTime} 
+                onChange={(e) => updateTaskField(type, "startTime", e.target.value)} 
+              />
+            </div>
+            <div className="space-y-2   ">
+              <label className="text-[9px] font-black uppercase opacity-50">End Time</label>
+              <input 
+                type="time" 
+                className="w-full bg-transparent text-xs font-bold" 
+                value={detail.endTime} 
+                onChange={(e) => updateTaskField(type, "endTime", e.target.value)} 
+              />
+            </div>
+          
         </div>
 
         {(conflicts?.assets?.length ?? 0) > 0 && (
@@ -304,35 +584,79 @@ export function TaskConfigCard({
         )}
         </div>
 
-        {/* EXTERNAL RENTALS */}
+        {/* EXTERNAL RENTALS / EXPENSES */}
         {detail.rentals && detail.rentals.length > 0 && (
-          <div className="space-y-3 p-4 bg-amber-500/5 border border-amber-500/20 rounded-2xl">
-            <p className="text-[9px] font-black text-amber-600 uppercase tracking-tighter">External Resource Rentals</p>
+          <div className="space-y-4 p-5 bg-amber-500/5 border border-amber-500/20 rounded-[2rem]">
+            <div className="flex justify-between items-center px-1">
+              <p className="text-[9px] font-black text-amber-600 uppercase tracking-widest">
+                External Resource Expenses
+              </p>
+              <span className="text-[8px] font-bold opacity-40 uppercase">
+                {detail.rentals.length} Items Listed
+              </span>
+            </div>
+
             {detail.rentals.map((r) => (
-              <div key={r.id} className="flex items-center gap-4 border-b border-amber-500/10 pb-2 group">
-                <input
-                  placeholder="Item Name"
-                  className="flex-1 bg-transparent text-xs font-bold outline-none"
-                  value={r.name}
-                  onChange={(e) => updateRentalField(type, r.id, "name", e.target.value)}
-                />
-                <div className="flex items-center gap-1 px-3 py-1 rounded-lg border border-border">
-                  <span className="text-[10px] font-bold opacity-30">$</span>
-                  <input
-                    placeholder="Cost"
-                    type="number"
-                    className="w-16 bg-transparent text-xs font-black outline-none"
-                    value={r.cost}
-                    onChange={(e) => updateRentalField(type, r.id, "cost", e.target.value)}
+              <div key={r.id} className="relative p-4 bg-amber-500/5  border border-amber-500/10 rounded-2xl group transition-all hover:border-amber-500/30">
+                {/* ROW 1: NAME & COST & DELETE */}
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="flex-1">
+                    <input
+                      placeholder="Resource Name (e.g. Sony FX6 Rental)"
+                      className="w-full bg-transparent text-[11px] font-black uppercase outline-none placeholder:opacity-30"
+                      value={r.name}
+                      onChange={(e) => updateRentalField(type, r.id, "name", e.target.value)}
+                    />
+                  </div>
+                  
+                  <div className="flex items-center gap-1 px-3 py-1 bg-amber-500/10 rounded-lg border border-amber-500/20">
+                    <span className="text-[10px] font-black text-amber-600">$</span>
+                    <input
+                      placeholder="0.00"
+                      type="number"
+                      className="w-16 bg-transparent text-xs font-black outline-none text-amber-700"
+                      value={r.cost}
+                      onChange={(e) => updateRentalField(type, r.id, "cost", e.target.value)}
+                    />
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => removeRental(type, r.id)}
+                    className="text-red-400 hover:text-red-600 transition-colors p-1"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                {/* ROW 2: CATEGORY & STATUS */}
+                <div className="grid grid-cols-1 gap-3 mb-3">
+                  <div className="space-y-1">
+                    <label className="text-[7px] font-black uppercase opacity-40 ml-1">Category</label>
+                    <select
+                      className="w-full bg-muted/40 p-2 rounded-lg text-[10px] font-bold outline-none border border-transparent focus:border-amber-500/20"
+                      value={r.category}
+                      onChange={(e) => updateRentalField(type, r.id, "category", e.target.value)}
+                    >
+                      <option value="EQUIPMENT">Equipment</option>
+                      <option value="LOCATION">Location/Studio</option>
+                      <option value="TRANSPORT">Transport</option>
+                      <option value="CATERING">Catering</option>
+                      <option value="TALENT">Talent/Model</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* ROW 3: DESCRIPTION */}
+                <div className="space-y-1">
+                  <label className="text-[7px] font-black uppercase opacity-40 ml-1">Notes / Description</label>
+                  <textarea
+                    placeholder="Additional details, serial numbers, or vendor info..."
+                    className="w-full bg-muted/20 p-2 rounded-lg text-[10px] font-medium min-h-[40px] outline-none resize-none border border-transparent focus:border-amber-500/20"
+                    value={r.description || ""}
+                    onChange={(e) => updateRentalField(type, r.id, "description", e.target.value)}
                   />
                 </div>
-                <button
-                  type="button"
-                  onClick={() => removeRental(type, r.id)}
-                  className="text-red-500 hover:scale-110 transition-transform px-2"
-                >
-                  ✕
-                </button>
               </div>
             ))}
           </div>

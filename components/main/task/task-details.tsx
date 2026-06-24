@@ -68,21 +68,41 @@ export const TaskForm = ({ task, setTask, saving, handleUpdate, calculatedProgre
           {task.agency?.users?.map((user: any) => {
             const isSelected = task.assigneeIds?.includes(user.id);
             return (
-              <button
-                key={user.id}
-                type="button"
-                onClick={() => toggleAssignee(user.id)}
-                className={`flex items-center justify-between p-3 rounded-xl border transition-all ${
-                  isSelected 
-                    ? "bg-blue-600 border-blue-600 text-white shadow-lg shadow-blue-500/20" 
-                    : "bg-muted border-transparent text-foreground opacity-60 hover:opacity-100"
-                }`}
-              >
-                <span className="text-[10px] font-black uppercase truncate mr-2">{user.name}</span>
-                {isSelected && (
-                  <div className="w-2 h-2 bg-white rounded-full animate-pulse" />
-                )}
-              </button>
+                <button
+                  key={user.id}
+                  type="button"
+                  onClick={() => toggleAssignee(user.id)}
+                  className={`flex items-center justify-between p-3 rounded-xl border transition-all ${
+                    isSelected 
+                      ? "bg-blue-600 border-blue-600 text-white shadow-lg shadow-blue-500/20" 
+                      : "bg-muted border-transparent text-foreground opacity-60 hover:opacity-100"
+                  }`}
+                >
+                  <div className="flex flex-col items-start gap-1 min-w-0">
+                    <span className="text-[10px] font-black uppercase truncate">{user.name}</span>
+                    <span className={`text-[8px] font-black px-1.5 py-0.5 rounded uppercase tracking-tight ${
+                      isSelected
+                        ? "bg-white/20 text-white"
+                        : user.userType === "FREELANCER"
+                        ? "bg-orange-100 text-orange-600"
+                        : user.userType === "FULL_TIME"
+                        ? "bg-emerald-100 text-emerald-700"
+                        : user.userType === "PART_TIME"
+                        ? "bg-blue-100 text-blue-700"
+                        : user.userType === "INTERN"
+                        ? "bg-purple-100 text-purple-700"
+                        : "bg-muted text-muted-foreground"
+                    }`}>
+                      {user.userType === "FULL_TIME" ? "Full Time"
+                        : user.userType === "PART_TIME" ? "Part Time"
+                        : user.userType === "INTERN" ? "Intern"
+                        : "Freelancer"}
+                    </span>
+                  </div>
+                  {isSelected && (
+                    <div className="w-2 h-2 bg-white rounded-full animate-pulse flex-shrink-0 ml-2" />
+                  )}
+                </button>
             );
           })}
         </div>

@@ -306,7 +306,8 @@ model Task {
     paymentStatus String @default("Pending")
 
     // UI: FINANCIALS PER DEPT
-    totalValue    Float @default(0.0)
+
+    totalInvoice  Float @default(0.0)
     internalCost  Float @default(0.0) // UI: "GROSS REVENUE ($)"
     margin        Float @default(30.0) // UI: "MARGIN (%)"
     marginAmount  Float @default(0.0) // Calculation: (internalCost * margin) / 100
@@ -357,18 +358,27 @@ model Task {
     todos          Todo[]
 }
 
+enum TaskExpenseCategory {
+    EQUIPMENT
+    LOCATION
+    TRANSPORT
+    CATERING
+    TALENT
+    RENTAL
+}
+
 model TaskExpense {
-    id          String  @id @default(cuid()) @map("_id")
+    id          String              @id @default(cuid()) @map("_id")
     itemName    String // UI: "Camera Rental", "Location Fee", "Lunch"
     cost        Float // UI: "Cost $"
-    category    String // UI: "RENTAL", "TRAVEL", "HOSPITALITY", "MISC"
+    category    TaskExpenseCategory @default(EQUIPMENT)
     description String?
 
     taskId String
     task   Task   @relation(fields: [taskId], references: [id])
 
-    projectId String?
-    project   Project? @relation(fields: [projectId], references: [id])
+    projectId String
+    project   Project @relation(fields: [projectId], references: [id])
 
     agencyId String
     agency   Agency @relation(fields: [agencyId], references: [id])
