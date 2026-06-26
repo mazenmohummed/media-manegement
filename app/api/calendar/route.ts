@@ -20,7 +20,14 @@ export async function GET() {
       }),
       prisma.attendanceLog.findMany({
         where: { agencyId },
-        include: { user: true },
+        include: { 
+          user: true,
+          task: {
+            include: {
+              project: true 
+            }
+          }
+        },
       }),
       prisma.user.findMany({
         where: { agencyId },
@@ -41,29 +48,46 @@ export async function GET() {
       },
     }));
 
-    const attendanceEvents = attendance.map((a) => ({
-      id: `att-${a.id}`,
-      title: `IN: ${a.user.name}`,
-      start: new Date(a.checkInTime),
-      end: a.checkOutTime ? new Date(a.checkOutTime) : new Date(a.checkInTime),
-      allDay: false,
-      resource: { type: "ATTENDANCE", status: a.status },
-    }));
+    const attendanceEvents = attendance.map((a: any) => {
+      const dynamicTaskName = a.task?.project?.projectName 
+        ? `${a.task.project.projectName} - ${a.task.taskType}`
+        : null;
 
-    // CRITICAL FIX: Loop through leaves and strip out "REJECTED" statuses completely
-    // Inside your GET handler for the calendar:
-      const leaveEvents = usersWithLeaves.flatMap((u) =>
-        u.leaves
-          .filter((l) => l.status !== "Rejected") // FIX: match MongoDB "Rejected" casing
-          .map((l, index) => ({
-            id: `leave-${u.id}-${index}`, 
-            title: `LEAVE: ${u.name} (${l.type})`,
-            start: new Date(l.startDate!),
-            end: new Date(l.endDate!),
-            allDay: true,
-            resource: { type: "LEAVE", status: l.status },
-          }))
-      );
+      return {
+        id: `att-${a.id}`,
+        title: `IN: ${a.user.name}`,
+        start: new Date(a.checkInTime),
+        end: a.checkOutTime ? new Date(a.checkOutTime) : new Date(a.checkInTime),
+        allDay: false,
+        resource: { 
+          type: "ATTENDANCE", 
+          status: a.status,
+          method: a.checkInLocation ?? a.type,  
+          totalHours: a.totalHours,
+          isLate: a.isLate,
+          checkOutTime: a.checkOutTime,
+          taskId: a.taskId || null,
+          taskName: dynamicTaskName, 
+          
+          // 👇 CRITICAL FIX: Pass the task target scheduling down to the client layout
+          taskStartDate: a.task?.startDate || null,
+          taskEndDate: a.task?.endDate || null,
+        },
+      };
+    });
+
+    const leaveEvents = usersWithLeaves.flatMap((u) =>
+      u.leaves
+        .filter((l) => l.status !== "Rejected") 
+        .map((l, index) => ({
+          id: `leave-${u.id}-${index}`, 
+          title: `LEAVE: ${u.name} (${l.type})`,
+          start: new Date(l.startDate!),
+          end: new Date(l.endDate!),
+          allDay: true,
+          resource: { type: "LEAVE", status: l.status },
+        }))
+    );
 
     return NextResponse.json([...taskEvents, ...attendanceEvents, ...leaveEvents]);
   } catch (error) {

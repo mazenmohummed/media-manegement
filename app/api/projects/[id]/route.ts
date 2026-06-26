@@ -3,16 +3,13 @@ import prisma from "@/lib/prisma";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/authOptions";
 
-// ==========================================
-// 1. GET A SINGLE PROJECT BY ID
-// ==========================================
 export async function GET(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const session = await getServerSession(authOptions);
-    const agencyId = session?.user?.agencyId;
+    const agencyId = (session as any)?.user?.agencyId;
 
     if (!agencyId) {
       return NextResponse.json(
@@ -38,7 +35,8 @@ export async function GET(
                 id: true,
                 name: true,
                 userType: true,
-                salary: true,
+                baseSalary: true,
+                walletBalance: true,
               },
             },
             taskExpenses: true,
@@ -56,13 +54,12 @@ export async function GET(
       );
     }
 
-    // Read saved values directly from DB — same as the projects list route
-    // No recalculation needed; POST already stores the correct computed values
+    // Calculate project totals from task financial fields (already computed in DB)
     const projectTotals = project.tasks.reduce(
       (acc, t) => ({
         totalProjectInvoice: acc.totalProjectInvoice + (t.totalInvoice || 0),
-        totalProjectProfit:  acc.totalProjectProfit  + (t.taskNetProfit || 0),
-        totalProjectCost:    acc.totalProjectCost    + (t.realCost || 0),
+        totalProjectProfit: acc.totalProjectProfit + (t.taskNetProfit || 0),
+        totalProjectCost: acc.totalProjectCost + (t.realCost || 0),
       }),
       { totalProjectInvoice: 0, totalProjectProfit: 0, totalProjectCost: 0 }
     );
@@ -71,7 +68,6 @@ export async function GET(
       ...project,
       ...projectTotals,
     });
-
   } catch (error: any) {
     console.error("ROUTE_ERROR_PROJECT_BY_ID_GET:", error);
     return NextResponse.json(
@@ -81,122 +77,105 @@ export async function GET(
   }
 }
 
-// ==========================================
-// 2. DELETE A PROJECT BY ID (With Programmatic Cascade Cleanup)
-// ==========================================
 export async function DELETE(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    // 1. Authenticate user and get their agency ID
     const session = await getServerSession(authOptions);
-    const agencyId = session?.user?.agencyId;
+    const agencyId = (session as any)?.user?.agencyId;
 
     if (!agencyId) {
       return NextResponse.json(
-        { error: "Unauthorized: No Agency linked to user session" }, 
+        { error: "Unauthorized: No Agency linked to user session" },
         { status: 401 }
       );
     }
 
     const { id } = await params;
 
-    // 2. Security Check: Ensure the project exists AND belongs to this agency
+    // Security check: ensure project exists and belongs to agency
     const existingProject = await prisma.project.findUnique({
       where: { id: id },
-      select: { agencyId: true }
+      select: { agencyId: true },
     });
 
     if (!existingProject) {
       return NextResponse.json(
-        { error: "Project not found" }, 
+        { error: "Project not found" },
         { status: 404 }
       );
     }
 
     if (existingProject.agencyId !== agencyId) {
       return NextResponse.json(
-        { error: "Forbidden: You do not have permission to delete this project" }, 
+        { error: "Forbidden: You do not have permission to delete this project" },
         { status: 403 }
       );
     }
 
-    // 3. Sequential Cleanup, Freelancer Reversal, and Deletion inside a safe Transaction
+    // Cascade cleanup + freelancer wallet reversal in transaction
     await prisma.$transaction(async (tx) => {
-      // Find all tasks related to this project along with their assignees who are FREELANCERS
+      // Fetch all tasks with their freelancer assignees
       const tasks = await tx.task.findMany({
         where: { projectId: id },
         include: {
           assignees: {
             where: { userType: "FREELANCER" },
-            select: { id: true, salary: true }
-          }
-        }
+            select: { id: true, walletBalance: true },
+          },
+        },
       });
 
       const taskIds = tasks.map((t) => t.id);
 
-      if (taskIds.length > 0) {
-        // Loop through tasks and reverse freelancer salary updates
-       // Loop through tasks and reverse freelancer salary updates safely
-for (const task of tasks) {
-  for (const freelancer of task.assignees) {
-    const deductionAmount = parseFloat(freelancer.salary as any) || 0;
-    
-    if (deductionAmount > 0) {
-      // 1. Fetch current database snapshot for the user to verify true balance state
-      const currentUser = await tx.user.findUnique({
-        where: { id: freelancer.id },
-        select: { salary: true }
-      });
+      // Reverse freelancer wallet balances (subtract what was added)
+      for (const task of tasks) {
+        for (const freelancer of task.assignees) {
+          const currentBalance = freelancer.walletBalance || 0;
 
-      const currentSalary = currentUser?.salary || 0;
-      // 2. Prevent dropping below 0
-      const targetSalary = Math.max(0, currentSalary - deductionAmount);
+          // Fetch the FinancialTransaction records for this task+freelancer to know how much to reverse
+          const txns = await tx.financialTransaction.findMany({
+            where: {
+              userId: freelancer.id,
+              taskId: task.id,
+            },
+            select: { amount: true },
+          });
 
-      await tx.user.update({
-        where: { id: freelancer.id },
-        data: { salary: targetSalary }, // Absolute value set cleanly 
-      });
-    }
-  }
-}
+          const totalToReverse = txns.reduce((sum, t) => sum + (t.amount || 0), 0);
+          const newBalance = Math.max(0, currentBalance - totalToReverse);
 
-        // Clear all expenses belonging to those tasks
-        await tx.taskExpense.deleteMany({
-          where: { taskId: { in: taskIds } }
-        });
-
-        // Clear all todos belonging to those tasks
-        await tx.todo.deleteMany({
-          where: { taskId: { in: taskIds } }
-        });
-
-        // Clear all tasks belonging to this project
-        await tx.task.deleteMany({
-          where: { projectId: id }
-        });
+          await tx.user.update({
+            where: { id: freelancer.id },
+            data: { walletBalance: newBalance },
+          });
+        }
       }
 
-      // Finally, delete the project itself safely
-      await tx.project.delete({
-        where: { id: id }
-      });
+      // Clean up task-related records
+      if (taskIds.length > 0) {
+        await tx.taskExpense.deleteMany({ where: { taskId: { in: taskIds } } });
+        await tx.todo.deleteMany({ where: { taskId: { in: taskIds } } });
+        await tx.financialTransaction.deleteMany({ where: { taskId: { in: taskIds } } });
+        await tx.task.deleteMany({ where: { projectId: id } });
+      }
+
+      // Delete project
+      await tx.project.delete({ where: { id: id } });
     }, {
       maxWait: 10000,
       timeout: 30000,
     });
 
     return NextResponse.json(
-      { message: "Project deleted successfully and freelancer balances reversed" }, 
+      { message: "Project deleted successfully and freelancer wallets reversed" },
       { status: 200 }
     );
-
   } catch (error: any) {
     console.error("PROJECT_DELETE_ERROR:", error);
     return NextResponse.json(
-      { error: "An internal server error occurred", details: error.message }, 
+      { error: "An internal server error occurred", details: error?.message ?? String(error) },
       { status: 500 }
     );
   }

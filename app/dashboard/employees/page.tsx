@@ -14,7 +14,12 @@ interface Employee {
   email: string;
   userType: "FULL_TIME" | "PART_TIME" | "FREELANCER" | "INTERN";
   efficiencyRate: number;
-  salary: number; // For freelancers, this acts as their current accumulated balance
+  // new canonical fields
+  baseSalary?: number;    // monthly salary for staff
+  walletBalance?: number; // accrued balance (freelancer pending fees / accruals)
+  // legacy compatibility (some endpoints might still use salary)
+  salary?: number;
+
   verifiedSkills: string[];
   workingHours: number;
   extraPayouts: number;
@@ -46,13 +51,33 @@ export default function EmployeesDirectory() {
         const res = await fetch(`/api/employees?agencyId=${agencyId}`);
         const data = await res.json();
         
-        if (data.employees && Array.isArray(data.employees)) {
-          setEmployees(data.employees);
-        } else {
-          setEmployees([]);
-        }
+        const incoming = Array.isArray(data.employees) ? data.employees : [];
+
+        // Normalize fields to support schema change (baseSalary + walletBalance).
+        const normalized: Employee[] = incoming.map((emp: any) => {
+          const baseSalary = typeof emp.baseSalary === "number"
+            ? emp.baseSalary
+            : typeof emp.salary === "number"
+              ? emp.salary
+              : 0;
+
+          const walletBalance = typeof emp.walletBalance === "number"
+            ? emp.walletBalance
+            : // fallback for older APIs that returned salary as accrued balance for freelancers
+            (emp.userType === "FREELANCER" && typeof emp.salary === "number" ? emp.salary : 0);
+
+          return {
+            ...emp,
+            baseSalary,
+            walletBalance,
+            salary: emp.salary, // preserve if present
+          } as Employee;
+        });
+
+        setEmployees(normalized);
       } catch (err) {
         console.error("Directory Sync Failed:", err);
+        setEmployees([]);
       } finally {
         setLoading(false);
       }
@@ -68,9 +93,13 @@ export default function EmployeesDirectory() {
     );
   }, [search, employees]);
 
-  // SOURCE OF TRUTH PAYROLL CRITERIA: Read directly from database table field balance
+  // Payroll: sum of base salaries + pending wallet balances (liabilities)
   const totalPayroll = useMemo(() => {
-    return employees.reduce((acc, emp) => acc + (emp.salary || 0), 0);
+    return employees.reduce((acc, emp) => {
+      const base = emp.baseSalary ?? 0;
+      const wallet = emp.walletBalance ?? 0;
+      return acc + base + wallet;
+    }, 0);
   }, [employees]);
 
   const handleAddEmployee = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -93,15 +122,17 @@ export default function EmployeesDirectory() {
       ? skillsRaw.split(",").map(s => s.trim()).filter(Boolean) 
       : [];
 
+    // Send baseSalary (schema aligned) instead of legacy 'salary'
     const payload = {
       name: formData.get("name"),
       email: formData.get("email"),
       password,
       role: formData.get("role"),
       userType: formData.get("userType"),
-      salary: parseFloat(formData.get("salary") as string) || 0,
+      baseSalary: parseFloat(formData.get("salary") as string) || 0,
       agencyId,
       verifiedSkills: skillsArray,
+      // walletBalance intentionally omitted (defaults to 0)
     };
 
     try {
@@ -113,13 +144,21 @@ export default function EmployeesDirectory() {
 
       const result = await response.json();
       if (response.ok) {
+        // normalize returned employee (server may return baseSalary or salary)
+        const emp = {
+          ...result,
+          baseSalary: result.baseSalary ?? result.salary ?? 0,
+          walletBalance: result.walletBalance ?? result.salary ?? 0,
+        } as Employee;
+
         setIsModalOpen(false);
-        setEmployees((prev) => [...prev, result]);
+        setEmployees((prev) => [...prev, emp]);
       } else {
         alert(result.error || "Failed to onboard employee");
       }
     } catch (err) {
       console.error("Connection error:", err);
+      alert("Connection error while onboarding");
     } finally {
       setIsSubmitting(false);
     }
@@ -249,7 +288,7 @@ export default function EmployeesDirectory() {
         />
         <StatBlock 
             label="Total Payroll" 
-            value={`$${totalPayroll.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
+            value={`$${Math.round(totalPayroll).toLocaleString()}`}
             color="text-orange-600"
         />
       </div>
@@ -263,11 +302,12 @@ export default function EmployeesDirectory() {
           revenueGenerated: emp.totalRevenue || 0, 
           workingHours: emp.workingHours || 0,
           lateDays: emp.lateDays || 0,
-          baseSalary: emp.salary || 0, 
+          baseSalary: emp.baseSalary || 0, 
           extraPayouts: emp.extraPayouts || 0,
           expenses: emp.expenses || 0,
           efficiency: emp.efficiencyRate || 0,
           activeLeaves: emp.attendanceLogs?.filter(log => log.type === "Vacation").length || 0,
+          walletBalance: emp.walletBalance || 0,
         }))} 
       />
 
@@ -286,9 +326,11 @@ export default function EmployeesDirectory() {
             const doneTasksCount = tasks.filter(t => t.status?.toUpperCase() === "COMPLETED" || t.status?.toUpperCase() === "FINISHED").length;
             const dueTasksCount = tasks.filter(t => t.status?.toUpperCase() === "PENDING" || t.status?.toUpperCase() === "TODO").length;
 
-            // TRACK VALUE FROM DB ENGINE DIRECTLY: 
-            // Freelancer payout pulls from `emp.salary` which stores accrued pay natively.
-            const accumulatedPay = emp.salary || 0;
+            // Freelancer: use walletBalance as accumulatedPay. Staff: show baseSalary as monthly payout.
+            const accumulatedPay = emp.userType === "FREELANCER"
+              ? (emp.walletBalance ?? 0)
+              : (emp.baseSalary ?? 0);
+
             const paymentLabel = emp.userType === "FREELANCER" ? "Pending Fees" : "Monthly Payout";
 
             return (

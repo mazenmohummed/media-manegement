@@ -105,7 +105,7 @@ export default function ProjectDetailsPage() {
           </div>
         </div>
 
-        {/* TOP LEVEL STATS (CALCULATED BY API) */}
+        {/* TOP LEVEL STATS */}
         <div className="bg-foreground text-background p-8 rounded-[2rem] shadow-2xl relative overflow-hidden group">
           <div className="relative z-10">
             <p className="text-[10px] font-black uppercase opacity-60 mb-1">Total Project Revenue</p>
@@ -115,10 +115,10 @@ export default function ProjectDetailsPage() {
             <div className="grid grid-cols-2 gap-4 border-t border-background/20 pt-4">
               <div>
                 <p className="text-[9px] font-black uppercase opacity-40">Net Profit</p>
-                  <p className={`text-lg font-bold ${project.totalProjectProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                    {project.totalProjectProfit >= 0 ? '+' : ''}
-                    ${(project.totalProjectProfit || 0).toLocaleString()}
-                  </p>
+                <p className={`text-lg font-bold ${project.totalProjectProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  {project.totalProjectProfit >= 0 ? '+' : ''}
+                  ${(project.totalProjectProfit || 0).toLocaleString()}
+                </p>
               </div>
               <div>
                 <p className="text-[9px] font-black uppercase opacity-40">Total Real Cost</p>
@@ -142,8 +142,7 @@ export default function ProjectDetailsPage() {
               <div className="bg-card border border-border rounded-[2rem] p-6 md:p-8 hover:border-blue-600/50 hover:shadow-2xl hover:shadow-blue-500/5 transition-all duration-500">
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
                   
-
-                  {/* 1. RESTORED OLD TASK HEADER */}
+                  {/* TASK HEADER */}
                   <div className="lg:col-span-4 space-y-4">
                     <div className="flex items-center gap-3">
                       <span className="bg-blue-600 text-white text-[9px] font-black px-2 py-1 rounded">
@@ -163,8 +162,12 @@ export default function ProjectDetailsPage() {
                     <div className="flex items-center gap-4">
                       <div className="flex -space-x-2">
                         {task.assignees?.map((a: any) => (
-                          <div key={a.id} className="w-8 h-8 rounded-full border-2 border-card bg-muted flex items-center justify-center text-[10px] font-bold overflow-hidden ring-1 ring-black/5" title={a.name}>
-                            {a.image ? <img src={a.image} alt={a.name} className="w-full h-full object-cover" /> : a.name?.charAt(0)}
+                          <div 
+                            key={a.id} 
+                            className="w-8 h-8 rounded-full border-2 border-card bg-muted flex items-center justify-center text-[10px] font-bold overflow-hidden ring-1 ring-black/5" 
+                            title={a.name}
+                          >
+                            {a.name?.charAt(0).toUpperCase()}
                           </div>
                         ))}
                       </div>
@@ -186,7 +189,7 @@ export default function ProjectDetailsPage() {
                     </div>
                   </div>
 
-                  {/* FINANCIAL SNAPSHOT - RESTORED TO OLD CSS STYLE */}
+                  {/* FINANCIAL SNAPSHOT */}
                   <div className="lg:col-span-4 bg-foreground text-background rounded-[2rem] p-6 flex flex-col justify-center shadow-xl group-hover:bg-blue-600 transition-colors duration-500">
                     <div className="flex justify-between items-center mb-1">
                       <p className="text-[9px] font-black uppercase opacity-60">Client Invoice Amount</p>
@@ -205,7 +208,7 @@ export default function ProjectDetailsPage() {
                         </span>
                       </div>
                       
-                      <div className="h-6 w-[1px] bg-background/20" /> {/* Divider */}
+                      <div className="h-6 w-[1px] bg-background/20" />
 
                       <div className="flex flex-col text-right">
                         <span className="text-[8px] font-black uppercase opacity-40">Real Cost</span>

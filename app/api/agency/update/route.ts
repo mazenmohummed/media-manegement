@@ -1,69 +1,45 @@
-import { NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
-import { getServerSession } from "next-auth/next";
+import { NextRequest, NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/authOptions";
+import { prisma } from "@/lib/prisma";
 
-export async function PATCH(req: Request) {
+export async function PUT(req: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (!session?.user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
-    const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
-      select: { role: true, agencyId: true }
-    });
-
-    if (!user || (user.role !== "ADMIN" && user.role !== "SUPERADMIN")) {
+    const role = session.user.role as string;
+    if (role !== "ADMIN" && role !== "SUPERADMIN") {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    // Parse the body once
+    const agencyId = session.user.agencyId as string;
     const body = await req.json();
-    const { 
-      agencyName, 
-      email,
-      address, 
-      latitude, 
-      longitude, 
-      radius, 
-      plan, 
-      workingHours 
+
+    const {
+      agencyName, operatorName, email,
+      address, latitude, longitude, radius, workingHours,
     } = body;
 
-    const updatedAgency = await prisma.agency.update({
-      where: { id: user.agencyId },
+    const updated = await prisma.agency.update({
+      where: { id: agencyId },
       data: {
-        agencyName,
-        email,
-        address,
-        latitude: latitude ? parseFloat(latitude) : null,
-        longitude: longitude ? parseFloat(longitude) : null,
-        radius: radius ? parseInt(radius) : 100,
-        
-        // Since workingHours is a list of 'type WorkingDay', 
-        // we overwrite the entire array with the new data.
-        workingHours: {
-          set: workingHours.map((wh: any) => ({
-            day: wh.day,
-            openTime: wh.openTime,
-            closeTime: wh.closeTime,
-            isClosed: wh.isClosed
-          }))
-        },
-
-        // Nested update for the subscription plan
-        subscription: {
-          upsert: {
-            create: { plan: plan || "FREE" },
-            update: { plan: plan }
-          }
-        }
-      }
+        ...(agencyName   !== undefined && { agencyName }),
+        ...(operatorName !== undefined && { operatorName }),
+        ...(email        !== undefined && { email }),
+        ...(address      !== undefined && { address }),
+        ...(latitude     !== undefined && { latitude: parseFloat(latitude) }),
+        ...(longitude    !== undefined && { longitude: parseFloat(longitude) }),
+        ...(radius       !== undefined && { radius: parseInt(radius) }),
+        ...(workingHours !== undefined && { workingHours }),
+      },
     });
 
-    return NextResponse.json(updatedAgency);
-  } catch (error: any) {
-    console.error("AGENCY_UPDATE_ERROR:", error);
-    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+    return NextResponse.json({ success: true, agency: updated });
+  } catch (error) {
+    console.error("[AGENCY_UPDATE]", error);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

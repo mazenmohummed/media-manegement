@@ -365,14 +365,43 @@ const handleDeleteExpense = async (expenseId: string, cost: number) => {
     <div className="space-y-6">
       {/* RESOURCE UTILIZATION */}
       <div className="bg-foreground text-background p-8 rounded-[2.5rem] shadow-sm space-y-8">
-        <h3 className="text-[10px] font-black uppercase tracking-widest opacity-60">Resource Utilization</h3>
-        <div className="flex justify-between items-end">
+        <div className="flex justify-between items-center border-b border-background/10 pb-4">
+          <h3 className="text-[10px] font-black uppercase tracking-widest opacity-60">Resource Utilization</h3>
+          <span className="text-[9px] font-black uppercase tracking-wider bg-background text-foreground px-2 py-0.5 rounded">
+            Schedule Info
+          </span>
+        </div>
+
+        {/* TIMELINE METRICS */}
+        <div className="grid grid-cols-2 gap-4 border-b border-background/10 pb-6">
           <div>
-            <p className="text-[8px] font-black opacity-60 uppercase">Aggregated Labor</p>
+            <p className="text-[8px] font-black opacity-60 uppercase tracking-wider mb-1">Production Start</p>
+            <p className="text-xs font-black uppercase">
+              {task.startDate ? moment(task.startDate).format("MMM DD, YYYY") : "N/A"}
+            </p>
+            <p className="text-[10px] opacity-70 font-mono">
+              {task.startDate ? moment(task.startDate).format("hh:mm A") : "--:--"}
+            </p>
+          </div>
+          <div>
+            <p className="text-[8px] font-black opacity-60 uppercase tracking-wider mb-1">Production End</p>
+            <p className="text-xs font-black uppercase">
+              {task.endDate ? moment(task.endDate).format("MMM DD, YYYY") : "N/A"}
+            </p>
+            <p className="text-[10px] opacity-70 font-mono">
+              {task.endDate ? moment(task.endDate).format("hh:mm A") : "--:--"}
+            </p>
+          </div>
+        </div>
+
+        {/* LABOR METRICS */}
+        <div className="flex justify-between items-end pt-2">
+          <div>
+            <p className="text-[8px] font-black opacity-60 uppercase tracking-wider">Aggregated Labor</p>
             <p className="text-4xl font-black">{formattedTotalHours}<span className="text-sm ml-1">HRS</span></p>
           </div>
           <div className="text-right">
-            <p className="text-[8px] font-black opacity-60 uppercase">Session Count</p>
+            <p className="text-[8px] font-black opacity-60 uppercase tracking-wider">Session Count</p>
             <p className="text-xl font-black">{task.attendanceLogs?.length || 0}</p>
           </div>
         </div>

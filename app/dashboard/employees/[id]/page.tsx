@@ -410,28 +410,113 @@ export default function EmployeeProfile() {
               </div>
             )}
 
-            {activeTab === "ATTENDANCE" && (
-              <div className="bg-card border border-border rounded-[2.5rem] overflow-hidden">
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="bg-muted/30 text-[9px] font-black uppercase tracking-widest text-muted-foreground">
-                      <th className="p-6">Date</th>
-                      <th className="p-6">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border/50">
-                    {employee.attendanceLogs?.map((log: any) => (
-                      <tr key={log.id} className="text-[11px] font-bold uppercase hover:bg-muted/10 transition-colors">
-                        <td className="p-6">{new Date(log.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
-                        <td className="p-6">
-                          <span className={`px-3 py-1 rounded-lg text-[9px] font-black ${log.status === 'Present' ? 'bg-emerald-500/10 text-emerald-600' : 'bg-red-500/10 text-red-600'}`}>
-                            {log.status}
-                          </span>
-                        </td>
+           {activeTab === "ATTENDANCE" && (
+              <div className="bg-card border border-border rounded-[2.5rem] overflow-hidden shadow-sm">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse min-w-[900px]">
+                    <thead>
+                      <tr className="bg-muted/30 border-b border-border text-[9px] font-black uppercase tracking-widest text-muted-foreground italic">
+                        <th className="p-6 pl-8">Date / Type</th>
+                        <th className="p-6">Status</th>
+                        <th className="p-6">Check In parameters</th>
+                        <th className="p-6">Check Out parameters</th>
+                        <th className="p-6 text-right pr-8">Total Time</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody className="divide-y divide-border/50 font-mono text-xs">
+                      {employee.attendanceLogs?.length > 0 ? (
+                        employee.attendanceLogs.map((log: any) => {
+                          const formattedDate = new Date(log.date).toLocaleDateString('en-GB', { 
+                            day: '2-digit', 
+                            month: 'short', 
+                            year: 'numeric' 
+                          });
+                          
+                          const checkInTime = log.checkInTime ? new Date(log.checkInTime).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : "—";
+                          const checkOutTime = log.checkOutTime ? new Date(log.checkOutTime).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : "—";
+
+                          return (
+                            <tr key={log.id || log._id} className="hover:bg-muted/10 transition-colors group">
+                              {/* DATE & TYPE SPECIFICATION */}
+                              <td className="p-6 pl-8">
+                                <div className="flex flex-col">
+                                  {/* Explicit Log Date */}
+                                  <span className="font-black text-foreground uppercase italic text-[13px] tracking-tight group-hover:text-primary transition-colors">
+                                    {formattedDate}
+                                  </span>
+                                  
+                                  {/* Fixed Meta Hierarchy: Project Name • Task Type */}
+                                  <span className="text-[8px] font-black tracking-widest text-muted-foreground/80 uppercase mt-0.5">
+                                    {log.task?.project?.projectName || "Direct Assignment"} • {log.task?.taskType || log.type || "FIELD_TASK"}
+                                  </span>
+                                </div>
+                              </td>
+                              {/* SHIFT STATUS BADGES */}
+                              <td className="p-6">
+                                <div className="flex flex-col gap-1.5 items-start">
+                                  <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider border ${
+                                    log.status === 'COMPLETED' || log.status === 'Present'
+                                      ? 'bg-emerald-500/5 text-emerald-500 border-emerald-500/20' 
+                                      : 'bg-amber-500/5 text-amber-500 border-amber-500/20'
+                                  }`}>
+                                    {log.status || "PENDING"}
+                                  </span>
+                                  {log.isLate && (
+                                    <span className="px-1.5 py-0.5 rounded text-[7px] font-black uppercase tracking-widest bg-rose-500/10 text-rose-500 border border-rose-500/10">
+                                      LATE ENTRY
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
+
+                              {/* CHECK IN DETAILS */}
+                              <td className="p-6 space-y-1">
+                                <div className="text-foreground font-black text-[11px]">
+                                  {checkInTime}
+                                </div>
+                                {log.checkInLat && log.checkInLng && (
+                                  <div className="text-[8px] text-muted-foreground font-bold tracking-tight bg-muted/50 px-2 py-0.5 rounded-md inline-block">
+                                    GPS: {log.checkInLat.toFixed(4)}°, {log.checkInLng.toFixed(4)}°
+                                  </div>
+                                )}
+                              </td>
+
+                              {/* CHECK OUT DETAILS */}
+                              <td className="p-6 space-y-1">
+                                <div className="text-foreground font-black text-[11px]">
+                                  {checkOutTime}
+                                </div>
+                                {log.checkOutLat && log.checkOutLng ? (
+                                  <div className="text-[8px] text-muted-foreground font-bold tracking-tight bg-muted/50 px-2 py-0.5 rounded-md inline-block">
+                                    GPS: {log.checkOutLat.toFixed(4)}°, {log.checkOutLng.toFixed(4)}°
+                                  </div>
+                                ) : (
+                                  <span className="text-[9px] text-muted-foreground/40 italic">Active Session</span>
+                                )}
+                              </td>
+
+                              {/* TOTAL RUNNING HOURS */}
+                              <td className="p-6 text-right pr-8">
+                                <div className="inline-block px-3 py-1.5 bg-foreground text-background font-black rounded-xl text-[11px] uppercase tracking-tight italic">
+                                  {log.totalHours !== undefined && log.totalHours !== null
+                                    ? `${Number(log.totalHours).toFixed(3)} hrs`
+                                    : "0.000 hrs"
+                                  }
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })
+                      ) : (
+                        <tr>
+                          <td colSpan={5} className="p-20 text-center text-muted-foreground text-[10px] font-black uppercase tracking-widest italic border-2 border-dashed border-border rounded-[2rem] m-4">
+                            No telemetry attendance logs discovered for this personnel record.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
 

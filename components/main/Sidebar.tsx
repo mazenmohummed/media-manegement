@@ -2,10 +2,10 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation"; // 1. Added usePathname
+import { usePathname } from "next/navigation";
 import { useSession, signOut } from "next-auth/react";
-import { ModeToggle } from "../ModeToggle";
-import { motion } from "framer-motion"; // 2. Optional: for smoother glow transitions
+import { motion } from "framer-motion";
+import nextDynamic from "next/dynamic";
 import { 
   Users, 
   Briefcase, 
@@ -20,10 +20,16 @@ import {
   LayoutDashboard
 } from "lucide-react";
 
+// Safe dynamic import to permanently silence the Radix UI hydration mismatches
+const ModeToggle = nextDynamic(() => import("../ModeToggle").then((mod) => mod.ModeToggle), {
+  ssr: false,
+  loading: () => <div className="w-9 h-9 rounded-xl bg-muted animate-pulse" />
+});
+
 export default function Sidebar() {
   const { data: session } = useSession();
   const [isCollapsed, setIsCollapsed] = useState(false);
-  const pathname = usePathname(); // 3. Get current path
+  const pathname = usePathname();
 
   const navLinks = [
     { name: "Dashboard", href: "/dashboard", icon: <LayoutDashboard size={20} /> },
@@ -56,7 +62,6 @@ export default function Sidebar() {
           <div className="w-8 h-8 bg-blue-600 rounded-lg shadow-[0_0_20px_rgba(37,99,235,0.5)] shrink-0 animate-pulse" />
           {!isCollapsed && (
             <div className="flex flex-col">
-              {/* Dynamic Agency Name */}
               <span className="font-black tracking-tighter text-sm italic text-blue-600 uppercase truncate max-w-[120px]">
                 {session?.user?.agencyName || "Loading..."}
               </span>
@@ -77,9 +82,6 @@ export default function Sidebar() {
         )}
         
         {navLinks.map((link) => {
-          // 4. Logic to check if active
-          // Check if it's the root dashboard link for an exact match
-          // Otherwise, use startsWith to keep sub-routes (like /finance/clients) active
           const isActive = link.href === "/dashboard" 
             ? pathname === "/dashboard" 
             : pathname.startsWith(link.href);

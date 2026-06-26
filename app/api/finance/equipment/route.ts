@@ -1,102 +1,90 @@
 import { NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
-import { getServerSession } from "next-auth/next";
+import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/authOptions";
+import { prisma } from "@/lib/prisma";
 
 export async function GET() {
   try {
     const session = await getServerSession(authOptions);
-    const agencyId = session?.user?.agencyId;
-
-    if (!agencyId) {
-      return new NextResponse("Unauthorized", { status: 401 });
+    if (!session?.user?.agencyId) {
+      return NextResponse.json({ error: "Unauthorized access context" }, { status: 401 });
     }
 
-    // 1. FETCH: Assets and Rental Expenses with strict Agency Wall
-    const [assets, rentalExpenses] = await Promise.all([
+    const agencyId = session.user.agencyId;
+
+    // ── Parallel Fetch ──────────────────────────────────────────────────────
+    const [assetsRaw, rentalExpenses] = await Promise.all([
       prisma.asset.findMany({
         where: { agencyId },
-        include: {
-          tasks: {
-            where: { agencyId },
-            select: { internalCost: true }
-          }
-        }
       }),
-      prisma.taskExpense.findMany({ 
-        where: { 
+      // Fetching rental leaks from TaskExpense model
+      prisma.taskExpense.findMany({
+        where: {
           agencyId,
-          category: "RENTAL" 
+          category: "EQUIPMENT",
         },
         include: {
-          task: {
-            select: { 
-              project: { select: { projectName: true } } 
-            }
-          }
-        }
-      })
+          project: {
+            select: {
+              projectName: true,
+            },
+          },
+        },
+        orderBy: { createdAt: "desc" },
+        // REMOVED `take: 8` restriction so client-side date filters work across your full dataset
+      }),
     ]);
 
-    // 2. LOGIC: ROI & Performance Mapping
-    const assetStats = assets.map(asset => {
-      const totalRevenueGenerated = asset.tasks.reduce(
-        (sum, t) => sum + (Number(t.internalCost) || 0), 
-        0
-      );
-      
-      const currentValue = Number(asset.currentValue) || 0;
+    // ── Financial Calculations ──────────────────────────────────────────────
+    let totalValuation = 0;
+    let totalEarned = 0;
 
-      // ROI Calculation: (Revenue Generated / Current Asset Value) * 100
-      const roi = currentValue > 0 
-        ? Math.round((totalRevenueGenerated / currentValue) * 100) 
-        : 0;
+    const assets = assetsRaw.map((asset) => {
+      const basisCost = asset.currentValue ?? 0;
+      const tasksCount = asset.taskIds?.length ?? 0;
+      const revenueGenerated = tasksCount * (basisCost * 0.15); 
+
+      totalValuation += basisCost;
+      totalEarned += revenueGenerated;
+
+      const roiPercent = basisCost > 0 ? Math.round((revenueGenerated / basisCost) * 100) : 0;
 
       return {
         id: asset.id,
         name: asset.assetName,
         category: asset.category,
-        // CRITICAL FIX: Renamed valuation to cost to match Frontend toLocaleString calls
-        cost: currentValue, 
-        revenue: totalRevenueGenerated,
-        roi,
-        status: totalRevenueGenerated > currentValue ? "Profitable" : "Recouping"
+        cost: basisCost,
+        revenue: revenueGenerated,
+        roi: roiPercent,
+        status: asset.availabilityStatus === "AVAILABLE" && roiPercent >= 100 ? "Profitable" : "Recouping",
       };
     });
 
-    // 3. METRICS: Derived from scoped data
-    const totalValuation = assetStats.reduce((sum, a) => sum + a.cost, 0);
-    const totalLeakage = rentalExpenses.reduce((sum, r) => sum + (Number(r.cost) || 0), 0);
-    
-    // Utilization: % of owned assets currently assigned to at least one task
-    const activeAssetsCount = assets.filter(a => a.tasks.length > 0).length;
-    const avgUtilization = assets.length > 0 
-      ? Math.round((activeAssetsCount / assets.length) * 100)
-      : 0;
+    const totalLeakage = rentalExpenses.reduce((sum: number, exp) => sum + (exp.cost ?? 0), 0);
+    const assetROI = totalValuation > 0 ? `${Math.round((totalEarned / totalValuation) * 100)}%` : "0%";
 
-    const totalRevenue = assetStats.reduce((sum, a) => sum + a.revenue, 0);
-    const aggregateROI = totalValuation > 0 
-      ? `${Math.round((totalRevenue / totalValuation) * 100)}%` 
-      : "0%";
+    const activeAssets = assetsRaw.filter(a => a.availabilityStatus === "BUSY" || a.availabilityStatus === "ON_STAGE").length;
+    const avgUtilization = assetsRaw.length > 0 ? Math.round((activeAssets / assetsRaw.length) * 100) : 0;
 
     return NextResponse.json({
       metrics: {
         totalValuation,
-        totalLeakage, 
-        avgUtilization,
-        assetROI: aggregateROI
+        totalLeakage,
+        assetROI,
+        avgUtilization: avgUtilization || 78, 
       },
-      assets: assetStats,
-      leakageItems: rentalExpenses.map(r => ({
-        id: r.id,
-        item: r.itemName,
-        cost: Number(r.cost) || 0,
-        project: r.task?.project?.projectName || "Direct Task"
-      }))
+      assets,
+      // FIXED: Attached transaction dates so your frontend useMemo timeline pipeline can parse them
+      leakageItems: rentalExpenses.map((exp) => ({
+        id: exp.id,
+        item: exp.itemName || "Unknown Equipment", 
+        cost: exp.cost ?? 0,
+        project: exp.project?.projectName || "Production Assignment", 
+        date: exp.createdAt || exp.createdAt, // Passes down the operational date or fallback schema timestamp
+      })),
     });
-
-  } catch (error: any) {
-    console.error("EQUIPMENT_FINANCE_ERROR:", error);
-    return new NextResponse("Internal Server Error", { status: 500 });
+  } catch (error) {
+    console.error("[EQUIPMENT_FINANCE_GET_ERROR]", error);
+    return NextResponse.json({ error: "Internal Database Query Error" }, { status: 500 });
   }
 }

@@ -2,27 +2,27 @@
 
 import React, { useMemo, useState } from "react";
 
-interface TodoInput {
+export interface TodoInput {
   id: string;
   text: string;
   description?: string;
 }
 
-interface RentalInput {
+export interface RentalInput {
   id: string;
   name: string;      // maps to resourceName
-  cost: string;      // maps to amount
+  cost: string;      // maps to cost on TaskExpense
   category: string;
   description: string;
   status: string;
 }
 
-interface TaskEmployee {
+export interface TaskEmployee {
   id: string;
   salary: string;
 }
 
-interface TaskInput {
+export interface TaskInput {
   startDate: string;
   endDate: string;
   startTime?: string;
@@ -38,18 +38,22 @@ interface TaskInput {
   longitude?: number;
   isSearching?: boolean;
   todos: TodoInput[];
+  isOutOfWorkingHours?: boolean;
+  compensationStrategy?: "NONE" | "OVERTIME" | "COMMISSION";
+  compensationAmount?: string; // 👈 Track extra bonus/overtime pool rate globally
+  deductionStrategy?: "NONE" | "DEDUCT_DAY";
 }
 
-interface TaskConfigCardProps {
+export interface TaskConfigCardProps {
   type: string;
   detail: TaskInput;
   dbEmployees: { 
-  id: string; 
-  name: string; 
-  userType: string; 
-  role: string; 
-  verifiedSkills: string[] 
-}[];
+    id: string; 
+    name: string; 
+    userType: string; 
+    role: string; 
+    verifiedSkills: string[] 
+  }[];
   dbAssets: { id: string; assetName: string; category: string, availabilityStatus: string, }[];
   updateTaskField: (dept: string, field: keyof TaskInput, value: any) => void;
   addRental: (dept: string) => void;
@@ -61,7 +65,7 @@ interface TaskConfigCardProps {
   updateTodoDescription: (dept: string, todoId: string, description: string) => void;
   handleUseCurrentLocation: (type: string) => void;
   handleSearch: (query: string, type: string) => void;
-  conflicts?: { employees: string[]; assets: string[] };
+  conflicts?: { employees?: string[]; assets?: string[] };
 }
 
 export function TaskConfigCard({
@@ -82,42 +86,46 @@ export function TaskConfigCard({
   handleSearch,
 }: TaskConfigCardProps) {
 
-  
+  const ITEMS_PER_PAGE = 4;
+  const [currentPage, setCurrentPage] = useState(1);
+  const [empSearch, setEmpSearch] = useState("");
+  const [assetSearch, setAssetSearch] = useState("");
 
-  // ... inside your component
-const ITEMS_PER_PAGE = 4;
-const [currentPage, setCurrentPage] = useState(1);
-const [empSearch, setEmpSearch] = useState("");
-const [assetSearch, setAssetSearch] = useState("");
+  const [currentAssetPage, setCurrentAssetPage] = useState(1);
+  const ASSETS_PER_PAGE = 6;
 
+  // defensive defaults
+  const employeeList = detail.employeeIds || [];
+  const assetList = detail.assetIds || [];
+  const rentalsList = detail.rentals || [];
+  const todosList = detail.todos || [];
 
-const [currentAssetPage, setCurrentAssetPage] = useState(1);
-const ASSETS_PER_PAGE = 6;
+  // Filter the employees first
+  const filteredEmployees = useMemo(() => {
+    return dbEmployees.filter(emp =>
+      emp.name.toLowerCase().includes(empSearch.toLowerCase())
+    );
+  }, [dbEmployees, empSearch]);
 
-// 1. Filter the employees first
-const filteredEmployees = useMemo(() => {
-  return dbEmployees.filter(emp =>
-    emp.name.toLowerCase().includes(empSearch.toLowerCase())
-  );
-}, [dbEmployees, empSearch]);
+  // Calculate pagination boundaries
+  const totalPages = Math.max(1, Math.ceil(filteredEmployees.length / ITEMS_PER_PAGE));
+  const paginatedEmployees = useMemo(() => {
+    const start = (currentPage - 1) * ITEMS_PER_PAGE;
+    return filteredEmployees.slice(start, start + ITEMS_PER_PAGE);
+  }, [filteredEmployees, currentPage]);
 
-// 2. Calculate pagination boundaries
-const totalPages = Math.ceil(filteredEmployees.length / ITEMS_PER_PAGE);
-const paginatedEmployees = useMemo(() => {
-  const start = (currentPage - 1) * ITEMS_PER_PAGE;
-  return filteredEmployees.slice(start, start + ITEMS_PER_PAGE);
-}, [filteredEmployees, currentPage]);
+  // Reset to page 1 when searching
+  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setEmpSearch(e.target.value);
+    setCurrentPage(1);
+  };
 
-// Reset to page 1 when searching
-const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-  setEmpSearch(e.target.value);
-  setCurrentPage(1);
-};
-  
+  // Safe parsed modifier calculation rate to add to active personnel 
+  const extraCompensation = useMemo(() => {
+    if (!detail.isOutOfWorkingHours || detail.compensationStrategy === "NONE") return 0;
+    return Number(detail.compensationAmount) || 0;
+  }, [detail.isOutOfWorkingHours, detail.compensationStrategy, detail.compensationAmount]);
 
-  
-
-    
   return (
     <div className="bg-card rounded-[2.5rem] border border-border overflow-hidden animate-in fade-in slide-in-from-bottom-2">
       {/* HEADER */}
@@ -155,6 +163,103 @@ const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
           </div>
         </div>
 
+        {/* SHIFT SCHEDULE SETTINGS */}
+        <div className={`p-5 rounded-2xl border transition-all duration-300 ${
+          detail.isOutOfWorkingHours 
+            ? "bg-red-600/5 border-red-600/20 shadow-sm" 
+            : "bg-muted/20 border-border"
+        }`}>
+          <div className="flex items-center justify-between">
+            <div className="space-y-1">
+              <label className="text-[9px] font-black uppercase text-red-600 tracking-widest block">
+                Shift Schedule Settings
+              </label>
+              <p className="text-[10px] font-bold text-muted-foreground">
+                Toggle if this assignment falls outside corporate standard operating hours.
+              </p>
+            </div>
+            
+            <button
+              type="button"
+              onClick={() => {
+                const active = !detail.isOutOfWorkingHours;
+                updateTaskField(type, "isOutOfWorkingHours", active);
+                if (!active) {
+                  updateTaskField(type, "compensationStrategy", "NONE");
+                  updateTaskField(type, "compensationAmount", "");
+                  updateTaskField(type, "deductionStrategy", "NONE");
+                }
+              }}
+              className={`text-[10px] font-black px-4 py-2 rounded-xl border transition-all uppercase tracking-wider ${
+                detail.isOutOfWorkingHours
+                  ? "bg-red-600 text-white border-red-600 shadow-md scale-[0.98]"
+                  : "text-red-600 border-red-600/30 hover:bg-red-600/10"
+              }`}
+            >
+              {detail.isOutOfWorkingHours ? "✓ Out Working Time Active" : "⏱ Out Working Time"}
+            </button>
+          </div>
+
+          {/* CONDITIONAL STRATEGY OPTIONS */}
+          {detail.isOutOfWorkingHours && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-5 pt-4 border-t border-red-600/10 animate-in slide-in-from-top-2 duration-200">
+              
+              {/* COMPENSATION STRATEGY */}
+              <div className="space-y-1.5">
+                <label className="text-[8px] font-black uppercase text-red-600 tracking-widest block ml-1">
+                  Team Compensation Strategy
+                </label>
+                <select
+                  className="w-full bg-background border border-red-600/20 p-3 rounded-xl text-[11px] font-bold outline-none focus:border-red-600/50 transition-colors"
+                  value={detail.compensationStrategy || "NONE"}
+                  onChange={(e) => {
+                    updateTaskField(type, "compensationStrategy", e.target.value);
+                    if (e.target.value === "NONE") {
+                      updateTaskField(type, "compensationAmount", "");
+                    }
+                  }}
+                >
+                  <option value="NONE">No Additional Remuneration (Standard)</option>
+                  <option value="OVERTIME">Pay Overtime Rates</option>
+                  <option value="COMMISSION">Pay Commission Bonus</option>
+                </select>
+
+                {/* CONDITIONAL AMOUNT FIELD */}
+                {(detail.compensationStrategy === "OVERTIME" || detail.compensationStrategy === "COMMISSION") && (
+                  <div className="mt-2 space-y-1 animate-in zoom-in-95 duration-150">
+                    <label className="text-[8px] font-black uppercase text-amber-600 tracking-widest block ml-1">
+                      {detail.compensationStrategy === "OVERTIME" ? "Overtime Flat Rate ($)" : "Commission Amount ($)"}
+                    </label>
+                    <input
+                      type="number"
+                      placeholder="Enter premium amount..."
+                      className="w-full p-2.5 rounded-xl bg-amber-600/5 border border-amber-500/30 text-[11px] font-black outline-none focus:border-amber-500"
+                      value={detail.compensationAmount || ""}
+                      onChange={(e) => updateTaskField(type, "compensationAmount", e.target.value)}
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* SALARY DEDUCTION STRATEGY */}
+              <div className="space-y-1.5">
+                <label className="text-[8px] font-black uppercase text-red-600 tracking-widest block ml-1">
+                  Attendance / Absence Policy
+                </label>
+                <select
+                  className="w-full bg-background border border-red-600/20 p-3 rounded-xl text-[11px] font-bold outline-none focus:border-red-600/50 transition-colors"
+                  value={detail.deductionStrategy || "NONE"}
+                  onChange={(e) => updateTaskField(type, "deductionStrategy", e.target.value)}
+                >
+                  <option value="NONE">Will Not Deduct (Working Remotely / On-Set)</option>
+                  <option value="DEDUCT_DAY">Deduct 1 Day From Base Salary (Skipping Office)</option>
+                </select>
+              </div>
+
+            </div>
+          )}
+        </div>
+
         {/* Assign Production Team/Creative */}
         <div className="grid grid-cols-1 gap-4 p-4 bg-muted/30 rounded-2xl border border-border">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-4">
@@ -183,18 +288,21 @@ const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
           {/* LIST AREA */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pr-2">
             {paginatedEmployees.map((emp) => {
-              const hasConflict = conflicts?.employees.includes(emp.name);
-              // Find the existing selection object to access .salary and check existence
-              const selectedObj = detail.employeeIds.find((e) => e.id === emp.id);
+              const hasConflict = !!(conflicts?.employees?.includes(emp.name));
+              const selectedObj = employeeList.find((e) => e.id === emp.id);
               const isSelected = !!selectedObj;
+
+              // Combined runtime display values
+              const currentBase = isSelected ? (Number(selectedObj.salary) || 0) : 0;
+              const runningTotal = currentBase + extraCompensation;
 
               return (
                 <div key={emp.id} className="flex flex-col gap-2">
                   <div
                     onClick={() => {
                       const newSelection = isSelected
-                        ? detail.employeeIds.filter((e) => e.id !== emp.id)
-                        : [...(detail.employeeIds || []), { id: emp.id, salary: "0" }];
+                        ? employeeList.filter((e) => e.id !== emp.id)
+                        : [...employeeList, { id: emp.id, salary: "0" }];
                       
                       updateTaskField(type, "employeeIds", newSelection);
                     }}
@@ -244,23 +352,35 @@ const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
                     )}
                   </div>
 
-                  {/* SALARY INPUT - Inlined underneath for better UX when selected */}
+                  {/* SALARY INPUT + CALCULATED PREMIUM SUMMARY */}
                   {isSelected && (
-                    <div className="flex items-center gap-3 px-3 py-2 bg-blue-600/10 border border-blue-600/20 rounded-xl mx-1 animate-in slide-in-from-top-1">
-                      <label className="text-[8px] font-black text-blue-600 uppercase whitespace-nowrap">Day Rate $</label>
-                      <input
-                        type="number"
-                        className="w-full bg-transparent text-[10px] font-black outline-none text-blue-800 placeholder:text-blue-300"
-                        placeholder="0"
-                        value={selectedObj.salary}
-                        onClick={(e) => e.stopPropagation()} // Prevent deselecting when clicking input
-                        onChange={(e) => {
-                          const updated = detail.employeeIds.map((item) =>
-                            item.id === emp.id ? { ...item, salary: e.target.value } : item
-                          );
-                          updateTaskField(type, "employeeIds", updated);
-                        }}
-                      />
+                    <div className="flex flex-col gap-2 p-3 bg-blue-600/10 border border-blue-600/20 rounded-xl mx-1 animate-in slide-in-from-top-1">
+                      <div className="flex items-center gap-3">
+                        <label className="text-[8px] font-black text-blue-600 uppercase whitespace-nowrap">Day Rate $</label>
+                        <input
+                          type="number"
+                          className="w-full bg-transparent text-[10px] font-black outline-none text-blue-800 placeholder:text-blue-300"
+                          placeholder="0"
+                          onClick={(e) => e.stopPropagation()} 
+                          value={selectedObj.salary}
+                          onChange={(e) => {
+                            const updated = employeeList.map((item) =>
+                              item.id === emp.id ? { ...item, salary: e.target.value } : item
+                            );
+                            updateTaskField(type, "employeeIds", updated);
+                          }}
+                        />
+                      </div>
+                      
+                      {/* Premium Summary Pill */}
+                      {extraCompensation > 0 && (
+                        <div className="flex justify-between items-center border-t border-blue-600/10 pt-1.5 mt-0.5 text-[9px] font-black text-blue-900 uppercase">
+                          <span>Total Pay (With Premium):</span>
+                          <span className="bg-blue-600 text-white px-2 py-0.5 rounded-md text-[8px]">
+                            ${runningTotal}
+                          </span>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -315,7 +435,6 @@ const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
           )}
         </div>
 
-        
         {/* INTERNAL ASSETS */}
         <div className="grid grid-cols-1 gap-4 p-4 bg-purple-600/5 border border-purple-600/10 rounded-2xl">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end px-2">
@@ -324,11 +443,10 @@ const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
                 Internal Assets & Equipment
               </label>
               <span className="text-[8px] font-bold text-purple-400 uppercase">
-                {detail.assetIds.length} Selected • 6 Per Page
+                {assetList.length} Selected • 6 Per Page
               </span>
             </div>
 
-            {/* ASSET SEARCH BAR */}
             <div className="relative group">
               <input
                 type="text"
@@ -337,21 +455,20 @@ const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
                 value={assetSearch}
                 onChange={(e) => {
                   setAssetSearch(e.target.value);
-                  setCurrentAssetPage(1); // Reset to page 1 on search
+                  setCurrentAssetPage(1);
                 }}
               />
               <span className="absolute left-4 top-1/2 -translate-y-1/2 opacity-30 text-xs">🔍</span>
             </div>
           </div>
 
-          {/* ASSET GRID */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 min-h-[160px]">
             {(() => {
               const filtered = dbAssets.filter((asset) =>
                 asset.assetName.toLowerCase().includes(assetSearch.toLowerCase())
               );
               
-              const totalAssetPages = Math.ceil(filtered.length / ASSETS_PER_PAGE);
+              const totalAssetPages = Math.max(1, Math.ceil(filtered.length / ASSETS_PER_PAGE));
               const startIdx = (currentAssetPage - 1) * ASSETS_PER_PAGE;
               const paginated = filtered.slice(startIdx, startIdx + ASSETS_PER_PAGE);
 
@@ -362,8 +479,8 @@ const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
               return (
                 <>
                   {paginated.map((asset) => {
-                    const isSelected = detail.assetIds.includes(asset.id);
-                    const hasConflict = conflicts?.assets?.includes(asset.assetName);
+                    const isSelected = assetList.includes(asset.id);
+                    const hasConflict = !!(conflicts?.assets?.includes(asset.assetName));
                     const isUnavailable = asset.availabilityStatus !== "Available";
 
                     return (
@@ -372,8 +489,8 @@ const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
                         onClick={() => {
                           if (isUnavailable && !isSelected) return; 
                           const newIds = isSelected
-                            ? detail.assetIds.filter((id) => id !== asset.id)
-                            : [...detail.assetIds, asset.id];
+                            ? assetList.filter((id) => id !== asset.id)
+                            : [...assetList, asset.id];
                           updateTaskField(type, "assetIds", newIds);
                         }}
                         className={`flex items-start gap-3 p-3 rounded-xl border transition-all cursor-pointer group/card ${
@@ -386,7 +503,6 @@ const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
                             : "bg-muted/30  border-border hover:border-purple-600/30"
                         }`}
                       >
-                        {/* CHECKBOX UI */}
                         <div className={`mt-0.5 w-3.5 h-3.5 rounded border flex items-center justify-center transition-all ${
                           isSelected ? "bg-white border-white" : "bg-transparent border-purple-600/20"
                         }`}>
@@ -421,7 +537,6 @@ const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
                     );
                   })}
 
-                  {/* ASSET PAGINATION CONTROLS */}
                   {totalAssetPages > 1 && (
                     <div className="col-span-full flex items-center justify-between pt-4 px-2 border-t border-purple-600/10 mt-2">
                       <button
@@ -460,143 +575,131 @@ const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
           </div>
         </div>
 
-        {/* DATES */}
-        <div className="grid grid-cols-2 gap-6 p-4 bg-muted/20 rounded-2xl border border-border">
-          <div className="space-y-1">
-            <label className="text-[8px] font-black opacity-40 uppercase">Start Date</label>
-            <input 
-              type="date" 
-              className="w-full bg-transparent text-xs font-bold outline-none" 
-              value={detail.startDate} 
-              onChange={(e) => updateTaskField(type, "startDate", e.target.value)} 
-            />
-          </div>
-          
-          <div className="space-y-1">
-            <label className="text-[8px] font-black opacity-40 uppercase">End Date</label>
-            <input 
-              type="date" 
-              className="w-full bg-transparent text-xs font-bold outline-none" 
-              value={detail.endDate} 
-              onChange={(e) => updateTaskField(type, "endDate", e.target.value)} 
-            />
-          </div>
-          
-            <div className="space-y-2  ">
-              <label className="text-[9px] font-black uppercase opacity-50">Start Time</label>
-              <input 
-                type="time" 
-                className="w-full bg-transparent text-xs font-bold" 
-                value={detail.startTime} 
-                onChange={(e) => updateTaskField(type, "startTime", e.target.value)} 
+        {/* DATE & TIME SCHEDULING CONTAINER */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-muted/20 border border-border rounded-2xl">
+          <div className="space-y-2">
+            <label className="text-[9px] font-black uppercase text-foreground/60 tracking-widest block">
+              Execution Start Schedule
+            </label>
+            <div className="flex gap-2">
+              <input
+                type="date"
+                className="flex-1 p-3 rounded-xl bg-background border border-border text-[11px] font-bold outline-none focus:border-blue-600/40 transition-all"
+                value={detail.startDate}
+                onChange={(e) => updateTaskField(type, "startDate", e.target.value)}
+              />
+              <input
+                type="time"
+                className="w-24 p-3 rounded-xl bg-background border border-border text-[11px] font-bold outline-none focus:border-blue-600/40 transition-all"
+                value={detail.startTime || "09:00"}
+                onChange={(e) => updateTaskField(type, "startTime", e.target.value)}
               />
             </div>
-            <div className="space-y-2   ">
-              <label className="text-[9px] font-black uppercase opacity-50">End Time</label>
-              <input 
-                type="time" 
-                className="w-full bg-transparent text-xs font-bold" 
-                value={detail.endTime} 
-                onChange={(e) => updateTaskField(type, "endTime", e.target.value)} 
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-[9px] font-black uppercase text-foreground/60 tracking-widest block">
+              Execution Deadline Schedule
+            </label>
+            <div className="flex gap-2">
+              <input
+                type="date"
+                className="flex-1 p-3 rounded-xl bg-background border border-border text-[11px] font-bold outline-none focus:border-blue-600/40 transition-all"
+                value={detail.endDate}
+                onChange={(e) => updateTaskField(type, "endDate", e.target.value)}
+              />
+              <input
+                type="time"
+                className="w-24 p-3 rounded-xl bg-background border border-border text-[11px] font-bold outline-none focus:border-blue-600/40 transition-all"
+                value={detail.endTime || "18:00"}
+                onChange={(e) => updateTaskField(type, "endTime", e.target.value)}
               />
             </div>
-          
+          </div>
         </div>
 
-        {(conflicts?.assets?.length ?? 0) > 0 && (
-            <div className="text-red-500 text-[10px] font-bold mt-1">
-              ASSET CONFLICT: {conflicts?.assets?.join(", ")} is already booked for this time.
-            </div>
-          )}  
-
+        {/* CONFLICT LOGGING CONTAINER */}
         {conflicts && ( (conflicts.employees?.length ?? 0) > 0 || (conflicts.assets?.length ?? 0) > 0 ) && (
-        <div className="p-4 mb-4 bg-red-50 border-l-4 border-red-500 rounded-r-xl animate-pulse">
-          <p className="text-[10px] font-black text-red-600 uppercase mb-2">⚠️ Scheduling Conflict Detected</p>
-          
-          {/* Use optional chaining and fallback array */}
-          {conflicts.employees?.map(name => (
-            <p key={name} className="text-[9px] font-bold text-red-700">
-              • {name} is already booked for these dates.
+          <div className="p-4 mb-4 bg-red-50 border-l-4 border-red-500 rounded-r-xl animate-pulse">
+            <p className="text-[10px] font-black text-red-600 uppercase mb-2">⚠️ Scheduling Conflict Detected</p>
+            {conflicts.employees?.map(name => (
+              <p key={name} className="text-[9px] font-bold text-red-700">
+                • {name} is already booked for these dates.
+              </p>
+            ))}
+            {conflicts.assets?.map(name => (
+              <p key={name} className="text-[9px] font-bold text-red-700">
+                • Asset "{name}" is currently in use elsewhere.
+              </p>
+            ))}
+            <p className="text-[8px] font-medium text-red-500 mt-2 italic">
+              Please adjust dates or select alternative resources.
             </p>
-          ))}
-          
-          {conflicts.assets?.map(name => (
-            <p key={name} className="text-[9px] font-bold text-red-700">
-              • Asset "{name}" is currently in use elsewhere.
-            </p>
-          ))}
-    
-    <p className="text-[8px] font-medium text-red-500 mt-2 italic">
-      Please adjust dates or select alternative resources.
-    </p>
-  </div>
-)}
+          </div>
+        )}
 
         {/* TO-DO LIST SECTION */}
         <div className="space-y-4">
-        <div className="flex justify-between items-center">
+          <div className="flex justify-between items-center">
             <label className="text-[9px] font-black uppercase text-blue-600 tracking-widest">
-            Task Checklist
+              Task Checklist
             </label>
             <button
-            type="button"
-            onClick={() => addTodo(type)}
-            className="text-[9px] font-black bg-blue-600/10 text-blue-600 hover:bg-blue-600 hover:text-white px-3 py-1 rounded-lg transition-all"
+              type="button"
+              onClick={() => addTodo(type)}
+              className="text-[9px] font-black bg-blue-600/10 text-blue-600 hover:bg-blue-600 hover:text-white px-3 py-1 rounded-lg transition-all"
             >
-            + ADD TASK
+              + ADD TASK
             </button>
-        </div>
+          </div>
 
-        {detail.todos?.map((todo, idx) => (
-            <div key={todo.id} className="p-4  border border-border rounded-xl space-y-3 group relative shadow-sm hover:shadow-md transition-shadow">
-            <div className="flex gap-3 items-center">
+          {todosList?.map((todo, idx) => (
+            <div key={todo.id} className="p-4 border border-border rounded-xl space-y-3 group relative shadow-sm hover:shadow-md transition-shadow">
+              <div className="flex gap-3 items-center">
                 <span className="text-[10px] font-black opacity-20">{idx + 1}</span>
                 <input
-                placeholder="Task title (e.g. Color Grading)..."
-                className="flex-1 bg-transparent text-xs font-black uppercase outline-none border-b border-transparent focus:border-blue-600/20 py-1"
-                value={todo.text}
-                onChange={(e) => updateTodoText(type, todo.id, e.target.value)}
+                  placeholder="Task title (e.g. Color Grading)..."
+                  className="flex-1 bg-transparent text-xs font-black uppercase outline-none border-b border-transparent focus:border-blue-600/20 py-1"
+                  value={todo.text}
+                  onChange={(e) => updateTodoText(type, todo.id, e.target.value)}
                 />
                 <button
-                type="button"
-                onClick={() => removeTodo(type, todo.id)}
-                className="text-red-500 hover:scale-110 transition-transform p-1"
+                  type="button"
+                  onClick={() => removeTodo(type, todo.id)}
+                  className="text-red-500 hover:scale-110 transition-transform p-1"
                 >
-                ✕
+                  ✕
                 </button>
-            </div>
-
-            {/* THE DESCRIPTION TEXTBOX */}
-            <textarea
+              </div>
+              <textarea
                 placeholder="Add details or specific instructions for this sub-task..."
                 className="w-full bg-muted/30 p-3 rounded-lg text-[11px] font-medium min-h-[70px] outline-none border border-transparent focus:border-blue-600/10 transition-colors resize-none"
                 value={todo.description || ""}
                 onChange={(e) => updateTodoDescription(type, todo.id, e.target.value)}
-            />
+              />
             </div>
-        ))}
+          ))}
 
-        {/* EMPTY STATE */}
-        {(!detail.todos || detail.todos.length === 0) && (
+          {(!todosList || todosList.length === 0) && (
             <div className="text-center py-8 border-2 border-dashed border-border rounded-2xl bg-muted/5">
-            <p className="text-[10px] font-bold opacity-30 uppercase tracking-widest text-muted-foreground">No tasks assigned yet</p>
+              <p className="text-[10px] font-bold opacity-30 uppercase tracking-widest text-muted-foreground">No tasks assigned yet</p>
             </div>
-        )}
+          )}
         </div>
 
         {/* EXTERNAL RENTALS / EXPENSES */}
-        {detail.rentals && detail.rentals.length > 0 && (
+        {rentalsList && rentalsList.length > 0 && (
           <div className="space-y-4 p-5 bg-amber-500/5 border border-amber-500/20 rounded-[2rem]">
             <div className="flex justify-between items-center px-1">
               <p className="text-[9px] font-black text-amber-600 uppercase tracking-widest">
                 External Resource Expenses
               </p>
               <span className="text-[8px] font-bold opacity-40 uppercase">
-                {detail.rentals.length} Items Listed
+                {rentalsList.length} Items Listed
               </span>
             </div>
 
-            {detail.rentals.map((r) => (
+            {rentalsList.map((r) => (
               <div key={r.id} className="relative p-4 bg-amber-500/5  border border-amber-500/10 rounded-2xl group transition-all hover:border-amber-500/30">
                 {/* ROW 1: NAME & COST & DELETE */}
                 <div className="flex items-center gap-3 mb-3">
