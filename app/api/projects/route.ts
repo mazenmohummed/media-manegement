@@ -83,8 +83,8 @@ export async function POST(req: Request) {
       const hasOnlyFreelancers = assigneeIds.length > 0 && !hasStaff;
 
       // ── Core inputs from TaskConfigCard ─────────────────────────────────
-      // grossRevenue in UI → internalCost in DB
-      // margin in UI       → margin in DB (percentage)
+      // internalCost (UI: "Gross Revenue ($)")
+      // marginPercent (UI: "Target Margin (%)")
       const internalCost = parseFloat(task.internalCost ?? task.grossRevenue ?? "0") || 0;
       const marginPercent = parseFloat(task.margin ?? "0") || 0;
 
@@ -100,10 +100,6 @@ export async function POST(req: Request) {
       const deductionStrategy: string    = task.deductionStrategy    || "NONE";
       const isOutOfWorkingHours: boolean = !!task.isOutOfWorkingHours;
 
-      // Parse compensation unconditionally — the strategy + amount drive realCost
-      // and totalValue regardless of isOutOfWorkingHours. That flag only gates
-      // deductions and ledger transaction recording, not the pay amounts.
-      // Debug: log exact task keys received so we can confirm the field name
       console.log("[TASK_FINANCIALS]", {
         taskType: task.taskType,
         compensationStrategy: task.compensationStrategy,
@@ -135,15 +131,13 @@ export async function POST(req: Request) {
 
       const commissionAmount = compensationStrategy === "COMMISSION" ? rawCompensationAmount : 0;
       const overtimeAmount   = compensationStrategy === "OVERTIME"   ? rawCompensationAmount : 0;
-
-      // bonus is not yet wired in the UI but reserved for future use
       const bonusAmount = 0;
 
       const totalCompensation = commissionAmount + overtimeAmount + bonusAmount;
 
       // ── Margin calculation ────────────────────────────────────────────────
-      // marginAmount = ((internalCost + expensesSum) * margin) / 100
-      const marginAmount = ((internalCost + expensesSum) * marginPercent) / 100;
+      // marginAmount = (internalCost * marginPercent) / 100
+      const marginAmount = ((internalCost) * marginPercent) / 100;
 
       // ── Total invoice value ───────────────────────────────────────────────
       // totalValue = internalCost + expensesSum + marginAmount + COMMISSION + OVERTIME + BONUS
@@ -154,23 +148,26 @@ export async function POST(req: Request) {
       let realCost: number;
 
       if (hasOnlyFreelancers) {
-        // FREELANCER rules
+        // FREELANCER rules:
+        // taskNetProfit = marginAmount
+        // realCost = expensesSum + COMMISSION
         taskNetProfit = marginAmount;
-        realCost      = expensesSum + internalCost;
+        realCost      = expensesSum + totalCompensation;
       } else {
-        // FULL_TIME / PART_TIME rules
-        taskNetProfit = totalValue - expensesSum;
+        // FULL_TIME / PART_TIME rules:
+        // taskNetProfit = totalValue - expensesSum - COMMISSION - OVERTIME - BONUS
+        // realCost = expensesSum + COMMISSION + OVERTIME + BONUS
+        taskNetProfit = totalValue - expensesSum - totalCompensation;
         realCost      = expensesSum + totalCompensation;
       }
 
-      // ── Freelancer negotiated pay ─────────────────────────────────────────
-      const freelancerUpdates: { id: string; amount: number }[] = [];
+      // ── Employee negotiated pay (NOW FOR ALL USER TYPES) ─────────────────────────────────────────
+      const employeePayUpdates: { id: string; amount: number }[] = [];
       employeeObjs.forEach((assigneeObj: any) => {
         const id     = typeof assigneeObj === "string" ? assigneeObj : assigneeObj.id;
         const salary = parseFloat((assigneeObj?.salary ?? "0").toString()) || 0;
-        const user   = preFetchedUsers.find((u) => u.id === id);
-        if (user?.userType === "FREELANCER" && salary > 0) {
-          freelancerUpdates.push({ id, amount: salary });
+        if (salary > 0) {
+          employeePayUpdates.push({ id, amount: salary });
         }
       });
 
@@ -181,8 +178,6 @@ export async function POST(req: Request) {
         expensesSum,
         marginPercent,
         marginAmount: round2(marginAmount),
-        rawCompensationAmount,
-        compensationStrategy,
         commissionAmount,
         overtimeAmount,
         totalCompensation,
@@ -214,7 +209,7 @@ export async function POST(req: Request) {
         isOutOfWorkingHours,
         compensationStrategy,
         deductionStrategy,
-        freelancerUpdates,
+        employeePayUpdates,
         normalizedRentals:    rentals,
         normalizedTodos:      task.todos || [],
       };
@@ -325,8 +320,8 @@ export async function POST(req: Request) {
       // ── 3. Per-task financial transaction recording ───────────────────────
       for (const t of taskDataWithCalculations) {
 
-        // 3a. Freelancer negotiated pay → wallet increment + COMMISSION txn
-        for (const fu of t.freelancerUpdates) {
+        // 3a. Employee negotiated pay (NOW FOR ALL USER TYPES) → wallet increment + COMMISSION txn
+        for (const fu of t.employeePayUpdates) {
           await tx.user.update({
             where: { id: fu.id },
             data:  { walletBalance: { increment: fu.amount } },
@@ -335,7 +330,7 @@ export async function POST(req: Request) {
             type:        "COMMISSION",
             status:      "APPROVED",
             amount:      round2(fu.amount),
-            description: `Freelancer negotiated pay — Task ${t.id} (${t.taskType || "GENERAL"})`,
+            description: `Negotiated day rate — Task ${t.id} (${t.taskType || "GENERAL"})`,
             userId:      fu.id,
             taskId:      t.id,
           });
