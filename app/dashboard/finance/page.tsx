@@ -17,6 +17,10 @@ import {
   Building2,
   Wrench,
 } from "lucide-react";
+import FinanceFilterBar, {
+  DEFAULT_FINANCE_FILTER,
+  FinanceFilterValue,
+} from "@/components/main/finance/FinanceFilterBar";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -75,14 +79,25 @@ const EXPENSE_CATEGORY_COLORS: Record<string, string> = {
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function FinanceOverviewPage() {
+  const [filter, setFilter] = useState<FinanceFilterValue>(DEFAULT_FINANCE_FILTER);
   const [data, setData] = useState<FinanceData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchStats = async () => {
+      const isFirstLoad = data === null;
+      if (isFirstLoad) setLoading(true);
+      else setRefreshing(true);
+      setError(null);
+
       try {
-        const res = await fetch("/api/finance/overview");
+        const params = new URLSearchParams();
+        if (filter.startDate) params.set("startDate", filter.startDate);
+        if (filter.endDate) params.set("endDate", filter.endDate);
+
+        const res = await fetch(`/api/finance/overview?${params.toString()}`);
         if (!res.ok) throw new Error("Failed to load financial data");
         const json = await res.json();
         setData(json);
@@ -90,12 +105,15 @@ export default function FinanceOverviewPage() {
         setError(err.message ?? "Unknown error");
       } finally {
         setLoading(false);
+        setRefreshing(false);
       }
     };
     fetchStats();
-  }, []);
+    // We intentionally only re-fetch when the period filter changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filter]);
 
-  // ── Loading ──
+  // ── Loading (first load only) ──
   if (loading) {
     return (
       <div className="h-screen flex flex-col items-center justify-center gap-4">
@@ -207,12 +225,26 @@ export default function FinanceOverviewPage() {
         </div>
       </header>
 
+      {/* ── FILTER BAR ─────────────────────────────────────────── */}
+      <div className="flex items-center gap-3">
+        <div className="flex-1">
+          <FinanceFilterBar value={filter} onChange={setFilter} />
+        </div>
+        {refreshing && (
+          <Loader2 className="animate-spin text-muted-foreground shrink-0" size={16} />
+        )}
+      </div>
+
+      {/* Dim the body slightly while a filtered refetch is in flight, without
+          tearing down the existing numbers (avoids a jarring full reload) */}
+      <div className={`space-y-10 transition-opacity duration-200 ${refreshing ? "opacity-60" : "opacity-100"}`}>
+
       {/* ── TOP STATS GRID ─────────────────────────────────────── */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
         <PartitionCard
           label="Total Invoiced"
           value={`$${fmt(clientStats.totalInvoiced)}`}
-          sub="Gross Billed YTD"
+          sub="Gross Billed (Period)"
           trend={<span className="text-emerald-500">Revenue</span>}
           icon={<Receipt size={16} />}
           color="blue"
@@ -259,7 +291,7 @@ export default function FinanceOverviewPage() {
           <div className="flex justify-between items-start flex-wrap gap-4">
             <div>
               <p className="text-xs font-bold text-muted-foreground uppercase mb-1">
-                Total Invoiced YTD
+                Total Invoiced (Period)
               </p>
               <p className="text-5xl font-black italic">
                 ${fmt(clientStats.totalInvoiced)}
@@ -365,10 +397,10 @@ export default function FinanceOverviewPage() {
                   Top Earner
                 </p>
                 <p className="text-2xl font-black italic uppercase text-emerald-400 leading-tight">
-                  {employeeStats.topEarner ?? "Analyzing..."}
+                  {employeeStats.topEarner ?? "No Payouts This Period"}
                 </p>
                 <p className="text-xs font-bold opacity-50 uppercase mt-1">
-                  Highest Salary Contributor
+                  Highest Disbursement This Period
                 </p>
               </div>
               <div>
@@ -515,7 +547,7 @@ export default function FinanceOverviewPage() {
 
           <div>
             <p className="text-xs font-bold text-muted-foreground uppercase mb-1">
-              Fixed Agency Costs
+              Fixed Agency Costs (Period)
             </p>
             <p className="text-4xl font-black italic">
               ${fmt(overhead.fixedCosts)}
@@ -653,6 +685,7 @@ export default function FinanceOverviewPage() {
           </div>
         </div>
       </section>
+      </div>
     </div>
   );
 }

@@ -1,14 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useSession, signOut } from "next-auth/react";
 import { motion } from "framer-motion";
 import nextDynamic from "next/dynamic";
+import { useAttendance } from "@/components/main/attendance/Attendancecontext";
 import { 
   Users, 
   Briefcase, 
+  Workflow,
   CheckSquare, 
   UserCircle, 
   DollarSign, 
@@ -17,8 +19,11 @@ import {
   ChevronLeft,
   Menu,
   Calendar,
-  LayoutDashboard
+  LayoutDashboard,
+  Clock
 } from "lucide-react";
+import { Bell } from "lucide-react";
+import { NotificationDrawer } from "./EmployeeDashboard";
 
 // Safe dynamic import to permanently silence the Radix UI hydration mismatches
 const ModeToggle = nextDynamic(() => import("../ModeToggle").then((mod) => mod.ModeToggle), {
@@ -30,10 +35,20 @@ export default function Sidebar() {
   const { data: session } = useSession();
   const [isCollapsed, setIsCollapsed] = useState(false);
   const pathname = usePathname();
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [notifOpen, setNotifOpen]     = useState(false);
+  const [notifications, setNotifications] = useState<any[]>([]);
+
+  // Shared attendance state — same context AttendanceControl reads/writes,
+  // so a click in either place updates both instantly.
+  const { attendance, loading, error, performAction } = useAttendance();
+
+  const isCheckedIn = !!attendance && !attendance.checkOutTime;
 
   const navLinks = [
     { name: "Dashboard", href: "/dashboard", icon: <LayoutDashboard size={20} /> },
     { name: "Clients", href: "/dashboard/clients", icon: <Users size={20} /> },
+    { name: "Campaigns", href: "/dashboard/campaigns", icon: <Workflow size={20} /> },
     { name: "Projects", href: "/dashboard/projects", icon: <Briefcase size={20} /> },
     { name: "Tasks", href: "/dashboard/tasks", icon: <CheckSquare size={20} /> },
     { name: "Calendar", href: "/dashboard/calender", icon: <Calendar size={20} /> },
@@ -41,6 +56,22 @@ export default function Sidebar() {
     { name: "Finance", href: "/dashboard/finance", icon: <DollarSign size={20} /> },
     { name: "Equipment", href: "/dashboard/equipment", icon: <Wrench size={20} /> },
   ];
+
+  useEffect(() => {
+  const fetchNotifs = async () => {
+    try {
+      const res = await fetch("/api/notifications");
+      if (res.ok) {
+        const data = await res.json();
+        setNotifications(data.notifications ?? []);
+        setUnreadCount(data.unreadCount ?? 0);
+      }
+    } catch {}
+  };
+  fetchNotifs();
+  const interval = setInterval(fetchNotifs, 30000);
+  return () => clearInterval(interval);
+}, []);
 
   return (
     <nav 
@@ -73,8 +104,58 @@ export default function Sidebar() {
         </Link>
       </div>
 
+      <button
+      onClick={() => setNotifOpen(true)}
+      className={`relative flex items-center gap-3 w-full px-3 py-3 text-xs font-black uppercase tracking-widest text-foreground hover:bg-muted border border-transparent hover:border-border/50 rounded-xl transition-all ${
+        isCollapsed ? "justify-center" : ""
+      }`}
+    >
+      <Bell size={18} className="shrink-0" />
+      {!isCollapsed && <span>Notifications</span>}
+      {unreadCount > 0 && (
+        <span className="absolute top-2 left-7 w-4 h-4 bg-blue-600 text-white text-[8px] font-black rounded-full flex items-center justify-center">
+          {unreadCount > 9 ? "9+" : unreadCount}
+        </span>
+      )}
+    </button>
+
+    {/* Render the drawer — import NotificationDrawer or inline it */}
+    {notifOpen && (
+      <NotificationDrawer
+        notifications={notifications}
+        onClose={() => { setNotifOpen(false); /* re-fetch after close */ }}
+      />
+    )}
+
+      {/* ATTENDANCE WIDGET */}
+      <div className={`mt-auto p-4 transition-all duration-300 ${isCollapsed ? 'px-2' : 'px-6'}`}>
+        <div className={`rounded-2xl border transition-all ${isCheckedIn ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-muted/50 border-border'}`}>
+          <button
+            onClick={() => performAction(isCheckedIn ? "CHECK_OUT" : "CHECK_IN")}
+            disabled={loading}
+            className={`w-full flex items-center disabled:opacity-50 ${isCollapsed ? 'justify-center p-3' : 'gap-3 p-3'}`}
+            title={isCheckedIn ? "End Workday" : "Start Workday"}
+          >
+            <div className={`p-2 rounded-xl ${isCheckedIn ? 'bg-emerald-500 text-white' : 'bg-background border border-border'}`}>
+              <Clock size={16} />
+            </div>
+            {!isCollapsed && (
+              <div className="text-left overflow-hidden">
+                <p className="text-[9px] font-black uppercase tracking-widest opacity-60">Attendance</p>
+                <p className="text-[11px] font-bold truncate">
+                  {loading ? "Updating..." : isCheckedIn ? "Shift Active" : "Clock In"}
+                </p>
+              </div>
+            )}
+          </button>
+        </div>
+        {error && !isCollapsed && (
+          <p className="text-[9px] font-bold text-rose-500 mt-2 px-1">{error}</p>
+        )}
+      </div>
+
       {/* NAVIGATION LINKS */}
-      <div className="flex-1 overflow-y-auto py-8 px-4 space-y-2 no-scrollbar">
+      <div className="flex-1 overflow-y-auto py-2 px-4 space-y-2 no-scrollbar">
         {!isCollapsed && (
           <p className="text-[10px] font-black text-muted-foreground uppercase tracking-[0.3em] px-3 mb-6 opacity-50">
             Main Systems

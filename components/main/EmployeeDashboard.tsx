@@ -1,29 +1,57 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Users, Briefcase, CheckSquare, TrendingUp,
   DollarSign, MapPin, Bell, Edit3, ShieldCheck,
   Clock, Zap, ArrowUpRight, ArrowDownRight,
   AlertCircle, CheckCircle2, X, Save, Loader2,
-  CreditCard, UserCheck, Calendar,
+  CreditCard, UserCheck, Calendar, Search
 } from "lucide-react";
+import PerformanceTable from "./employees/PerformanceTable";
+import { AttendanceControl } from "./attendance/AttendanceControl";
+import AttendanceCard from "./attendance/AttendanceCard";
+import { TaskSessionList } from "./attendance/TaskSessionCard";
 
-
-// ─── Types ───────────────────────────────────────────────────────────────────
-
-interface EmployeePerf {
-  id: string; name: string; role: string; totalHours: number;
-  lateCount: number; efficiencyRate: number; salary: number; totalPayout: number;
-  userWallet?: number; // optional, server now includes walletBalance as userWallet
+interface Employee {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  userType: "FULL_TIME" | "PART_TIME" | "FREELANCER" | "INTERN";
+  baseSalary: number;
+  walletBalance: number;
+  efficiencyRate: number;
+  verifiedSkills: string[];
+  isCheckedInToday: boolean;
+  totalRevenue: number;
+  profitContribution: number;
+  commissions: number;
+  overtime: number;
+  deductions?: number; // Added to map correctly from backend/state schemas
+  totalWorkingHours: number;
+  lateCount: number;
+  totalPayouts: number;
+  ledgerTotal: number;
+  tasksCount: number;
+  completedTasksCount: number;
+  activeTasksCount: number;
+  leaves?: Array<{ status: string }>; // Added to resolve template condition
+  attendanceLogs?: Array<{ type: string }>;
 }
 
 interface WorkingDay {
   day: string; openTime: string; closeTime: string; isClosed: boolean;
 }
 
-interface Notification {
-  id: string; title: string; message: string; type: string; createdAt: string;
+export interface Notification {
+  id: string;
+  title: string;
+  message: string;
+  type: string;
+  isRead: boolean; // <--- ADD THIS LINE
+  userId: string;
+  createdAt: Date;
 }
 
 interface RecentPayout {
@@ -36,11 +64,6 @@ interface RecentAttendance {
   totalHours: number | null; isLate: boolean; status: string; type: string;
   userName: string; userRole: string; userId: string;
   taskType: string | null; taskId: string | null;
-}
-
-interface EmployeePerf {
-  id: string; name: string; role: string; totalHours: number;
-  lateCount: number; efficiencyRate: number; salary: number; totalPayout: number;
 }
 
 interface DashboardStats {
@@ -59,12 +82,26 @@ interface DashboardData {
   notifications: Notification[];
   recentPayouts: RecentPayout[];
   recentAttendance: RecentAttendance[];
-  employeePerformance: EmployeePerf[] | null;
+  userAttendance: {
+    id: string;
+    checkInTime: Date;
+    checkOutTime: Date | null;
+    // add any other fields you expect from userAttendance
+  } | null;
+  todaysAttendance: Array<{
+    id: string;
+    checkInTime: Date;
+    checkOutTime: Date | null;
+    user: {
+      name: string;
+    } | null;
+  }>;
+  taskSessions: any[];
 }
 
 // ─── Edit Agency Modal ────────────────────────────────────────────────────────
-
 const DAYS = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
+
 
 function EditAgencyModal({
   data, onClose, onSaved,
@@ -129,8 +166,6 @@ function EditAgencyModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
       <div className="relative bg-background border border-border rounded-[2.5rem] w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-2xl">
-        
-        {/* Header */}
         <div className="sticky top-0 bg-background border-b border-border p-6 flex items-center justify-between rounded-t-[2.5rem] z-10">
           <div>
             <h2 className="text-xl font-black uppercase italic tracking-tight">Edit Agency</h2>
@@ -142,8 +177,6 @@ function EditAgencyModal({
         </div>
 
         <div className="p-6 space-y-6">
-
-          {/* Basic Info */}
           <div>
             <p className="text-[9px] font-black uppercase tracking-widest opacity-40 mb-3">Identity</p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -166,7 +199,6 @@ function EditAgencyModal({
             </div>
           </div>
 
-          {/* Location */}
           <div>
             <p className="text-[9px] font-black uppercase tracking-widest opacity-40 mb-3">Geofence</p>
             <div className="grid grid-cols-3 gap-3">
@@ -189,7 +221,6 @@ function EditAgencyModal({
             </div>
           </div>
 
-          {/* Working Hours */}
           <div>
             <p className="text-[9px] font-black uppercase tracking-widest opacity-40 mb-3">Working Schedule</p>
             <div className="space-y-2">
@@ -239,14 +270,33 @@ function EditAgencyModal({
 }
 
 // ─── Notification Drawer ──────────────────────────────────────────────────────
-
 function NotifIcon({ type }: { type: string }) {
   if (type === "DEADLINE") return <AlertCircle size={12} className="text-rose-500 shrink-0" />;
   if (type === "ASSIGNMENT") return <CheckCircle2 size={12} className="text-emerald-500 shrink-0" />;
   return <Bell size={12} className="text-primary shrink-0" />;
 }
 
-function NotificationDrawer({ notifications, onClose }: { notifications: Notification[]; onClose: () => void }) {
+export function NotificationDrawer({ 
+  notifications: initialNotifications, 
+  onClose 
+}: { 
+  notifications: Notification[]; 
+  onClose: () => void 
+}) {
+  // 1. Manage state locally so the UI updates immediately
+  const [items, setItems] = useState<Notification[]>(initialNotifications);
+
+  const handleAction = async (id: string, action: 'READ' | 'DELETE') => {
+    // 2. Optimistic Update: Update UI before the server even responds
+    if (action === 'READ') {
+      setItems(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
+      await fetch(`/api/notifications/${id}`, { method: 'PATCH' });
+    } else {
+      setItems(prev => prev.filter(n => n.id !== id));
+      await fetch(`/api/notifications/${id}`, { method: 'DELETE' });
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
@@ -254,38 +304,58 @@ function NotificationDrawer({ notifications, onClose }: { notifications: Notific
         <div className="p-6 border-b border-border flex items-center justify-between sticky top-0 bg-background z-10">
           <div>
             <h2 className="text-sm font-black uppercase tracking-widest">Priority Briefing</h2>
-            <p className="text-[9px] opacity-40 font-bold uppercase mt-0.5">{notifications.length} unread</p>
+            {/* Show count of items still in the list */}
+            <p className="text-[9px] opacity-40 font-bold uppercase mt-0.5">
+              {items.filter(n => !n.isRead).length} unread
+            </p>
           </div>
-          <button onClick={onClose} className="p-2 hover:bg-muted rounded-xl transition-colors"><X size={16} /></button>
+          <button onClick={onClose} className="p-2 hover:bg-muted rounded-xl transition-colors">
+            <X size={16} />
+          </button>
         </div>
+
+        
+
         <div className="flex-1 p-4 space-y-3">
-          {notifications.length === 0 ? (
+          {items.length === 0 ? (
             <div className="text-center py-16 opacity-40">
               <Bell size={32} className="mx-auto mb-3" />
               <p className="text-xs font-bold uppercase">All clear</p>
             </div>
-          ) : notifications.map((n) => (
-            <div key={n.id} className="p-4 bg-card border border-border/50 rounded-2xl hover:border-primary/30 transition-colors">
-              <div className="flex items-start gap-3">
-                <NotifIcon type={n.type} />
-                <div className="flex-1 min-w-0">
-                  <p className="text-[10px] font-black uppercase tracking-wide">{n.title}</p>
-                  <p className="text-xs opacity-60 mt-0.5 leading-relaxed">{n.message}</p>
-                  <p className="text-[8px] font-bold opacity-30 mt-2 uppercase">
-                    {new Date(n.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-                  </p>
+          ) : (
+            // We spread items into a new array to avoid mutating state, then sort
+            [...items]
+              .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+              .map((notif) => (
+                <div key={notif.id} className={`p-3 border-b transition-opacity ${notif.isRead ? 'opacity-40' : 'opacity-100'}`}>
+                  <p className="text-sm font-bold">{notif.title}</p>
+                  <p className="text-xs mt-1">{notif.message}</p>
+                  
+                  <div className="flex gap-4 mt-3">
+                    {!notif.isRead && (
+                      <button 
+                        onClick={() => handleAction(notif.id, 'READ')}
+                        className="text-[10px] font-bold text-emerald-600 hover:text-emerald-500 uppercase tracking-wider"
+                      >
+                        Mark as Read
+                      </button>
+                    )}
+                    <button 
+                      onClick={() => handleAction(notif.id, 'DELETE')}
+                      className="text-[10px] font-bold text-rose-600 hover:text-rose-500 uppercase tracking-wider"
+                    >
+                      Delete
+                    </button>
+                  </div>
                 </div>
-              </div>
-            </div>
-          ))}
+              ))
+          )}
         </div>
       </div>
     </div>
   );
 }
-
 // ─── Stat Card ────────────────────────────────────────────────────────────────
-
 function StatCard({
   icon,
   label,
@@ -307,15 +377,12 @@ function StatCard({
       <div className="relative z-10">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2 text-muted-foreground group-hover:text-foreground transition-colors">
-            {/* FIX: Explicitly typed clone template to satisfy the compiler props contract */}
             {React.isValidElement(icon) && React.cloneElement(icon as React.ReactElement<{ size: number }>, { size: 14 })}
             <span className="text-[9px] font-black uppercase tracking-widest">{label}</span>
           </div>
           {trend && (
             <div className={`flex items-center gap-0.5 text-[9px] font-black ${trend === "up" ? "text-emerald-500" : "text-rose-500"}`}>
-              {trend === "up"
-                ? <ArrowUpRight size={12} />
-                : <ArrowDownRight size={12} />}
+              {trend === "up" ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
             </div>
           )}
         </div>
@@ -336,7 +403,6 @@ function MiniFinance({ label, value, color = "text-foreground" }: { label: strin
 }
 
 // ─── Recent Payouts Feed ──────────────────────────────────────────────────────
-
 function RecentPayoutsFeed({ payouts }: { payouts: RecentPayout[] }) {
   if (!payouts || payouts.length === 0) {
     return (
@@ -373,7 +439,6 @@ function RecentPayoutsFeed({ payouts }: { payouts: RecentPayout[] }) {
 }
 
 // ─── Recent Attendance Feed ───────────────────────────────────────────────────
-
 interface AttendanceLog {
   id: string;
   checkInTime: string;
@@ -391,22 +456,11 @@ export function RecentAttendanceFeed({ logs }: { logs: AttendanceLog[] }) {
     return <p className="text-[11px] text-muted-foreground py-4 text-center">No recent check-ins.</p>;
   }
 
-  // Helper function to format timestamp into "MMM DD • HH:MM AM/PM"
   const formatDateTime = (isoString: string | null) => {
     if (!isoString) return null;
     const dateObj = new Date(isoString);
-    
-    const dateStr = dateObj.toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-    });
-
-    const timeStr = dateObj.toLocaleTimeString("en-US", {
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: true,
-    });
-
+    const dateStr = dateObj.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    const timeStr = dateObj.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true });
     return `${dateStr} • ${timeStr}`;
   };
 
@@ -418,30 +472,23 @@ export function RecentAttendanceFeed({ logs }: { logs: AttendanceLog[] }) {
 
         return (
           <div key={log.id} className="flex flex-col gap-2 p-3 rounded-2xl hover:bg-muted/50 transition-colors border border-border/40">
-            {/* Top row: User Info & Status Badge */}
             <div className="flex items-center justify-between">
               <div className="flex flex-col">
                 <span className="text-[12px] font-bold">{log.userName}</span>
                 <span className="text-[10px] text-muted-foreground capitalize">{log.userRole.toLowerCase()}</span>
               </div>
-              
               <div className="flex items-center gap-1.5">
                 {log.totalHours !== null && (
                   <span className="text-[10px] font-medium bg-muted px-1.5 py-0.5 rounded text-muted-foreground">
                     {log.totalHours.toFixed(1)} hrs
                   </span>
                 )}
-                <span className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded-md ${
-                  log.isLate 
-                    ? "bg-destructive/10 text-destructive" 
-                    : "bg-emerald-500/10 text-emerald-500"
-                }`}>
+                <span className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded-md ${log.isLate ? "bg-destructive/10 text-destructive" : "bg-emerald-500/10 text-emerald-500"}`}>
                   {log.isLate ? "Late" : "On Time"}
                 </span>
               </div>
             </div>
 
-            {/* Bottom row: Check-In and Check-Out Times */}
             <div className="grid grid-cols-2 gap-2 pt-1 border-t border-border/30 text-[10px]">
               <div className="flex flex-col">
                 <span className="text-muted-foreground font-medium uppercase tracking-wider text-[8px]">In</span>
@@ -460,88 +507,21 @@ export function RecentAttendanceFeed({ logs }: { logs: AttendanceLog[] }) {
     </div>
   );
 }
-// ─── Performance Table ────────────────────────────────────────────────────────
 
-// ─── Performance Table ───────────────────────────────────────────────────────
-
-function PerformanceTable({ data }: { data: EmployeePerf[] }) {
-  return (
-    <section className="bg-card border border-border rounded-[3rem] overflow-hidden shadow-xl">
-      <div className="p-8 border-b border-border/50 flex items-center justify-between">
-        <div>
-          <h3 className="text-[10px] font-black uppercase tracking-widest flex items-center gap-2">
-            <Users size={14} className="text-primary" /> Team Performance
-          </h3>
-          <p className="text-[9px] opacity-40 font-bold uppercase mt-0.5">All personnel · Current cycle</p>
-        </div>
-        <span className="text-[8px] font-black px-3 py-1 bg-primary/10 text-primary rounded-full uppercase tracking-widest">
-          {data.length} Members
-        </span>
-      </div>
-
-      <div className="overflow-x-auto">
-        <table className="w-full">
-          <thead>
-            <tr className="border-b border-border/30">
-              {["Agent", "Role", "Hours", "Late", "Efficiency", "Salary", "Payout"].map((h) => (
-                <th key={h} className="text-left p-4 text-[8px] font-black uppercase tracking-widest opacity-40">
-                  {h}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {data.map((emp) => (
-              <tr key={emp.id} className="border-b border-border/20 hover:bg-muted/30 transition-colors">
-                <td className="p-4">
-                  <div className="flex items-center gap-3">
-                    <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center text-[9px] font-black text-primary">
-                      {emp.name.charAt(0).toUpperCase()}
-                    </div>
-                    <span className="text-xs font-bold">{emp.name}</span>
-                  </div>
-                </td>
-                <td className="p-4">
-                  <span className="text-[8px] font-black px-2 py-0.5 bg-muted rounded uppercase tracking-widest">
-                    {emp.role}
-                  </span>
-                </td>
-                <td className="p-4 text-xs font-black">{emp.totalHours}h</td>
-                <td className="p-4">
-                  <span className={`text-xs font-black ${emp.lateCount > 0 ? "text-orange-500" : "text-emerald-500"}`}>
-                    {emp.lateCount}
-                  </span>
-                </td>
-                <td className="p-4">
-                  <div className="flex items-center gap-2">
-                    <div className="w-16 h-1.5 bg-muted rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-primary rounded-full"
-                        style={{ width: `${Math.min(emp.efficiencyRate * 100, 100)}%` }}
-                      />
-                    </div>
-                    <span className="text-[9px] font-black opacity-60">
-                      {(emp.efficiencyRate * 100).toFixed(0)}%
-                    </span>
-                  </div>
-                </td>
-                <td className="p-4 text-xs font-black">${emp.salary.toFixed(0)}</td>
-                <td className="p-4 text-xs font-black text-emerald-500">${emp.totalPayout.toFixed(0)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </section>
-  );
-}
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
-
 export default function EmployeeDashboard({ user }: { user: any }) {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [editOpen, setEditOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  
+  // 1. Fixed Search State Implementation
+  const [searchTerm, setSearchTerm] = useState("");
+
+  
+
+  
 
   if (!user) {
     return (
@@ -553,19 +533,69 @@ export default function EmployeeDashboard({ user }: { user: any }) {
 
   const isAdmin = user.role === "ADMIN" || user.role === "SUPERADMIN";
 
-  const fetchDashboard = useCallback(async () => {
+  // 1. Create the fetch function
+  const fetchDashboardData = useCallback(async () => {
     try {
-      const res = await fetch("/api/dashboard/summary");
-      const result = await res.json();
-      setData(result);
+      const response = await fetch("/api/dashboard/summary");
+      if (response.ok) {
+        const result = await response.json();
+        setData(result);
+      }
     } catch (err) {
-      console.error("Dashboard fetch failed", err);
+      console.error("Failed to refresh dashboard:", err);
     } finally {
       setLoading(false);
     }
   }, []);
 
-  useEffect(() => { fetchDashboard(); }, [fetchDashboard]);
+  // 2. Initial load
+ 
+  useEffect(() => {
+    fetchDashboardData(); // Initial load
+
+    const interval = setInterval(() => {
+      fetchDashboardData();
+    }, 30000); // 30,000ms = 30 seconds
+
+    return () => clearInterval(interval); // Cleanup on unmount
+  }, [fetchDashboardData]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch("/api/employees");
+        const jsonRes = await res.json();
+        setEmployees(jsonRes.employees ?? []);
+      } catch (err) {
+        console.error("Failed to fetch workforce arrays:", err);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  // 2. Fixed useMemo Filter and String matching Logic
+  const filteredAndSorted = useMemo(() => {
+    return employees.filter((e) => {
+      if (!searchTerm.trim()) return true;
+      const lowerSearch = searchTerm.toLowerCase();
+      
+      return (
+        e.name?.toLowerCase().includes(lowerSearch) ||
+        e.role?.toLowerCase().includes(lowerSearch) ||
+        e.email?.toLowerCase().includes(lowerSearch) ||
+        e.verifiedSkills?.some((s) => s.toLowerCase().includes(lowerSearch))
+      );
+    });
+  }, [employees, searchTerm]);
+
+  
+
+  // 3. Define the action handler
+// Inside EmployeeDashboard.tsx
+
+
+
 
   if (loading) {
     return (
@@ -585,6 +615,8 @@ export default function EmployeeDashboard({ user }: { user: any }) {
   }
 
   const unreadCount = data.notifications?.length ?? 0;
+
+  const todayTaskSessions = data.taskSessions || [];
 
   const isOnline = (() => {
     const now = new Date();
@@ -633,6 +665,22 @@ export default function EmployeeDashboard({ user }: { user: any }) {
         </div>
       </header>
 
+      {/* ── SEARCH BAR INPUT ────────────────────────────────────────────── */}
+      {isAdmin && (
+        <div className="relative max-w-md">
+          <Search className="absolute left-4 top-3.5 h-4 w-4 text-muted-foreground" />
+          <input
+            type="text"
+            placeholder="Search operator name, role, or skill..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full bg-card border border-border rounded-full pl-11 pr-4 py-3 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
+          />
+        </div>
+      )}
+
+      <AttendanceControl />
+
       {/* ── STAT CARDS ───────────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <StatCard icon={<Users />}       label="Clients"      value={data.stats.totalClients ?? 0} />
@@ -649,11 +697,7 @@ export default function EmployeeDashboard({ user }: { user: any }) {
 
       {/* ── MAIN GRID ────────────────────────────────────────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-
-        {/* LEFT COL (2/3) */}
         <div className="lg:col-span-2 space-y-6">
-
-          {/* Financial panel */}
           {isAdmin ? (
             <section className="bg-card border border-border p-8 rounded-[2.5rem] shadow-xl">
               <h3 className="text-[10px] font-black uppercase tracking-widest mb-6 flex items-center gap-2">
@@ -686,7 +730,6 @@ export default function EmployeeDashboard({ user }: { user: any }) {
             </section>
           )}
 
-          {/* Recent Payouts (admin) */}
           {isAdmin && (
             <section className="bg-card border border-border p-8 rounded-[2.5rem] shadow-xl">
               <div className="flex items-center justify-between mb-5">
@@ -701,7 +744,6 @@ export default function EmployeeDashboard({ user }: { user: any }) {
             </section>
           )}
 
-          {/* Location node */}
           <section className="bg-foreground text-background p-8 rounded-[2.5rem] shadow-2xl relative overflow-hidden group">
             <div className="absolute top-0 right-0 w-64 h-64 bg-primary/10 blur-[100px] -mr-20 -mt-20 pointer-events-none" />
             <div className="relative z-10 flex justify-between items-start">
@@ -731,7 +773,6 @@ export default function EmployeeDashboard({ user }: { user: any }) {
             </div>
           </section>
 
-          {/* Attendance summary */}
           <section className="bg-card border border-border p-8 rounded-[2.5rem]">
             <h3 className="text-[10px] font-black uppercase tracking-widest mb-6 flex items-center gap-2">
               <Clock size={14} className="text-primary" /> Attendance Summary
@@ -753,10 +794,7 @@ export default function EmployeeDashboard({ user }: { user: any }) {
           </section>
         </div>
 
-        {/* RIGHT COL (1/3) */}
         <div className="space-y-6">
-
-          {/* Subscription */}
           {isAdmin && data.subscription && (
             <section className="bg-foreground text-background p-8 rounded-[2.5rem] shadow-xl relative overflow-hidden group">
               <div className="absolute -top-10 -right-10 w-40 h-40 bg-primary/10 blur-3xl group-hover:bg-primary/20 transition-all" />
@@ -783,7 +821,10 @@ export default function EmployeeDashboard({ user }: { user: any }) {
             </section>
           )}
 
-          {/* Recent check-ins */}
+          <div className="lg:col-span-1">
+            <AttendanceCard todayLogs={data.todaysAttendance ?? []} />
+          </div>
+
           <section className="bg-card border border-border p-6 rounded-[2.5rem]">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-[10px] font-black uppercase tracking-widest flex items-center gap-2">
@@ -796,44 +837,8 @@ export default function EmployeeDashboard({ user }: { user: any }) {
             <RecentAttendanceFeed logs={data.recentAttendance} />
           </section>
 
-          {/* Notifications preview */}
-          <section className="bg-card border border-border p-6 rounded-[2.5rem]">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-[10px] font-black uppercase tracking-widest flex items-center gap-2">
-                <Bell size={14} className="text-primary" /> Alerts
-              </h3>
-              {unreadCount > 0 && (
-                <button onClick={() => setNotifOpen(true)}
-                  className="text-[8px] font-black text-primary uppercase tracking-widest hover:underline">
-                  View all →
-                </button>
-              )}
-            </div>
-            {unreadCount === 0 ? (
-              <div className="text-center py-6 opacity-30">
-                <CheckCircle2 size={20} className="mx-auto mb-2" />
-                <p className="text-[9px] font-bold uppercase">No alerts</p>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {data.notifications.slice(0, 3).map((n) => (
-                  <div key={n.id} className="flex items-start gap-2 p-3 bg-muted/30 rounded-xl">
-                    <NotifIcon type={n.type} />
-                    <div className="min-w-0">
-                      <p className="text-[9px] font-black uppercase truncate">{n.title}</p>
-                      <p className="text-[9px] opacity-50 truncate">{n.message}</p>
-                    </div>
-                  </div>
-                ))}
-                {unreadCount > 3 && (
-                  <button onClick={() => setNotifOpen(true)}
-                    className="w-full text-center text-[8px] font-black uppercase opacity-40 hover:opacity-80 transition-opacity py-2">
-                    +{unreadCount - 3} more
-                  </button>
-                )}
-              </div>
-            )}
-          </section>
+          <TaskSessionList sessions={todayTaskSessions} />
+
         </div>
       </div>
 
@@ -871,79 +876,30 @@ export default function EmployeeDashboard({ user }: { user: any }) {
         </div>
       </section>
 
-      {/* ── PERFORMANCE TABLE ─────────────────────────────────────────────── */}
-       {isAdmin && data.employeePerformance && data.employeePerformance.length > 0 && (
-        <section className="bg-card border border-border rounded-[3rem] overflow-hidden">
-          <div className="p-8 border-b border-border/50 flex items-center justify-between">
-            <div>
-              <h3 className="text-[10px] font-black uppercase tracking-widest flex items-center gap-2">
-                <Users size={14} className="text-primary" /> Team Performance
-              </h3>
-              <p className="text-[9px] opacity-40 font-bold uppercase mt-0.5">All personnel · Current cycle</p>
-            </div>
-            <span className="text-[8px] font-black px-3 py-1 bg-primary/10 text-primary rounded-full uppercase tracking-widest">
-              {data.employeePerformance.length} Members
-            </span>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-border/30">
-                  {["Agent", "Role", "Hours", "Late", "Efficiency", "Base Salary", "Payout"].map((h) => (
-                    <th key={h} className="text-left p-4 text-[8px] font-black uppercase tracking-widest opacity-40">
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {data.employeePerformance.map((emp) => (
-                  <tr key={emp.id} className="border-b border-border/20 hover:bg-muted/30 transition-colors">
-                    <td className="p-4">
-                      <div className="flex items-center gap-3">
-                        <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center text-[9px] font-black text-primary">
-                          {emp.name.charAt(0).toUpperCase()}
-                        </div>
-                        <span className="text-xs font-bold">{emp.name}</span>
-                      </div>
-                    </td>
-                    <td className="p-4">
-                      <span className="text-[8px] font-black px-2 py-0.5 bg-muted rounded uppercase tracking-widest">
-                        {emp.role}
-                      </span>
-                    </td>
-                    <td className="p-4 text-xs font-black">{emp.totalHours}h</td>
-                    <td className="p-4">
-                      <span className={`text-xs font-black ${emp.lateCount > 0 ? "text-orange-500" : "text-emerald-500"}`}>
-                        {emp.lateCount}
-                      </span>
-                    </td>
-                    <td className="p-4">
-                      <div className="flex items-center gap-2">
-                        <div className="w-16 h-1.5 bg-muted rounded-full overflow-hidden">
-                          <div
-                            className="h-full bg-primary rounded-full"
-                            style={{ width: `${Math.min(emp.efficiencyRate * 100, 100)}%` }}
-                          />
-                        </div>
-                        <span className="text-[9px] font-black opacity-60">
-                          {(emp.efficiencyRate * 100).toFixed(0)}%
-                        </span>
-                      </div>
-                    </td>
-                    <td className="p-4 text-xs font-black">
-                      ${Number(emp.salary ?? 0).toFixed(0)}
-                    </td>
-                    <td className="p-4 text-xs font-black text-emerald-500">
-                      ${Number(emp.totalPayout ?? 0).toFixed(0)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
+      {/* ── PERFORMANCE TABLE SECTION ───────────────────────────────────── */}
+      {isAdmin && filteredAndSorted && filteredAndSorted.length > 0 && (
+        <div className="mt-6">
+          <PerformanceTable 
+            performanceData={filteredAndSorted.map((emp) => ({
+              name: emp.name,
+              skills: emp.verifiedSkills || [],
+              tasksCompleted: emp.completedTasksCount || 0,
+              tasksCount: emp.tasksCount || 0,
+              revenueGenerated: emp.totalRevenue || 0, 
+              workingHours: emp.totalWorkingHours || 0,
+              lateDays: emp.lateCount || 0,
+              baseSalary: emp.baseSalary || 0, 
+              commissions: emp.commissions || 0, 
+              overtime: emp.overtime || 0,
+              deductions: emp.deductions || 0, 
+              extraPayouts: emp.totalPayouts || 0,
+              expenses: emp.ledgerTotal || 0,
+              efficiency: emp.efficiencyRate || 0,
+              activeLeaves: emp.leaves?.filter((leave) => leave.status?.trim().toUpperCase() === "APPROVED").length || 0,
+              walletBalance: emp.walletBalance || 0,
+            }))} 
+          />
+        </div>
       )}
 
       {/* ── MODALS ────────────────────────────────────────────────────────── */}
@@ -955,7 +911,7 @@ export default function EmployeeDashboard({ user }: { user: any }) {
         <EditAgencyModal
           data={data}
           onClose={() => setEditOpen(false)}
-          onSaved={fetchDashboard}
+          onSaved={fetchDashboardData}
         />
       )}
     </div>

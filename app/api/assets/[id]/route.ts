@@ -8,7 +8,7 @@ import { authOptions } from "@/lib/authOptions";
 // =========================================================
 export async function GET(
   req: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{id: string }> }
 ) {
   const session = await getServerSession(authOptions);
   if (!session?.user?.agencyId) {
@@ -16,7 +16,7 @@ export async function GET(
   }
 
   try {
-    const { id } = params;
+    const { id } = await params;
 
     // 1. Fetch the targeted asset
     const asset = await prisma.asset.findUnique({
@@ -62,7 +62,7 @@ export async function GET(
 // =========================================================
 export async function PUT(
   req: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{id: string }> }
 ) {
   const session = await getServerSession(authOptions);
   if (!session?.user?.agencyId) {
@@ -70,7 +70,7 @@ export async function PUT(
   }
 
   try {
-    const { id } = params;
+    const { id } = await params;
     const body = await req.json();
     const { assetName, category, purchasePrice, availabilityStatus } = body;
 
@@ -102,7 +102,7 @@ export async function PUT(
 // =========================================================
 export async function DELETE(
   req: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{id: string }> }
 ) {
   const session = await getServerSession(authOptions);
   if (!session?.user?.agencyId) {
@@ -110,7 +110,7 @@ export async function DELETE(
   }
 
   try {
-    const { id } = params;
+    const { id } = await params;
 
     // Verify tenant ownership
     const existingAsset = await prisma.asset.findUnique({ where: { id } });

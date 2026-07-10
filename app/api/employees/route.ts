@@ -4,193 +4,217 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/authOptions";
 import bcrypt from "bcryptjs";
 
-export async function GET(req: Request) {
+// ─── GET /api/employees ───────────────────────────────────────────────────────
+export async function GET() {
   try {
     const session = await getServerSession(authOptions);
     const agencyId = (session as any)?.user?.agencyId;
-
     if (!agencyId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const users = await prisma.user.findMany({
       where: { agencyId },
       include: {
         tasks: {
-          include: {
-            taskExpenses: true,
+          select: {
+            id: true,
+            status: true,
+            internalCost: true,
+            marginAmount: true,
+            totalInvoice: true,
+            taskType: true,
+            paymentStatus: true,
           },
         },
-        attendanceLogs: true,
-        payouts: true,
+        attendanceLogs: {
+          select: {
+            id: true,
+            checkInTime: true,
+            checkOutTime: true,
+            totalHours: true,
+            isLate: true,
+            type: true,
+            date: true,
+          },
+        },
+        payouts: {
+          select: { id: true, amount: true, category: true, status: true, date: true },
+        },
+        financialLedger: {
+          select: { id: true, type: true, amount: true, status: true, createdAt: true },
+        },
       },
       orderBy: { name: "asc" },
     });
 
-    const formattedEmployees = users.map((u: any) => {
-      // Normalize payroll fields (support older 'salary' field if present)
-      const baseSalary = typeof u.baseSalary === "number"
-        ? u.baseSalary
-        : typeof u.salary === "number"
-          ? u.salary
-          : 0;
+    // ── Track Upcoming Revenue Globally ──
+    let upcomingPending = 0;
+    let upcomingPartial = 0;
 
-      const walletBalance = typeof u.walletBalance === "number"
-        ? u.walletBalance
-        : (u.userType === "FREELANCER" && typeof u.salary === "number")
-          ? u.salary
-          : 0;
+    const employees = users.map((u) => {
+      const baseSalary = u.baseSalary ?? 0;
+      const walletBalance = u.walletBalance ?? 0;
 
-      // 1. Calculate Revenue (sum of internalCost for completed tasks)
-      const totalRevenue = (u.tasks || [])
-        .filter((t: any) => (t.status || "").toString().toUpperCase() === "COMPLETED")
-        .reduce((sum: number, t: any) => sum + (t.internalCost || 0), 0);
+      // Handle structural capitalization issues safely
+      const completedTasks = u.tasks.filter(
+        (t) => t.status?.trim().toUpperCase() === "COMPLETED"
+      );
 
-      // 2. Calculate Working Hours from AttendanceLogs
-      const workingHours = (u.attendanceLogs || []).reduce((acc: number, log: any) => acc + (log.totalHours || 0), 0);
+      // Revenue and Profit Aggregations
+      const totalRevenue = completedTasks.reduce(
+        (s, t) => s + (t.totalInvoice ?? t.internalCost ?? 0), 0
+      );
+      const profitContribution = completedTasks.reduce(
+        (s, t) => s + (t.marginAmount ?? 0), 0
+      );
 
-      // 3. Calculate Extra Payouts (Bonuses/Commissions)
-      const extraPayouts = (u.payouts || []).reduce((acc: number, p: any) => acc + (p.amount || 0), 0);
+      const totalWorkingHours = u.attendanceLogs.reduce(
+        (s, l) => s + (l.totalHours ?? 0), 0
+      );
+      const lateCount = u.attendanceLogs.filter((l) => l.isLate).length;
+      const totalPayouts = u.payouts.reduce((s, p) => s + p.amount, 0);
+      const ledgerTotal = u.financialLedger.reduce((s, t) => s + t.amount, 0);
 
-      // 4. Calculate Task-based Expenses
-      const expenses = (u.tasks || []).reduce((acc: number, t: any) => {
-        const taskExpenseSum = (t.taskExpenses || []).reduce((s: number, exp: any) => s + (exp.cost || 0), 0);
-        return acc + taskExpenseSum;
-      }, 0);
+      // Extract Commissions and Overtime metrics from the Ledger
+      const commissions = u.financialLedger
+        .filter((t) => t.type === "COMMISSION" && t.status !== "CANCELLED")
+        .reduce((s, t) => s + t.amount, 0);
 
-      // 5. Profit Contribution (margin amount)
-      const profitContribution = (u.tasks || [])
-        .filter((t: any) => (t.status || "").toString().toUpperCase() === "COMPLETED")
-        .reduce((sum: number, t: any) => sum + ((t.internalCost || 0) * ((t.margin || 0) / 100)), 0);
+      const overtime = u.financialLedger
+        .filter((t) => t.type === "OVERTIME" && t.status !== "CANCELLED")
+        .reduce((s, t) => s + t.amount, 0);
 
-      // 6. Late Days Count
-      const lateDays = (u.attendanceLogs || []).filter((log: any) => log.isLate).length;
+      // ── NEW: Extract Deductions safely from the Ledger ──
+      // This maps directly to your schema rule: "negative for deductions"
+      const deductions = u.financialLedger
+        .filter((t) => t.amount < 0 && t.status !== "CANCELLED")
+        .reduce((s, t) => s + t.amount, 0);
 
-      // Build sanitized employee payload (avoid returning password and other sensitive/internal props)
+      // Individual upcoming task metrics aggregation logic
+      u.tasks.forEach((t) => {
+        const taskStatus = t.status?.trim().toUpperCase();
+        const payStatus = t.paymentStatus?.trim().toUpperCase();
+
+        if (taskStatus !== "COMPLETED" || payStatus === "PENDING" || payStatus === "PARTIAL") {
+          const value = t.totalInvoice ?? t.internalCost ?? 0;
+          if (payStatus === "PARTIAL") {
+            upcomingPartial += value;
+          } else {
+            upcomingPending += value;
+          }
+        }
+      });
+
+      // Active check-in state tracking
+      const todayStr = new Date().toISOString().split("T")[0];
+      const isCheckedInToday = u.attendanceLogs.some((l) => {
+        const logDate = new Date(l.checkInTime).toISOString().split("T")[0];
+        return logDate === todayStr && !l.checkOutTime;
+      });
+
+      const { password: _pw, ...safeUser } = u as any;
+
       return {
-        id: u.id,
-        name: u.name,
-        email: u.email,
-        role: u.role,
-        userType: u.userType,
-        verifiedSkills: u.verifiedSkills || [],
-        efficiencyRate: u.efficiencyRate ?? 1.0,
+        ...safeUser,
         baseSalary,
         walletBalance,
-        tasks: u.tasks || [],
-        attendanceLogs: u.attendanceLogs || [],
-        payouts: u.payouts || [],
-        // computed fields
-        totalRevenue,
-        profitContribution,
-        workingHours: parseFloat((workingHours).toFixed(1)),
-        extraPayouts,
-        expenses,
-        lateDays,
+        commissions: parseFloat(commissions.toFixed(2)),
+        overtime: parseFloat(overtime.toFixed(2)),
+        deductions: parseFloat(Math.abs(deductions).toFixed(2)), // Converted to absolute value for cleaner frontend presentation
+        totalRevenue: parseFloat(totalRevenue.toFixed(2)),
+        profitContribution: parseFloat(profitContribution.toFixed(2)),
+        totalWorkingHours: parseFloat(totalWorkingHours.toFixed(1)),
+        lateCount,
+        totalPayouts: parseFloat(totalPayouts.toFixed(2)),
+        ledgerTotal: parseFloat(ledgerTotal.toFixed(2)),
+        isCheckedInToday,
+        tasksCount: u.tasks.length,
+        completedTasksCount: completedTasks.length,
+        activeTasksCount: u.tasks.filter((t) => {
+          const s = t.status?.trim().toUpperCase();
+          return s === "ACTIVE" || s === "IN_PROGRESS";
+        }).length,
       };
     });
 
-    // Global Agency Metrics
-    const totalAgencyRevenue = formattedEmployees.reduce((acc, e) => acc + (e.totalRevenue || 0), 0);
-    const totalAgencyProfit = formattedEmployees.reduce((acc, e) => acc + (e.profitContribution || 0), 0);
-    const avgEfficiency = formattedEmployees.length > 0
-      ? (formattedEmployees.reduce((acc, e) => acc + (e.efficiencyRate || 0), 0) / formattedEmployees.length)
-      : 0;
+    // ── Agency-level metrics ──────────────────────────────────────────────────
+    const totalRevenueSum = employees.reduce((s, e) => s + e.totalRevenue, 0);
+    const totalProfitSum = employees.reduce((s, e) => s + e.profitContribution, 0);
+    const totalPayrollSum = employees.reduce((s, e) => s + (e.baseSalary ?? 0), 0);
+    const totalWalletSum = employees.reduce((s, e) => s + (e.walletBalance ?? 0), 0);
+    const avgEfficiency = employees.length > 0
+      ? employees.reduce((s, e) => s + (e.efficiencyRate ?? 1), 0) / employees.length
+      : 1;
 
     return NextResponse.json({
-      employees: formattedEmployees,
+      employees,
       metrics: {
-        totalRevenue: totalAgencyRevenue,
-        totalProfit: totalAgencyProfit,
-        employeeCount: formattedEmployees.length,
-        avgEfficiency: avgEfficiency.toFixed(2),
+        employeeCount: employees.length,
+        totalRevenue: parseFloat(totalRevenueSum.toFixed(2)),
+        totalProfit: parseFloat(totalProfitSum.toFixed(2)),
+        totalPayroll: parseFloat(totalPayrollSum.toFixed(2)),
+        totalWallet: parseFloat(totalWalletSum.toFixed(2)),
+        avgEfficiency: parseFloat(avgEfficiency.toFixed(2)),
+        checkedInToday: employees.filter((e) => e.isCheckedInToday).length,
+        upcomingRevenue: parseFloat((upcomingPending + upcomingPartial).toFixed(2)),
+        upcomingRevenueBreakdown: {
+          pending: parseFloat(upcomingPending.toFixed(2)),
+          partiallyPaid: parseFloat(upcomingPartial.toFixed(2)),
+        },
       },
     });
-  } catch (error) {
-    console.error("GET_EMPLOYEES_ERROR:", error);
+  } catch (err) {
+    console.error("[EMPLOYEES_GET]", err);
     return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
   }
 }
-
+// ─── POST /api/employees ──────────────────────────────────────────────────────
 export async function POST(req: Request) {
   try {
     const session = await getServerSession(authOptions);
     const agencyId = (session as any)?.user?.agencyId;
-
     if (!agencyId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const body = await req.json();
-    const {
-      name,
-      email,
-      role,
-      userType,
-      password,
-      // accept either baseSalary (new) or salary (legacy)
-      baseSalary: baseSalaryIn,
-      salary: legacySalary,
-      verifiedSkills,
-    } = body;
+    const { name, email, password, role, userType, baseSalary, verifiedSkills } = body;
 
-    // Basic validation
     if (!name || !email || !password) {
-      return NextResponse.json({ error: "Missing required fields (name, email, password)" }, { status: 400 });
+      return NextResponse.json({ error: "Name, email and password are required" }, { status: 400 });
     }
 
-    // Subscription lock: check max users
     const agency = await prisma.agency.findUnique({
       where: { id: agencyId },
       include: { subscription: true, _count: { select: { users: true } } },
     });
 
-    const maxUsers = (agency?.subscription?.maxUsers) ?? 5;
-    if (agency && agency._count && agency._count.users >= maxUsers) {
-      return NextResponse.json({
-        error: `Limit reached. Your ${agency.subscription?.plan ?? "plan"} allows only ${maxUsers} users.`,
-      }, { status: 403 });
+    const maxUsers = agency?.subscription?.maxUsers ?? 5;
+    if ((agency?._count?.users ?? 0) >= maxUsers) {
+      return NextResponse.json({ error: `Seat limit reached. Your plan allows ${maxUsers} users.` }, { status: 403 });
     }
 
-    // Existence check
-    const existingUser = await prisma.user.findUnique({ where: { email } });
-    if (existingUser) return NextResponse.json({ error: "Email already in use" }, { status: 400 });
+    const exists = await prisma.user.findUnique({ where: { email } });
+    if (exists) return NextResponse.json({ error: "Email already in use" }, { status: 400 });
 
-    // Create user: prefer baseSalary, fallback to legacy salary if provided
-    const baseSalaryValue = parseFloat(String(baseSalaryIn ?? legacySalary ?? 0)) || 0;
+    const hashed = await bcrypt.hash(password, 10);
 
-    const hashedPassword = await bcrypt.hash(password, 10);
     const created = await prisma.user.create({
       data: {
         name,
         email,
-        role,
-        userType,
+        password: hashed,
+        role: role ?? "CREATIVE",
+        userType: userType ?? "FULL_TIME",
         agencyId,
-        password: hashedPassword,
-        baseSalary: baseSalaryValue,
-        // walletBalance will default to 0 (no need to set)
-        verifiedSkills: Array.isArray(verifiedSkills) ? verifiedSkills : [],
+        baseSalary: parseFloat(String(baseSalary ?? 0)) || 0,
+        walletBalance: 0,
         efficiencyRate: 1.0,
+        verifiedSkills: Array.isArray(verifiedSkills) ? verifiedSkills : [],
       },
     });
 
-    // sanitize response
-    const { password: _pw, ...employeeData } = created as any;
-
-    // Return normalized shape for client
-    const response = {
-      id: employeeData.id,
-      name: employeeData.name,
-      email: employeeData.email,
-      role: employeeData.role,
-      userType: employeeData.userType,
-      verifiedSkills: employeeData.verifiedSkills || [],
-      baseSalary: employeeData.baseSalary ?? 0,
-      walletBalance: employeeData.walletBalance ?? 0,
-      efficiencyRate: employeeData.efficiencyRate ?? 1.0,
-      createdAt: employeeData.createdAt,
-    };
-
-    return NextResponse.json(response, { status: 201 });
-  } catch (error: any) {
-    console.error("POST_EMPLOYEE_ERROR:", error);
+    const { password: _pw, ...safe } = created as any;
+    return NextResponse.json(safe, { status: 201 });
+  } catch (err: any) {
+    console.error("[EMPLOYEES_POST]", err);
     return NextResponse.json({ error: "Failed to create employee" }, { status: 500 });
   }
 }

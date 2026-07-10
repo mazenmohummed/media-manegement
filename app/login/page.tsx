@@ -1,135 +1,145 @@
 "use client";
 
 import { useState } from "react";
-import { signIn, getSession } from "next-auth/react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Loader2, ShieldCheck, Eye, EyeOff } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Eye, EyeOff, Loader2, ShieldCheck } from "lucide-react";
+
+type LoginUser = {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  agencyId: string;
+  agencyName: string;
+  departmentName: string | null;
+};
 
 export default function LoginPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  
-  // New State: Toggle Password Visibility
   const [showPassword, setShowPassword] = useState(false);
 
-  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
     setLoading(true);
     setError("");
 
-    const formData = new FormData(e.currentTarget);
-    const email = formData.get("email") as string;
-    const password = formData.get("password") as string;
+    const formData = new FormData(event.currentTarget);
+    const email = String(formData.get("email") ?? "");
+    const password = String(formData.get("password") ?? "");
 
-    const res = await signIn("credentials", {
-      email,
-      password,
-      redirect: false,
-    });
+    try {
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
 
-    if (res?.error) {
-      setError("Invalid credentials. Access denied.");
-      setLoading(false);
-    } else {
-      const session = await getSession();
+      const data = await response.json();
 
-      if (session?.user?.role === "SUPERADMIN") {
+      if (!response.ok || !data.success) {
+        setError(data.message ?? "Invalid credentials. Access denied.");
+        return;
+      }
+
+      const user = data.user as LoginUser;
+      sessionStorage.setItem("agency_user", JSON.stringify(user));
+
+      if (user.role === "SUPERADMIN") {
         router.push("/superadmin");
       } else {
         router.push("/dashboard");
       }
 
-      router.refresh(); 
+      router.refresh();
+    } catch {
+      setError("Terminal connection error. Try again.");
+    } finally {
+      setLoading(false);
     }
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background p-6">
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-[10%] left-[15%] w-[40%] h-[40%] bg-blue-600/5 rounded-full blur-[120px]" />
-      </div>
-
-      <div className="bg-card p-10 md:p-12 rounded-[2.5rem] shadow-2xl w-full max-w-md border border-border relative z-10">
-        <header className="mb-10 text-center">
-          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-blue-600/10 text-blue-600 mb-4">
-            <ShieldCheck size={28} />
+    <main className="flex min-h-screen items-center justify-center bg-[#f7f8fb] px-5 py-10 text-[#172033]">
+      <div className="w-full max-w-md rounded-md border border-[#d8deea] bg-white p-6 shadow-sm sm:p-8">
+        <header className="mb-8 text-center">
+          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-md bg-[#eaf1ff] text-[#2f6fed]">
+            <ShieldCheck className="h-7 w-7" />
           </div>
-          <h2 className="text-3xl font-black text-foreground tracking-tighter uppercase italic">
-            Access Terminal
-          </h2>
-          <p className="text-muted-foreground text-[10px] font-bold uppercase tracking-[0.3em] mt-2">
-            Identity Verification Required
+          <p className="text-xs font-black uppercase tracking-[0.18em] text-[#2f6fed]">
+            Identity Verification
+          </p>
+          <h1 className="mt-3 text-3xl font-black tracking-tight">Access Terminal</h1>
+          <p className="mt-2 text-sm text-[#5e6a7f]">
+            Sign in with an active operator account connected to your agency.
           </p>
         </header>
 
         {error && (
-          <div className="mb-6 p-4 bg-red-500/10 border border-red-500/20 rounded-xl text-red-500 text-[10px] font-black uppercase tracking-wider text-center">
+          <div className="mb-5 rounded-md border border-[#fecaca] bg-[#fef2f2] px-4 py-3 text-center text-xs font-bold uppercase tracking-[0.12em] text-[#b91c1c]">
             {error}
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <div className="space-y-2">
-            <label className="text-[10px] font-black text-muted-foreground uppercase tracking-[0.2em] ml-1">
-              Operator Email
-            </label>
-            <input 
+        <form onSubmit={handleSubmit} className="space-y-5">
+          <label className="block space-y-2">
+            <span className="text-xs font-bold uppercase tracking-[0.14em] text-[#5e6a7f]">
+              Operator email
+            </span>
+            <input
               name="email"
               required
-              type="email" 
-              className="w-full bg-muted/30 p-4 border border-border rounded-2xl outline-none focus:ring-2 focus:ring-blue-600/50 focus:border-blue-600 transition-all font-medium text-foreground" 
+              type="email"
+              autoComplete="email"
+              className="h-11 w-full rounded-md border border-[#d8deea] bg-white px-3 text-sm outline-none transition focus:border-[#2f6fed] focus:ring-2 focus:ring-[#dbe7ff]"
               placeholder="ops@agency.com"
             />
-          </div>
+          </label>
 
-          <div className="space-y-2">
-            <label className="text-[10px] font-black text-muted-foreground uppercase tracking-[0.2em] ml-1">
-              Access Password
-            </label>
-            <div className="relative group">
-              <input 
+          <label className="block space-y-2">
+            <span className="text-xs font-bold uppercase tracking-[0.14em] text-[#5e6a7f]">
+              Access password
+            </span>
+            <span className="relative block">
+              <input
                 name="password"
                 required
-                // Toggle between 'password' and 'text'
-                type={showPassword ? "text" : "password"} 
-                className="w-full bg-muted/30 p-4 pr-12 border border-border rounded-2xl outline-none focus:ring-2 focus:ring-blue-600/50 focus:border-blue-600 transition-all font-medium text-foreground" 
-                placeholder="••••••••"
+                type={showPassword ? "text" : "password"}
+                autoComplete="current-password"
+                className="h-11 w-full rounded-md border border-[#d8deea] bg-white px-3 pr-11 text-sm outline-none transition focus:border-[#2f6fed] focus:ring-2 focus:ring-[#dbe7ff]"
+                placeholder="Enter password"
               />
-              
-              {/* EYE TOGGLE BUTTON */}
               <button
                 type="button"
-                onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-4 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-blue-600 transition-colors p-1"
+                onClick={() => setShowPassword((value) => !value)}
+                className="absolute right-2 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-md text-[#5e6a7f] transition hover:bg-[#f0f4fb] hover:text-[#2f6fed]"
+                aria-label={showPassword ? "Hide password" : "Show password"}
               >
-                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </button>
-            </div>
-          </div>
+            </span>
+          </label>
 
-          <button 
+          <button
             disabled={loading}
-            className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white py-5 rounded-2xl font-black text-xs uppercase tracking-[0.3em] transition-all active:scale-[0.98] shadow-xl shadow-blue-500/20 mt-4 flex items-center justify-center gap-2"
+            className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-md bg-[#2f6fed] text-sm font-bold text-white transition hover:bg-[#245fd2] disabled:opacity-70"
           >
-            {loading ? (
-              <><Loader2 className="animate-spin" size={16} /> Authenticating...</>
-            ) : (
-              "Authorize Access"
-            )}
+            {loading && <Loader2 className="h-4 w-4 animate-spin" />}
+            {loading ? "Authenticating..." : "Authorize Access"}
           </button>
         </form>
 
-        <footer className="mt-10 pt-8 border-t border-border text-center">
-          <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest">
-            New Operator?{" "}
-            <Link href="/deploy/agency" className="text-blue-600 hover:text-blue-500 transition-colors ml-1">
-              Deploy Agency
+        <footer className="mt-8 border-t border-[#d8deea] pt-6 text-center">
+          <p className="text-xs font-bold uppercase tracking-[0.14em] text-[#5e6a7f]">
+            New operator?{" "}
+            <Link href="/deploy/agency" className="text-[#2f6fed] transition hover:text-[#245fd2]">
+              Deploy agency
             </Link>
           </p>
         </footer>
       </div>
-    </div>
+    </main>
   );
 }

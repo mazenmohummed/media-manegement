@@ -1,183 +1,196 @@
+// api/tasks/[id]/route.ts
+
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/authOptions";
+import { createNotification } from "@/lib/notifications";
+
+// ─── GET /api/tasks/[id] ──────────────────────────────────────────────────────
 
 export async function GET(
-  req: Request,
+  _req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await getServerSession(authOptions);
+    const session  = await getServerSession(authOptions);
     const agencyId = session?.user?.agencyId;
+    if (!agencyId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
     const { id } = await params;
 
-    if (!agencyId) return new NextResponse("Unauthorized", { status: 401 });
-
     const task = await prisma.task.findUnique({
-      where: { id: id, agencyId: agencyId },
+      where: { id },
       include: {
-        project: true,
-        agency: { include: { users: true } },
-        assignees: { 
-          select: { id: true, name: true, userType: true, salary: true } 
+        project: {
+          include: { client: { select: { clientName: true } } },
         },
-        todos: { orderBy: { createdAt: 'asc' } },
+        assignees: {
+          select: {
+            id: true, name: true, role: true, userType: true,
+            baseSalary: true, walletBalance: true, efficiencyRate: true,
+            verifiedSkills: true,
+          },
+        },
+        assets:      true,
         taskExpenses: true,
-        assets: true,
         comments: {
-          include: { author: { select: { name: true, role: true } } },
-          orderBy: { createdAt: 'asc' }
+          include: { author: { select: { id: true, name: true, role: true } } },
+          orderBy: { createdAt: "asc" },
         },
+        todos: { orderBy: { order: "asc" } },
+
+        // ── NEW: task sessions (replaces attendanceLogs for working state) ──
+        taskSessions: {
+          orderBy: { startTime: "desc" },
+          include: {
+            user: { select: { id: true, name: true, role: true } },
+          },
+        },
+
+        // Keep attendanceLogs for historical/office context
         attendanceLogs: {
-          include: { user: true },
-          orderBy: { checkInTime: 'desc' }
-        }
+          orderBy: { checkInTime: "desc" },
+          include: {
+            user: { select: { id: true, name: true } },
+          },
+        },
+
+        financialTransactions: {
+          orderBy: { createdAt: "desc" },
+          include: {
+            user: { select: { id: true, name: true } },
+          },
+        },
+
+        agency: {
+          select: {
+            latitude: true, longitude: true, radius: true,
+            agencyName: true, address: true,
+          },
+        },
       },
     });
 
-    if (!task) return new NextResponse("Task not found", { status: 404 });
-
-    // 1. Sync progress if todos exist
-    if (task.todos.length > 0) {
-      const newProgress = Math.round((task.todos.filter(t => t.completed).length / task.todos.length) * 100);
-      if (newProgress !== task.progress) {
-        const updatedTaskWithProgress = await prisma.task.update({ 
-          where: { id }, 
-          data: { progress: newProgress },
-          include: {
-            project: true,
-            agency: { include: { users: true } },
-            assignees: { select: { id: true, name: true, userType: true, salary: true } },
-            todos: { orderBy: { createdAt: 'asc' } },
-            taskExpenses: true,
-            assets: true,
-            comments: {
-              include: { author: { select: { name: true, role: true } } },
-              orderBy: { createdAt: 'asc' }
-            },
-            attendanceLogs: {
-              include: { user: true },
-              orderBy: { checkInTime: 'desc' }
-            }
-          }
-        });
-        return NextResponse.json(updatedTaskWithProgress);
-      }
+    if (!task || task.agencyId !== agencyId) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
     return NextResponse.json(task);
-  } catch (error) {
-    console.error("GET_TASK_DETAIL_ERROR:", error);
-    return new NextResponse("Internal Error", { status: 500 });
+  } catch (err) {
+    console.error("[TASK_GET]", err);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
+
+// ─── PATCH /api/tasks/[id] ────────────────────────────────────────────────────
 
 export async function PATCH(
-  req: Request,
-  { params }: { params: Promise<{ id: string }> } 
-) {
-  try {
-    const session = await getServerSession(authOptions);
-    const agencyId = session?.user?.agencyId;
-    const { id } = await params;
-    
-    if (!agencyId) return new NextResponse("Unauthorized", { status: 401 });
-
-    const body = await req.json();
-    const { status, progress, internalCost, margin, description, assigneeIds } = body;
-
-    const updatedTask = await prisma.task.update({
-      where: { id: id, agencyId: agencyId },
-      data: {
-        status,
-        progress: progress !== undefined ? parseInt(progress) : undefined,
-        internalCost: internalCost !== undefined ? parseFloat(internalCost) : undefined,
-        margin: margin !== undefined ? parseFloat(margin) : undefined,
-        description,
-        assignees: assigneeIds ? {
-          set: assigneeIds.map((userId: string) => ({ id: userId }))
-        } : undefined,
-      },
-      include: {
-        project: true,
-        agency: { include: { users: true } },
-        assignees: true
-      }
-    });
-
-    if (status === "COMPLETED" || parseInt(progress) === 100) {
-      const admins = updatedTask.agency.users.filter(u => u.role === "ADMIN");
-      if (admins.length > 0) {
-        await prisma.notification.createMany({
-          data: admins.map(admin => ({
-            title: "Task Finished",
-            message: `Task for project ${updatedTask.project?.projectName} completed by ${session?.user?.name || "a user"}.`,
-            type: "SYSTEM",
-            userId: admin.id,
-            agencyId: agencyId,
-            isRead: false,
-          }))
-        });
-      }
-    }
-
-    return NextResponse.json(updatedTask);
-  } catch (error) {
-    console.error("PATCH_TASK_DETAIL_ERROR:", error);
-    return new NextResponse("Update Failed", { status: 500 });
-  }
-}
-
-export async function DELETE(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const session = await getServerSession(authOptions);
     const agencyId = session?.user?.agencyId;
-
-    if (!agencyId) {
-      return NextResponse.json(
-        { error: "Unauthorized: No Agency linked to user session" }, 
-        { status: 401 }
-      );
-    }
+    if (!agencyId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const { id } = await params;
+    const body = await req.json();
 
-    const existingProject = await prisma.project.findUnique({
-      where: { id: id }
+    // 1. Fetch current state
+    const existingTask = await prisma.task.findUnique({
+      where: { id },
+      include: { assignees: true, project: true }
     });
 
-    if (!existingProject) {
-      return NextResponse.json(
-        { error: "Project not found" }, 
-        { status: 404 }
-      );
-    }
+    if (!existingTask) return NextResponse.json({ error: "Task not found" }, { status: 404 });
 
-    if (existingProject.agencyId !== agencyId) {
-      return NextResponse.json(
-        { error: "Forbidden: You do not have permission to delete this project" }, 
-        { status: 403 }
-      );
-    }
+    // 2. Destructure and whitelist
+    // 👇 Added comments + attendanceLogs — these are relations on Task and
+    // must be stripped out just like the other relation fields below.
+    // Leaving them in `updates` sends a raw array (e.g. comments: []) to
+    // Prisma's update(), which only accepts nested-write objects
+    // ({ set / connect / create }) for relations, never a plain array.
+    const { 
+  id: _id, createdAt: _ca, updatedAt: _ua, lastUpdateTimestamp: _lut,
+  completedAt: _cat, // ← strip this unknown field
+  project: _p, assignees: _a, assets: _as, todos: _t, taskSessions: _ts, 
+  taskExpenses: _te, financialTransactions: _ft, agency: _ag,
+  comments: _co, attendanceLogs: _al,
+  projectId, agencyId: _agencyId, assetIds,
+  assigneeIds, startDate, endDate, 
+  ...updates 
+} = body;
 
-    await prisma.project.delete({
-      where: { id: id }
-    });
+const updated = await prisma.task.update({
+  where: { id },
+  data: {
+    ...updates,
+    lastUpdateTimestamp: new Date(),
+    // Only connect project if projectId was actually sent
+    ...(projectId && { project: { connect: { id: projectId } } }),
+    ...(startDate  && { startDate:  new Date(startDate)  }),
+    ...(endDate    && { endDate:    new Date(endDate)    }),
+    ...(assigneeIds && {
+      assignees: { set: assigneeIds.map((aid: string) => ({ id: aid })) },
+    }),
+    ...(assetIds && {
+      assets: { set: assetIds.map((aid: string) => ({ id: aid })) },
+    }),
+  },
+});
+   
 
-    return NextResponse.json(
-      { message: "Project deleted successfully" }, 
-      { status: 200 }
-    );
 
-  } catch (error: any) {
-    console.error("ROUTE_ERROR_DELETE_PROJECT:", error);
-    return NextResponse.json(
-      { error: "An internal server error occurred" }, 
-      { status: 500 }
-    );
+// 4. Trigger Notifications
+const newStatus = body.status?.toUpperCase();
+const oldStatus = existingTask.status?.toUpperCase();
+
+const notificationPayload = (() => {
+  if (newStatus === "COMPLETED" && oldStatus !== "COMPLETED") {
+    return {
+      title: "Task Completed",
+      message: `Task "${existingTask.taskType}" for project ${existingTask.project?.projectName || "Unknown"} has been marked as completed by ${session.user.name}.`,
+    };
+  }
+  if (newStatus === "ACTIVE" && oldStatus !== "ACTIVE") {
+    return {
+      title: "Task Started",
+      message: `Task "${existingTask.taskType}" for project ${existingTask.project?.projectName || "Unknown"} is now active.`,
+    };
+  }
+  if (newStatus === "CANCELLED" && oldStatus !== "CANCELLED") {
+    return {
+      title: "Task Cancelled",
+      message: `Task "${existingTask.taskType}" for project ${existingTask.project?.projectName || "Unknown"} has been cancelled.`,
+    };
+  }
+  // General update — always notify
+  return {
+    title: "Task Updated",
+    message: `Task "${existingTask.taskType}" for project ${existingTask.project?.projectName || "Unknown"} was updated by ${session.user.name}.`,
+  };
+})();
+
+try {
+  await Promise.all(
+    existingTask.assignees.map((user) =>
+      createNotification({
+        title:    notificationPayload.title,
+        message:  notificationPayload.message,
+        type:     "SYSTEM",
+        userId:   user.id,
+        agencyId,
+      })
+    )
+  );
+} catch (notifErr) {
+  console.error("[NOTIFICATION_ERROR]", notifErr);
+}
+
+    return NextResponse.json(updated);
+  } catch (err) {
+    console.error("[TASK_PATCH_ERROR]", err);
+    return NextResponse.json({ error: "Failed to update" }, { status: 500 });
   }
 }

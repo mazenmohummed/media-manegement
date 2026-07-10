@@ -210,10 +210,10 @@ export default function EmployeeFinancePage() {
 
       return {
         ...emp,
-        dynamicPaidToDate: hasDateFilter ? dynamicPaidToDate : emp.totalPaidToDate,
-        upcomingPayout,
-        dynamicNetProfit,
-        dynamicRevenue
+        dynamicPaidToDate: (hasDateFilter ? dynamicPaidToDate : (emp.totalPaidToDate || 0)),
+        upcomingPayout: upcomingPayout || 0,
+        dynamicNetProfit: dynamicNetProfit || 0,
+        dynamicRevenue: dynamicRevenue || 0
       };
     });
   }, [data, searchQuery, typeFilter, payoutHistory, startDate, endDate]);
@@ -252,7 +252,7 @@ export default function EmployeeFinancePage() {
   }, [filteredEmployees]);
 
   const netAgencyProfit = useMemo(() => {
-    return filteredEmployees.reduce((sum, e) => sum + e.dynamicNetProfit, 0);
+    return filteredEmployees.reduce((sum, e) => sum + e.dynamicNetProfit, 0 );
   }, [filteredEmployees]);
 
   const livePayoutsTotal = useMemo(() => {
@@ -423,7 +423,7 @@ export default function EmployeeFinancePage() {
                       <td className={`p-8 font-black ${emp.dynamicNetProfit >= 0 ? "text-emerald-500" : "text-destructive"}`}>
                         ${emp.dynamicNetProfit.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                       </td>
-                      <td className="p-8 text-blue-500 font-black">${emp.dynamicPaidToDate.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                      <td className="p-8 text-blue-500 font-black">${(emp.dynamicPaidToDate ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
                       <td className="p-8 text-right">
                         <div className="inline-block px-4 py-2 bg-foreground text-background rounded-xl text-[10px] font-black uppercase italic transition-transform group-hover:scale-110">
                           {emp.efficiencyRate}x ROI

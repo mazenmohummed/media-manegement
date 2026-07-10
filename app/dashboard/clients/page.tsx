@@ -1,267 +1,641 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Plus, Search, Loader2, Building2 } from "lucide-react";
-import { useSession } from "next-auth/react";
+import {
+  AlertCircle,
+  Banknote,
+  Building2,
+  CalendarClock,
+  FileText,
+  Loader2,
+  Plus,
+  Receipt,
+  Search,
+  SlidersHorizontal,
+  Wallet,
+} from "lucide-react";
+
+const DEFAULT_AGENCY_ID = "cmqv7pkzo0000xmkk0u7229sf";
+
+type ClientRow = {
+  id: string;
+  clientNo?: string | null;
+  clientName: string;
+  accountType?: string | null;
+  status?: string | null;
+  relationshipType?: "ONE_TIME" | "RECURRING";
+  email?: string | null;
+  phoneNumber?: string | null;
+  website?: string | null;
+  creditLimit?: number | null;
+  outstandingBalance?: number;
+  isOnCreditHold?: boolean;
+  createdAt: string;
+  primaryContact?: {
+    name: string;
+    title?: string | null;
+    email?: string | null;
+    phoneNumber?: string | null;
+  } | null;
+  projectCount: number;
+  openProjects: number;
+  invoiceCount: number;
+  totalInvoiced: number;
+  totalReceived: number;
+  totalDue: number;
+  overdueAmount: number;
+  unappliedCredit: number;
+  activeBudget?: {
+    totalAmount: number;
+    spentAmount: number;
+    remainingAmount: number;
+    currency: string;
+    periodEnd: string;
+  } | null;
+  latestStatement?: {
+    id: string;
+    statementNo: string;
+    periodEnd: string;
+    closingBalance: number;
+  } | null;
+};
+
+type ClientForm = {
+  clientName: string;
+  accountType: string;
+  status: string;
+  relationshipType: "ONE_TIME" | "RECURRING";
+  email: string;
+  phoneNumber: string;
+  website: string;
+  notes: string;
+  billingLine1: string;
+  billingCity: string;
+  billingCountry: string;
+  contactName: string;
+  contactTitle: string;
+  contactEmail: string;
+  contactPhone: string;
+  creditLimit: string;
+  isOnCreditHold: boolean;
+  creditHoldReason: string;
+  creditLimitAlertPct: string;
+  budgetAmount: string;
+  budgetPeriodStart: string;
+  budgetPeriodEnd: string;
+  currency: string;
+};
+
+const DEFAULT_FORM: ClientForm = {
+  clientName: "",
+  accountType: "Retainer",
+  status: "ACTIVE",
+  relationshipType: "RECURRING",
+  email: "",
+  phoneNumber: "",
+  website: "",
+  notes: "",
+  billingLine1: "",
+  billingCity: "",
+  billingCountry: "Egypt",
+  contactName: "",
+  contactTitle: "",
+  contactEmail: "",
+  contactPhone: "",
+  creditLimit: "",
+  isOnCreditHold: false,
+  creditHoldReason: "",
+  creditLimitAlertPct: "90",
+  budgetAmount: "",
+  budgetPeriodStart: "",
+  budgetPeriodEnd: "",
+  currency: "EGP",
+};
+
+const currency = (value: number, code = "EGP") =>
+  new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: code,
+    maximumFractionDigits: 0,
+  }).format(value || 0);
+
+const percent = (value: number) =>
+  `${Math.min(Math.max(value || 0, 0), 100).toLocaleString("en-US", {
+    maximumFractionDigits: 0,
+  })}%`;
+
+const getStoredAgencyId = () => {
+  if (typeof window === "undefined") return "";
+
+  try {
+    const storedUser =
+      window.sessionStorage.getItem("agency_user") ||
+      window.localStorage.getItem("agency_user") ||
+      window.sessionStorage.getItem("user") ||
+      window.localStorage.getItem("user");
+
+    return storedUser ? JSON.parse(storedUser)?.agencyId ?? "" : "";
+  } catch {
+    return "";
+  }
+};
 
 export default function ClientsPage() {
-  const { data: session, status } = useSession();
-  const [clients, setClients] = useState([]);
+  const [agencyId, setAgencyId] = useState("");
+  const [clients, setClients] = useState<ClientRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const [showForm, setShowForm] = useState(false);
-  const [searchTerm, setSearchTerm] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [selectedType, setSelectedType] = useState("ALL");
+  const [selectedStatus, setSelectedStatus] = useState("ALL");
+  const [formData, setFormData] = useState<ClientForm>(DEFAULT_FORM);
 
-  // Form State matching Prisma Schema
-  const [formData, setFormData] = useState({
-    clientName: "",
-    accountType: "Retainer",
-    status: "Active",
-  });
+  const fetchClients = async (activeAgencyId = agencyId) => {
+    setLoading(true);
+    setError("");
 
-  useEffect(() => {
-    if (status === "authenticated" && session?.user?.agencyId) {
-      fetchClients(session.user.agencyId);
-    } else if (status === "unauthenticated") {
+    if (!activeAgencyId) {
       setLoading(false);
+      setError("No agency context found. Please sign in again.");
+      return;
     }
-  }, [status, session]);
 
-  const fetchClients = async (agencyId: string) => {
     try {
-      const res = await fetch(`/api/clients?agencyId=${agencyId}`);
-      if (res.ok) {
-        const data = await res.json();
-        setClients(data);
+      const res = await fetch(`/api/clients?agencyId=${encodeURIComponent(activeAgencyId)}`, {
+        cache: "no-store",
+        credentials: "include",
+        headers: { "x-agency-id": activeAgencyId },
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data?.error || "Failed to load clients");
       }
-    } catch (err) {
-      console.error("Fetch error:", err);
+
+      setClients(Array.isArray(data) ? data : data.clients ?? []);
+    } catch (err: any) {
+      setError(err?.message || "Failed to load clients");
     } finally {
       setLoading(false);
     }
   };
 
-  const handleAddClient = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!session?.user?.agencyId) return alert("Session lost. Please refresh.");
+  useEffect(() => {
+    const queryAgencyId =
+      typeof window === "undefined"
+        ? ""
+        : new URLSearchParams(window.location.search).get("agencyId") ?? "";
+    const storedAgencyId = getStoredAgencyId();
+    const resolvedAgencyId = queryAgencyId || storedAgencyId || DEFAULT_AGENCY_ID;
 
+    setAgencyId(resolvedAgencyId);
+    fetchClients(resolvedAgencyId);
+  }, []);
+
+  const filteredClients = useMemo(() => {
+    const query = searchTerm.trim().toLowerCase();
+
+    return clients.filter((client) => {
+      const matchesSearch =
+        !query ||
+        client.clientName.toLowerCase().includes(query) ||
+        client.clientNo?.toLowerCase().includes(query) ||
+        client.email?.toLowerCase().includes(query) ||
+        client.primaryContact?.name.toLowerCase().includes(query);
+
+      const matchesType =
+        selectedType === "ALL" ||
+        client.accountType?.toUpperCase() === selectedType ||
+        client.relationshipType === selectedType;
+
+      const matchesStatus =
+        selectedStatus === "ALL" || client.status?.toUpperCase() === selectedStatus;
+
+      return matchesSearch && matchesType && matchesStatus;
+    });
+  }, [clients, searchTerm, selectedType, selectedStatus]);
+
+  const stats = useMemo(
+    () =>
+      clients.reduce(
+        (acc, client) => ({
+          totalClients: acc.totalClients + 1,
+          totalInvoiced: acc.totalInvoiced + client.totalInvoiced,
+          totalReceived: acc.totalReceived + client.totalReceived,
+          totalDue: acc.totalDue + client.totalDue,
+          overdueAmount: acc.overdueAmount + client.overdueAmount,
+          openProjects: acc.openProjects + client.openProjects,
+        }),
+        {
+          totalClients: 0,
+          totalInvoiced: 0,
+          totalReceived: 0,
+          totalDue: 0,
+          overdueAmount: 0,
+          openProjects: 0,
+        }
+      ),
+    [clients]
+  );
+
+  const collectionRate = stats.totalInvoiced
+    ? (stats.totalReceived / stats.totalInvoiced) * 100
+    : 0;
+
+  const updateForm = <Key extends keyof ClientForm>(key: Key, value: ClientForm[Key]) => {
+    setFormData((current) => ({ ...current, [key]: value }));
+  };
+
+  const handleAddClient = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
     setIsSubmitting(true);
+    setError("");
 
     try {
+      const payload = {
+        ...formData,
+        agencyId,
+        budgetAmount: formData.budgetAmount ? Number(formData.budgetAmount) : undefined,
+        creditLimit: formData.creditLimit ? Number(formData.creditLimit) : undefined,
+        creditLimitAlertPct: formData.creditLimitAlertPct ? Number(formData.creditLimitAlertPct) : 90,
+      };
+
       const res = await fetch("/api/clients", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...formData,
-          agencyId: session.user.agencyId,
-        }),
+        headers: {
+          "Content-Type": "application/json",
+          "x-agency-id": agencyId,
+        },
+        body: JSON.stringify(payload),
       });
+      const data = await res.json();
 
-      if (res.ok) {
-        await fetchClients(session.user.agencyId);
-        setShowForm(false);
-        setFormData({ ...formData, clientName: "" });
-      } else {
-        const error = await res.json();
-        alert(error.message || "Failed to onboard entity.");
+      if (!res.ok) {
+        throw new Error(data?.error || "Failed to create client");
       }
-    } catch (err) {
-      console.error("Submission error:", err);
-      alert("A network error occurred.");
+
+      setShowForm(false);
+      setFormData(DEFAULT_FORM);
+      await fetchClients(agencyId);
+    } catch (err: any) {
+      setError(err?.message || "Failed to create client");
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  if (status === "loading") {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[60vh] space-y-4">
-        <Loader2 className="animate-spin text-blue-600" size={40} />
-        <p className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground">Initializing Terminal...</p>
-      </div>
-    );
-  }
-
-  const filteredClients = clients.filter((c: any) =>
-    c.clientName.toLowerCase().includes(searchTerm.toLowerCase())
-  );
-
   return (
-    <div className="space-y-8">
-      {/* HEADER */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+    <main className="space-y-6">
+      <header className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
-          <h1 className="text-3xl font-black tracking-tighter uppercase italic">Client Portfolio</h1>
-          <p className="text-muted-foreground text-sm font-medium">Manage high-stakes accounts and project partners.</p>
+          <h1 className="text-2xl font-semibold tracking-tight">Clients</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Accounts, contacts, budgets, balances, and project exposure.
+          </p>
         </div>
+        <button
+          type="button"
+          onClick={() => setShowForm(true)}
+          className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
+        >
+          <Plus className="h-4 w-4" />
+          New client
+        </button>
+      </header>
 
-        <div className="flex gap-3 w-full md:w-auto">
-          <div className="relative flex-grow md:w-64">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={16} />
-            <input
-              type="text"
-              placeholder="Search command..."
-              className="w-full pl-10 pr-4 py-2 border rounded-xl bg-card text-sm focus:ring-2 focus:ring-blue-600 outline-none transition-all"
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
-          </div>
-          <button
-            onClick={() => setShowForm(true)}
-            className="bg-blue-600 text-white px-6 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-blue-500 shadow-lg shadow-blue-600/20 flex items-center gap-2"
+      {error && (
+        <div className="flex items-start gap-3 rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+          <AlertCircle className="mt-0.5 h-4 w-4" />
+          <p>{error}</p>
+        </div>
+      )}
+
+      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+        <Metric icon={Building2} label="Clients" value={stats.totalClients.toLocaleString()} />
+        <Metric icon={Receipt} label="Invoiced" value={currency(stats.totalInvoiced)} />
+        <Metric icon={Wallet} label="Collected" value={currency(stats.totalReceived)} tone="green" />
+        <Metric icon={Banknote} label="Outstanding" value={currency(stats.totalDue)} tone="amber" />
+        <Metric icon={CalendarClock} label="Collection rate" value={percent(collectionRate)} />
+      </section>
+
+      <section className="flex flex-col gap-3 rounded-md border bg-card p-3 md:flex-row md:items-center md:justify-between">
+        <div className="relative md:w-96">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <input
+            value={searchTerm}
+            onChange={(event) => setSearchTerm(event.target.value)}
+            placeholder="Search clients, refs, contacts, or emails"
+            className="h-10 w-full rounded-md border bg-background pl-9 pr-3 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+          />
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground">
+            <SlidersHorizontal className="h-3.5 w-3.5" />
+            Filters
+          </span>
+          <select
+            value={selectedType}
+            onChange={(event) => setSelectedType(event.target.value)}
+            className="h-10 rounded-md border bg-background px-3 text-sm outline-none"
           >
-            <Plus size={14} strokeWidth={3} /> New Account
-          </button>
+            <option value="ALL">All types</option>
+            <option value="RETAINER">Retainer</option>
+            <option value="ONE-OFF">One-off</option>
+            <option value="PROJECT">Project</option>
+            <option value="RECURRING">Recurring</option>
+            <option value="ONE_TIME">One time</option>
+          </select>
+          <select
+            value={selectedStatus}
+            onChange={(event) => setSelectedStatus(event.target.value)}
+            className="h-10 rounded-md border bg-background px-3 text-sm outline-none"
+          >
+            <option value="ALL">All statuses</option>
+            <option value="ACTIVE">Active</option>
+            <option value="SUSPENDED">Suspended</option>
+            <option value="COMPLETED">Completed</option>
+          </select>
         </div>
-      </div>
+      </section>
 
-      {/* REVENUE OVERVIEW */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div className="bg-card p-6 border rounded-[2rem] flex items-center gap-4">
-          <div className="w-12 h-12 bg-blue-600/10 rounded-2xl flex items-center justify-center text-blue-600">
-            <Building2 size={24} />
-          </div>
-          <div>
-            <p className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Active Accounts</p>
-            <p className="text-2xl font-black italic">{clients.length}</p>
-          </div>
-        </div>
-        <div className="bg-card p-6 border rounded-[2rem] flex items-center gap-4">
-          <div className="w-12 h-12 bg-emerald-600/10 rounded-2xl flex items-center justify-center text-emerald-600">
-            <span className="font-black">$</span>
-          </div>
-          <div>
-            <p className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Portfolio Status</p>
-            <p className="text-2xl font-black italic text-emerald-600 uppercase tracking-tighter">Healthy</p>
-          </div>
-        </div>
-      </div>
-
-      {/* DATA TABLE */}
-      <div className="bg-card rounded-[2.5rem] border border-border overflow-hidden shadow-sm">
-        <table className="w-full text-left">
-          <thead>
-            <tr className="border-b border-border bg-muted/30">
-              <th className="p-6 text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground">Entity Name</th>
-              <th className="p-6 text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground">Account Type</th>
-              <th className="p-6 text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground">Status</th>
-              <th className="p-6 text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground text-right">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border">
-            {loading ? (
+      <section className="overflow-hidden rounded-md border bg-card">
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[1180px] text-left text-sm">
+            <thead className="border-b bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
               <tr>
-                <td colSpan={4} className="p-20 text-center">
-                  <Loader2 className="animate-spin mx-auto text-blue-600" size={32} />
-                </td>
+                <th className="px-4 py-3 font-semibold">Client</th>
+                <th className="px-4 py-3 font-semibold">Contact</th>
+                <th className="px-4 py-3 font-semibold">Type</th>
+                <th className="px-4 py-3 font-semibold">Projects</th>
+                <th className="px-4 py-3 text-right font-semibold">Invoiced</th>
+                <th className="px-4 py-3 text-right font-semibold">Collected</th>
+                <th className="px-4 py-3 text-right font-semibold">Due</th>
+                <th className="px-4 py-3 text-right font-semibold">Credit</th>
+                <th className="px-4 py-3 font-semibold">Status</th>
+                <th className="px-4 py-3 text-right font-semibold">Action</th>
               </tr>
-            ) : filteredClients.map((client: any) => (
-              <tr key={client.id} className="hover:bg-muted/10 transition-colors group">
-                <td className="p-6">
-                  <div className="font-black uppercase tracking-tight group-hover:text-blue-600 transition-colors">
-                    {client.clientName}
-                  </div>
-                  <div className="text-[10px] font-bold text-blue-600/60 uppercase tracking-widest mt-1 flex items-center gap-1">
-                    <span className="text-muted-foreground/50">REF:</span>
-                    {client.clientNo || "PENDING_ID"}
-                  </div>
-                </td>
-                <td className="p-6">
-                  <span className={`px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest border ${client.accountType === "Retainer" ? "bg-blue-600/10 border-blue-600/20 text-blue-600" : "bg-amber-600/10 border-amber-600/20 text-amber-600"
-                    }`}>
-                    {client.accountType}
-                  </span>
-                </td>
-                <td className="p-6">
-                  <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-tighter text-emerald-600">
-                    <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
-                    {client.status}
-                  </div>
-                </td>
-                <td className="p-6 text-right">
-                  <Link href={`/dashboard/clients/${client.id}`}>
-                    <button className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-600 hover:text-blue-400 underline underline-offset-4">
-                      Terminal View
-                    </button>
-                  </Link>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody className="divide-y">
+              {loading ? (
+                <tr>
+                  <td colSpan={10} className="px-4 py-16 text-center text-muted-foreground">
+                    <Loader2 className="mx-auto h-6 w-6 animate-spin text-blue-600" />
+                  </td>
+                </tr>
+              ) : filteredClients.length === 0 ? (
+                <tr>
+                  <td colSpan={10} className="px-4 py-16 text-center text-muted-foreground">
+                    No clients found.
+                  </td>
+                </tr>
+              ) : (
+                filteredClients.map((client) => (
+                  <tr key={client.id} className="transition hover:bg-muted/30">
+                    <td className="px-4 py-4">
+                      <div className="font-semibold">{client.clientName}</div>
+                      <div className="mt-1 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                        <span>{client.clientNo || "No ref"}</span>
+                        {client.email && <span>{client.email}</span>}
+                        {client.phoneNumber && <span>{client.phoneNumber}</span>}
+                      </div>
+                    </td>
+                    <td className="px-4 py-4">
+                      {client.primaryContact ? (
+                        <div>
+                          <div className="font-medium">{client.primaryContact.name}</div>
+                          <div className="text-xs text-muted-foreground">
+                            {client.primaryContact.email || client.primaryContact.phoneNumber || "Primary contact"}
+                          </div>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">No contact</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-4">
+                      <div className="font-medium">{client.accountType || "Unassigned"}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {client.relationshipType === "RECURRING" ? "Recurring" : "One time"}
+                      </div>
+                    </td>
+                    <td className="px-4 py-4">
+                      <div className="font-semibold">{client.projectCount}</div>
+                      <div className="text-xs text-muted-foreground">{client.openProjects} open</div>
+                    </td>
+                    <td className="px-4 py-4 text-right font-mono">{currency(client.totalInvoiced)}</td>
+                    <td className="px-4 py-4 text-right font-mono text-emerald-700">
+                      {currency(client.totalReceived)}
+                    </td>
+                    <td className="px-4 py-4 text-right font-mono text-amber-700">
+                      {currency(client.totalDue)}
+                    </td>
+                    <td className="px-4 py-4 text-right font-mono">
+                      {client.creditLimit ? currency(client.creditLimit) : "Open"}
+                    </td>
+                    <td className="px-4 py-4">
+                      <StatusPill status={client.isOnCreditHold ? "CREDIT HOLD" : client.status || "ACTIVE"} />
+                    </td>
+                    <td className="px-4 py-4 text-right">
+                      <Link
+                        href={`/dashboard/clients/${client.id}`}
+                        className="inline-flex h-9 items-center gap-2 rounded-md border px-3 text-xs font-semibold transition hover:bg-muted"
+                      >
+                        <FileText className="h-3.5 w-3.5" />
+                        View
+                      </Link>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
 
-      {/* NEW CLIENT MODAL */}
       {showForm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
-          <div className="absolute inset-0 bg-background/80 backdrop-blur-sm" onClick={() => setShowForm(false)} />
-          <form onSubmit={handleAddClient} className="relative bg-card w-full max-w-lg rounded-[2.5rem] border border-border p-10 shadow-2xl space-y-6">
-            <header className="space-y-1">
-              <h2 className="text-2xl font-black uppercase tracking-tighter italic">Onboard Entity</h2>
-              <p className="text-muted-foreground text-xs font-medium uppercase tracking-widest">Initialize new client record in Agency OS.</p>
-            </header>
-
-            <div className="space-y-4">
-              <div className="space-y-1">
-                <label className="text-[10px] font-black text-muted-foreground uppercase tracking-[0.2em] ml-1">Entity Name</label>
-                <input
-                  required
-                  className="w-full bg-muted/30 p-4 border border-border rounded-2xl outline-none focus:ring-2 focus:ring-blue-600/50"
-                  placeholder="e.g. Red Bull Global"
-                  value={formData.clientName}
-                  onChange={(e) => setFormData({ ...formData, clientName: e.target.value })}
-                />
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
+          <form
+            onSubmit={handleAddClient}
+            className="flex max-h-[90vh] w-full max-w-3xl flex-col rounded-md border bg-background shadow-xl"
+          >
+            <div className="flex shrink-0 items-start justify-between gap-4 border-b p-6">
+              <div>
+                <h2 className="text-lg font-semibold">Create client</h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Add account, contact, billing, credit, and budget details.
+                </p>
               </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black text-muted-foreground uppercase tracking-[0.2em] ml-1">Account Type</label>
-                  <select
-                    className="w-full bg-muted/30 p-4 border border-border rounded-2xl outline-none appearance-none text-xs font-bold uppercase tracking-widest"
-                    value={formData.accountType}
-                    onChange={(e) => setFormData({ ...formData, accountType: e.target.value })}
-                  >
-                    <option value="Retainer">Retainer</option>
-                    <option value="One-off">One-off</option>
-                  </select>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black text-muted-foreground uppercase tracking-[0.2em] ml-1">Initial Status</label>
-                  <input
-                    className="w-full bg-muted/30 p-4 border border-border rounded-2xl outline-none"
-                    defaultValue="Active"
-                    readOnly
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="flex gap-4 pt-4">
               <button
                 type="button"
                 onClick={() => setShowForm(false)}
-                className="flex-1 py-4 text-[10px] font-black uppercase tracking-widest hover:bg-muted rounded-2xl transition-colors"
+                className="rounded-md px-2 py-1 text-sm text-muted-foreground hover:bg-muted"
               >
-                Abort
+                Close
               </button>
-              <button
-                type="submit"
-                disabled={isSubmitting}
-                className="flex-1 bg-blue-600 text-white py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl shadow-blue-600/20 flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed transition-all"
-              >
-                {isSubmitting ? (
-                  <>
-                    <Loader2 className="animate-spin" size={14} />
-                    Processing...
-                  </>
-                ) : (
-                  "Confirm Setup"
-                )}
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-6">
+              <div className="grid gap-4 md:grid-cols-2">
+                <Field label="Client name">
+                  <input required value={formData.clientName} onChange={(event) => updateForm("clientName", event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:border-blue-500" />
+                </Field>
+                <Field label="Account type">
+                  <select value={formData.accountType} onChange={(event) => updateForm("accountType", event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none">
+                    <option value="Retainer">Retainer</option>
+                    <option value="One-off">One-off</option>
+                    <option value="Project">Project</option>
+                  </select>
+                </Field>
+                <Field label="Status">
+                  <select value={formData.status} onChange={(event) => updateForm("status", event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none">
+                    <option value="ACTIVE">Active</option>
+                    <option value="SUSPENDED">Suspended</option>
+                    <option value="COMPLETED">Completed</option>
+                  </select>
+                </Field>
+                <Field label="Relationship">
+                  <select value={formData.relationshipType} onChange={(event) => updateForm("relationshipType", event.target.value as ClientForm["relationshipType"])} className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none">
+                    <option value="RECURRING">Recurring</option>
+                    <option value="ONE_TIME">One time</option>
+                  </select>
+                </Field>
+                <Field label="Billing email">
+                  <input type="email" value={formData.email} onChange={(event) => updateForm("email", event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:border-blue-500" />
+                </Field>
+                <Field label="Phone">
+                  <input value={formData.phoneNumber} onChange={(event) => updateForm("phoneNumber", event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:border-blue-500" />
+                </Field>
+                <Field label="Website">
+                  <input value={formData.website} onChange={(event) => updateForm("website", event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:border-blue-500" />
+                </Field>
+                <Field label="Billing address">
+                  <input value={formData.billingLine1} onChange={(event) => updateForm("billingLine1", event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:border-blue-500" />
+                </Field>
+                <Field label="City">
+                  <input value={formData.billingCity} onChange={(event) => updateForm("billingCity", event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:border-blue-500" />
+                </Field>
+                <Field label="Country">
+                  <input value={formData.billingCountry} onChange={(event) => updateForm("billingCountry", event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:border-blue-500" />
+                </Field>
+                <Field label="Primary contact">
+                  <input value={formData.contactName} onChange={(event) => updateForm("contactName", event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:border-blue-500" />
+                </Field>
+                <Field label="Contact title">
+                  <input value={formData.contactTitle} onChange={(event) => updateForm("contactTitle", event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:border-blue-500" />
+                </Field>
+                <Field label="Contact email">
+                  <input type="email" value={formData.contactEmail} onChange={(event) => updateForm("contactEmail", event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:border-blue-500" />
+                </Field>
+                <Field label="Contact phone">
+                  <input value={formData.contactPhone} onChange={(event) => updateForm("contactPhone", event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:border-blue-500" />
+                </Field>
+                <Field label="Credit limit">
+                  <input type="number" min="0" value={formData.creditLimit} onChange={(event) => updateForm("creditLimit", event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:border-blue-500" />
+                </Field>
+                <Field label="Credit alert %">
+                  <input type="number" min="0" max="100" value={formData.creditLimitAlertPct} onChange={(event) => updateForm("creditLimitAlertPct", event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:border-blue-500" />
+                </Field>
+                <label className="flex h-10 items-center gap-2 rounded-md border px-3 text-sm">
+                  <input type="checkbox" checked={formData.isOnCreditHold} onChange={(event) => updateForm("isOnCreditHold", event.target.checked)} />
+                  Credit hold
+                </label>
+                <Field label="Credit hold reason">
+                  <input value={formData.creditHoldReason} onChange={(event) => updateForm("creditHoldReason", event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:border-blue-500" />
+                </Field>
+                <Field label="Budget amount">
+                  <input type="number" min="0" value={formData.budgetAmount} onChange={(event) => updateForm("budgetAmount", event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:border-blue-500" />
+                </Field>
+                <Field label="Currency">
+                  <select value={formData.currency} onChange={(event) => updateForm("currency", event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none">
+                    <option value="EGP">EGP</option>
+                    <option value="USD">USD</option>
+                    <option value="EUR">EUR</option>
+                    <option value="AED">AED</option>
+                  </select>
+                </Field>
+                <Field label="Budget start">
+                  <input type="date" value={formData.budgetPeriodStart} onChange={(event) => updateForm("budgetPeriodStart", event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:border-blue-500" />
+                </Field>
+                <Field label="Budget end">
+                  <input type="date" value={formData.budgetPeriodEnd} onChange={(event) => updateForm("budgetPeriodEnd", event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:border-blue-500" />
+                </Field>
+                <Field label="Notes">
+                  <textarea value={formData.notes} onChange={(event) => updateForm("notes", event.target.value)} className="min-h-20 w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus:border-blue-500 md:col-span-2" />
+                </Field>
+              </div>
+            </div>
+
+            <div className="flex shrink-0 justify-end gap-3 border-t p-6">
+              <button type="button" onClick={() => setShowForm(false)} className="h-10 rounded-md px-4 text-sm font-semibold hover:bg-muted">
+                Cancel
+              </button>
+              <button type="submit" disabled={isSubmitting || !agencyId} className="inline-flex h-10 items-center gap-2 rounded-md bg-blue-600 px-4 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-60">
+                {isSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
+                Create client
               </button>
             </div>
           </form>
         </div>
       )}
+    </main>
+  );
+}
+
+function Metric({
+  icon: Icon,
+  label,
+  value,
+  tone = "blue",
+}: {
+  icon: React.ElementType;
+  label: string;
+  value: string;
+  tone?: "blue" | "green" | "amber";
+}) {
+  const tones = {
+    blue: "text-blue-700 bg-blue-50",
+    green: "text-emerald-700 bg-emerald-50",
+    amber: "text-amber-700 bg-amber-50",
+  };
+
+  return (
+    <div className="rounded-md border bg-card p-4">
+      <div className="flex items-center gap-3">
+        <span className={`flex h-9 w-9 items-center justify-center rounded-md ${tones[tone]}`}>
+          <Icon className="h-4 w-4" />
+        </span>
+        <div>
+          <p className="text-xs font-medium text-muted-foreground">{label}</p>
+          <p className="text-lg font-semibold">{value}</p>
+        </div>
+      </div>
     </div>
+  );
+}
+
+function StatusPill({ status }: { status: string }) {
+  const normalized = status.toUpperCase();
+  const className =
+    normalized === "CREDIT HOLD" || normalized === "SUSPENDED"
+      ? "border-red-200 bg-red-50 text-red-700"
+      : normalized === "COMPLETED"
+        ? "border-slate-200 bg-slate-50 text-slate-700"
+        : "border-emerald-200 bg-emerald-50 text-emerald-700";
+
+  return (
+    <span className={`inline-flex rounded-md border px-2 py-1 text-xs font-semibold ${className}`}>
+      {status}
+    </span>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="space-y-1.5">
+      <span className="text-xs font-medium text-muted-foreground">{label}</span>
+      {children}
+    </label>
   );
 }

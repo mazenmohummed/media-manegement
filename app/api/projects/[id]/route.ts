@@ -114,62 +114,98 @@ export async function DELETE(
       );
     }
 
-    // Cascade cleanup + freelancer wallet reversal in transaction
+    // Cascade cleanup + wallet reversal in transaction
     await prisma.$transaction(async (tx) => {
-      // Fetch all tasks with their freelancer assignees
+      // Fetch all tasks with their assignees and financial transactions
       const tasks = await tx.task.findMany({
         where: { projectId: id },
         include: {
           assignees: {
-            where: { userType: "FREELANCER" },
-            select: { id: true, walletBalance: true },
+            select: { id: true, userType: true, walletBalance: true },
           },
         },
       });
 
       const taskIds = tasks.map((t) => t.id);
 
-      // Reverse freelancer wallet balances (subtract what was added)
+      // ── Step 1: Reverse wallet balances for all users (FREELANCER, FULL_TIME, PART_TIME)
       for (const task of tasks) {
-        for (const freelancer of task.assignees) {
-          const currentBalance = freelancer.walletBalance || 0;
+        for (const user of task.assignees) {
+          const currentBalance = user.walletBalance || 0;
 
-          // Fetch the FinancialTransaction records for this task+freelancer to know how much to reverse
+          // Fetch all financial transactions for this user+task
           const txns = await tx.financialTransaction.findMany({
             where: {
-              userId: freelancer.id,
+              userId: user.id,
               taskId: task.id,
             },
             select: { amount: true },
           });
 
+          // Sum all transaction amounts to reverse
           const totalToReverse = txns.reduce((sum, t) => sum + (t.amount || 0), 0);
           const newBalance = Math.max(0, currentBalance - totalToReverse);
 
+          console.log(
+            `[DELETE_PROJECT] Reversing wallet for user ${user.id}: ${currentBalance} - ${totalToReverse} = ${newBalance}`
+          );
+
           await tx.user.update({
-            where: { id: freelancer.id },
+            where: { id: user.id },
             data: { walletBalance: newBalance },
           });
         }
       }
 
-      // Clean up task-related records
+      // ── Step 2: Delete all related task records
       if (taskIds.length > 0) {
-        await tx.taskExpense.deleteMany({ where: { taskId: { in: taskIds } } });
-        await tx.todo.deleteMany({ where: { taskId: { in: taskIds } } });
-        await tx.financialTransaction.deleteMany({ where: { taskId: { in: taskIds } } });
-        await tx.task.deleteMany({ where: { projectId: id } });
+        // Delete comments linked to tasks
+        await tx.comment.deleteMany({
+          where: { taskId: { in: taskIds } },
+        });
+
+        // Delete attendance logs linked to tasks
+        await tx.attendanceLog.deleteMany({
+          where: { taskId: { in: taskIds } },
+        });
+
+        // Delete task expenses
+        await tx.taskExpense.deleteMany({
+          where: { taskId: { in: taskIds } },
+        });
+
+        // Delete todos (should cascade, but explicit is safer)
+        await tx.todo.deleteMany({
+          where: { taskId: { in: taskIds } },
+        });
+
+        // Delete financial transactions
+        await tx.financialTransaction.deleteMany({
+          where: { taskId: { in: taskIds } },
+        });
+
+        // Delete tasks themselves
+        await tx.task.deleteMany({
+          where: { projectId: id },
+        });
       }
 
-      // Delete project
-      await tx.project.delete({ where: { id: id } });
+      // ── Step 3: Delete project
+      await tx.project.delete({
+        where: { id: id },
+      });
+
+      console.log(`[DELETE_PROJECT] Project ${id} deleted successfully`);
     }, {
       maxWait: 10000,
       timeout: 30000,
     });
 
     return NextResponse.json(
-      { message: "Project deleted successfully and freelancer wallets reversed" },
+      { 
+        message: "Project and all related data deleted successfully",
+        projectId: id,
+      },
       { status: 200 }
     );
   } catch (error: any) {

@@ -1,100 +1,256 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import React, { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ShieldCheck, Loader2 } from "lucide-react";
 import { signIn } from "next-auth/react";
+import {
+  AlertCircle,
+  ArrowLeft,
+  Eye,
+  EyeOff,
+  Loader2,
+  Mail,
+  ShieldCheck,
+  UserRound,
+} from "lucide-react";
+
+type PendingAgency = {
+  agencyName: string;
+  agencyEmail: string;
+  phoneNumber?: string;
+  field?: string;
+  timezone?: string;
+  defaultCurrency?: string;
+  address?: string;
+  plan: "FREE" | "PRO" | "UNLIMITED";
+};
 
 export default function OperatorSignup() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
-  const [pendingAgency, setPendingAgency] = useState<any>(null);
+  const [showPassword, setShowPassword] = useState(false);
+  const [pendingAgency, setPendingAgency] = useState<PendingAgency | null>(null);
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    const data = sessionStorage.getItem("pending_agency");
-    if (!data) {
-      router.push("/deploy/agency");
-    } else {
-      setPendingAgency(JSON.parse(data));
+    const stored = sessionStorage.getItem("pending_agency");
+
+    if (!stored) {
+      router.replace("/deploy/agency");
+      return;
+    }
+
+    try {
+      setPendingAgency(JSON.parse(stored));
+    } catch {
+      sessionStorage.removeItem("pending_agency");
+      router.replace("/deploy/agency");
     }
   }, [router]);
 
-  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
+  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!pendingAgency) return;
+
+    setError("");
     setLoading(true);
 
-    const formData = new FormData(e.currentTarget);
-    const operatorData = Object.fromEntries(formData);
+    const formData = new FormData(event.currentTarget);
+    const operatorName = String(formData.get("operatorName") || "").trim();
+    const operatorEmail = String(formData.get("operatorEmail") || "").trim();
+    const password = String(formData.get("password") || "");
+    const confirmPassword = String(formData.get("confirmPassword") || "");
+
+    if (password !== confirmPassword) {
+      setError("Passwords do not match.");
+      setLoading(false);
+      return;
+    }
 
     const finalPayload = {
       ...pendingAgency,
-      ...operatorData,
+      operatorName,
+      operatorEmail,
+      password,
     };
 
     try {
-      // 1. Call your API to create the Agency + Admin User
       const res = await fetch("/api/deploy", {
         method: "POST",
         body: JSON.stringify(finalPayload),
         headers: { "Content-Type": "application/json" },
       });
+      const data = await res.json();
 
-      if (res.ok) {
-        // 2. Clear session storage
-        sessionStorage.removeItem("pending_agency");
-        
-        // 3. Automatically log them in
-        await signIn("credentials", {
-          email: finalPayload.operatorEmail,
-          password: finalPayload.password,
-          callbackUrl: "/dashboard",
-        });
+      if (!res.ok) {
+        throw new Error(data?.details || data?.error || "Deployment failed.");
       }
-    } catch (error) {
-      console.error("Deployment failed", error);
+
+      sessionStorage.removeItem("pending_agency");
+
+      const signInResult = await signIn("credentials", {
+        email: operatorEmail,
+        password,
+        redirect: false,
+      });
+
+      if (signInResult?.error) {
+        router.push("/login?deployed=1");
+        return;
+      }
+
+      router.push("/dashboard");
+      router.refresh();
+    } catch (err: any) {
+      setError(err?.message || "Deployment failed. Please try again.");
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background p-6">
-      <div className="bg-card p-10 rounded-[2.5rem] border border-border w-full max-w-lg shadow-2xl">
-        <div className="flex items-center gap-3 mb-8">
-          <div className="h-1 w-12 bg-green-500 rounded-full" />
-          <span className="text-[10px] font-black text-green-500 uppercase tracking-widest">Step 02: Command Access</span>
-        </div>
-        
-        <h2 className="text-3xl font-black mb-2 uppercase italic">Admin Operator</h2>
-        <p className="text-muted-foreground text-xs font-bold uppercase tracking-wider mb-8">
-          Establishing credentials for <span className="text-blue-600">{pendingAgency?.agencyName}</span>
-        </p>
-
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <label className="text-[10px] font-black uppercase text-muted-foreground ml-1">Full Name</label>
-              <input name="operatorName" required className="w-full bg-muted/30 p-4 border border-border rounded-2xl outline-none focus:ring-2 focus:ring-blue-600" placeholder="Mazen ..." />
-            </div>
-            <div className="space-y-2">
-              <label className="text-[10px] font-black uppercase text-muted-foreground ml-1">Admin Email</label>
-              <input name="operatorEmail" type="email" required className="w-full bg-muted/30 p-4 border border-border rounded-2xl outline-none focus:ring-2 focus:ring-blue-600" placeholder="admin@agency.com" />
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <label className="text-[10px] font-black uppercase text-muted-foreground ml-1">Master Password</label>
-            <input name="password" type="password" required className="w-full bg-muted/30 p-4 border border-border rounded-2xl outline-none focus:ring-2 focus:ring-blue-600" placeholder="••••••••" />
-          </div>
-
-          <button 
-            disabled={loading}
-            className="w-full bg-blue-600 text-white py-5 rounded-2xl font-black uppercase tracking-widest hover:bg-blue-500 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+    <main className="min-h-screen bg-[#f7f8fb] text-[#172033]">
+      <div className="mx-auto grid min-h-screen max-w-6xl gap-8 px-5 py-8 lg:grid-cols-[0.85fr_1.15fr] lg:items-center">
+        <section className="hidden lg:block">
+          <Link
+            href="/deploy/agency"
+            className="mb-10 inline-flex items-center gap-2 text-sm font-semibold text-[#5e6a7f] transition hover:text-[#172033]"
           >
-            {loading ? <Loader2 className="animate-spin" /> : <>Finalize Deployment <ShieldCheck size={18} /></>}
-          </button>
-        </form>
+            <ArrowLeft className="h-4 w-4" />
+            Edit agency details
+          </Link>
+
+          <div className="rounded-md border border-[#d8deea] bg-white p-6 shadow-sm">
+            <div className="mb-6 flex h-12 w-12 items-center justify-center rounded-md bg-[#dcfce7] text-[#15803d]">
+              <ShieldCheck className="h-6 w-6" />
+            </div>
+            <p className="text-sm font-bold uppercase tracking-[0.18em] text-[#15803d]">Step 02</p>
+            <h1 className="mt-3 text-4xl font-black tracking-tight">Create admin operator.</h1>
+            <p className="mt-4 text-sm leading-6 text-[#5e6a7f]">
+              This account becomes the first agency admin. It will own users, clients, projects, invoices,
+              statements, approvals, and workspace settings.
+            </p>
+
+            <div className="mt-8 rounded-md border border-[#d8deea] bg-[#f7f8fb] p-4">
+              <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#5e6a7f]">Pending workspace</p>
+              <h2 className="mt-1 text-2xl font-black">{pendingAgency?.agencyName || "Agency"}</h2>
+              <div className="mt-3 grid gap-2 text-sm text-[#5e6a7f]">
+                <p>{pendingAgency?.agencyEmail}</p>
+                <p>Plan: {pendingAgency?.plan || "FREE"}</p>
+                <p>
+                  {pendingAgency?.timezone || "Africa/Cairo"} / {pendingAgency?.defaultCurrency || "EGP"}
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="rounded-md border border-[#d8deea] bg-white p-5 shadow-sm sm:p-8">
+          <div className="mb-8">
+            <p className="text-xs font-black uppercase tracking-[0.18em] text-[#15803d]">
+              Step 02: Command Access
+            </p>
+            <h2 className="mt-3 text-3xl font-black tracking-tight">Admin Operator</h2>
+            <p className="mt-2 text-sm text-[#5e6a7f]">
+              Establish credentials for{" "}
+              <span className="font-bold text-[#2f6fed]">{pendingAgency?.agencyName || "your agency"}</span>.
+            </p>
+          </div>
+
+          {error && (
+            <div className="mb-5 flex items-start gap-3 rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              <p>{error}</p>
+            </div>
+          )}
+
+          <form onSubmit={handleSubmit} className="space-y-5">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="Full name" icon={UserRound}>
+                <input
+                  name="operatorName"
+                  required
+                  minLength={2}
+                  className="h-11 w-full rounded-md border border-[#d8deea] bg-white px-3 text-sm outline-none transition focus:border-[#2f6fed] focus:ring-2 focus:ring-[#dbe7ff]"
+                  placeholder="Mazen Sanad"
+                />
+              </Field>
+
+              <Field label="Admin email" icon={Mail}>
+                <input
+                  name="operatorEmail"
+                  type="email"
+                  required
+                  className="h-11 w-full rounded-md border border-[#d8deea] bg-white px-3 text-sm outline-none transition focus:border-[#2f6fed] focus:ring-2 focus:ring-[#dbe7ff]"
+                  placeholder="admin@agency.com"
+                />
+              </Field>
+            </div>
+
+            <Field label="Master password">
+              <div className="relative">
+                <input
+                  name="password"
+                  type={showPassword ? "text" : "password"}
+                  required
+                  minLength={8}
+                  className="h-11 w-full rounded-md border border-[#d8deea] bg-white px-3 pr-11 text-sm outline-none transition focus:border-[#2f6fed] focus:ring-2 focus:ring-[#dbe7ff]"
+                  placeholder="Minimum 8 characters"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((value) => !value)}
+                  className="absolute right-2 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-md text-[#5e6a7f] hover:bg-[#f1f4f9]"
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                >
+                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+            </Field>
+
+            <Field label="Confirm password">
+              <input
+                name="confirmPassword"
+                type={showPassword ? "text" : "password"}
+                required
+                minLength={8}
+                className="h-11 w-full rounded-md border border-[#d8deea] bg-white px-3 text-sm outline-none transition focus:border-[#2f6fed] focus:ring-2 focus:ring-[#dbe7ff]"
+                placeholder="Repeat password"
+              />
+            </Field>
+
+            <button
+              disabled={loading || !pendingAgency}
+              className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-md bg-[#2f6fed] text-sm font-bold text-white transition hover:bg-[#245fd2] disabled:opacity-70"
+            >
+              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
+              Finalize Deployment
+            </button>
+          </form>
+        </section>
       </div>
-    </div>
+    </main>
+  );
+}
+
+function Field({
+  label,
+  icon: Icon,
+  children,
+}: {
+  label: string;
+  icon?: React.ElementType;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className="block space-y-2">
+      <span className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.14em] text-[#5e6a7f]">
+        {Icon && <Icon className="h-3.5 w-3.5" />}
+        {label}
+      </span>
+      {children}
+    </label>
   );
 }

@@ -2,14 +2,14 @@
 
 import React, { useEffect, useState, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { 
+import {
   ArrowLeft, Edit3, Trash2, UserCheck, Wallet, ArrowUpRight, ShieldCheck, CalendarPlus, Check, X
 } from "lucide-react";
 
 export default function EmployeeProfile() {
   const { id } = useParams();
   const router = useRouter();
-  
+
   // --- CORE STATES ---
   const [employee, setEmployee] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -23,7 +23,8 @@ export default function EmployeeProfile() {
     name: "",
     role: "CREATIVE",
     userType: "FULL_TIME",
-    salary: 0,
+    baseSalary: 0,
+    efficiencyRate: 1.0,
     email: "",
     password: "",
     verifiedSkills: [] as string[],
@@ -42,7 +43,7 @@ export default function EmployeeProfile() {
     type: "Annual",
   });
 
-  // --- FIXED: INLINE LEAVE EDITING STATES ---
+  // --- INLINE LEAVE EDITING STATES ---
   const [editingLeaveIndex, setEditingLeaveIndex] = useState<number | null>(null);
   const [editLeaveForm, setEditLeaveForm] = useState({
     targetStartDate: "",
@@ -58,20 +59,21 @@ export default function EmployeeProfile() {
       const res = await fetch(`/api/employees/${id}`);
       const data = await res.json();
       setEmployee(data);
-      
+
       setEditForm({
         name: data.name || "",
         role: data.role || "CREATIVE",
         userType: data.userType || "FULL_TIME",
-        salary: data.salary || 0,
+        baseSalary: data.baseSalary || 0,
+        efficiencyRate: data.efficiencyRate ?? 1.0,
         email: data.email || "",
-        password: "", 
+        password: "",
         verifiedSkills: data.verifiedSkills || [],
       });
-    } catch (err) { 
-      console.error("Failed to load employee profile", err); 
-    } finally { 
-      setLoading(false); 
+    } catch (err) {
+      console.error("Failed to load employee profile", err);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -113,7 +115,12 @@ export default function EmployeeProfile() {
     setIsTerminating(true);
     try {
       const res = await fetch(`/api/employees/${id}`, { method: "DELETE" });
-      if (res.ok) router.push("/dashboard/employees"); 
+      if (res.ok) {
+        router.push("/dashboard/employees");
+      } else {
+        const errData = await res.json();
+        alert(errData.error || "Termination failed");
+      }
     } catch (err) {
       console.error("Termination error:", err);
     } finally {
@@ -219,7 +226,7 @@ export default function EmployeeProfile() {
     if (!filteredTasks || filteredTasks.length === 0) {
       return { gross: 0, net: 0 };
     }
-    
+
     const gross = filteredTasks.reduce((acc: number, t: any) => acc + (t.internalCost || 0), 0);
     const net = filteredTasks.reduce((acc: number, t: any) => acc + (t.marginAmount || 0), 0);
 
@@ -231,7 +238,7 @@ export default function EmployeeProfile() {
 
   return (
     <div className="max-w-7xl mx-auto p-4 md:p-8 space-y-8 bg-background min-h-screen text-foreground relative">
-      
+
       {/* HEADER SECTION */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
         <div>
@@ -250,7 +257,7 @@ export default function EmployeeProfile() {
             </div>
           </div>
         </div>
-        
+
         <div className="flex gap-3">
           <button onClick={() => setIsEditing(true)} className="flex items-center gap-2 bg-card border border-border px-5 py-3 rounded-2xl text-[10px] font-black uppercase hover:bg-muted transition-all">
             <Edit3 size={14} /> Edit Profile
@@ -282,7 +289,7 @@ export default function EmployeeProfile() {
         <div className="bg-card border border-border p-6 rounded-[2rem] flex flex-col justify-center">
            <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Efficiency Rating</p>
            <h2 className="text-4xl font-black italic tracking-tighter mt-1 text-blue-600">
-             {employee.salary > 0 ? (financeStats.gross / employee.salary).toFixed(1) : "0.0"}x
+             {employee.baseSalary > 0 ? (financeStats.gross / employee.baseSalary).toFixed(1) : "0.0"}x
            </h2>
         </div>
       </div>
@@ -298,9 +305,15 @@ export default function EmployeeProfile() {
               <Wallet size={14} className="text-primary"/> Financial Wallet
             </h3>
             <div className="space-y-6">
-              <div>
-                <p className="text-[8px] font-black text-muted-foreground uppercase mb-1">Monthly Salary</p>
-                <p className="text-2xl font-black italic tracking-tighter">${employee.salary?.toLocaleString() || "0.00"}</p>
+              <div className="flex justify-between items-start">
+                <div>
+                  <p className="text-[8px] font-black text-muted-foreground uppercase mb-1">Monthly Salary</p>
+                  <p className="text-2xl font-black italic tracking-tighter">${employee.baseSalary?.toLocaleString() || "0.00"}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-[8px] font-black text-muted-foreground uppercase mb-1">Wallet Balance</p>
+                  <p className="text-2xl font-black italic tracking-tighter text-emerald-600">${employee.walletBalance?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || "0.00"}</p>
+                </div>
               </div>
               <div className="pt-4 border-t border-border flex justify-between">
                   <div>
@@ -418,34 +431,31 @@ export default function EmployeeProfile() {
                       <tr className="bg-muted/30 border-b border-border text-[9px] font-black uppercase tracking-widest text-muted-foreground italic">
                         <th className="p-6 pl-8">Date / Type</th>
                         <th className="p-6">Status</th>
-                        <th className="p-6">Check In parameters</th>
-                        <th className="p-6">Check Out parameters</th>
+                        <th className="p-6">Check In</th>
+                        <th className="p-6">Check Out</th>
                         <th className="p-6 text-right pr-8">Total Time</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border/50 font-mono text-xs">
                       {employee.attendanceLogs?.length > 0 ? (
                         employee.attendanceLogs.map((log: any) => {
-                          const formattedDate = new Date(log.date).toLocaleDateString('en-GB', { 
-                            day: '2-digit', 
-                            month: 'short', 
-                            year: 'numeric' 
+                          const formattedDate = new Date(log.date).toLocaleDateString('en-GB', {
+                            day: '2-digit',
+                            month: 'short',
+                            year: 'numeric'
                           });
-                          
+
                           const checkInTime = log.checkInTime ? new Date(log.checkInTime).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : "—";
                           const checkOutTime = log.checkOutTime ? new Date(log.checkOutTime).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : "—";
 
                           return (
                             <tr key={log.id || log._id} className="hover:bg-muted/10 transition-colors group">
-                              {/* DATE & TYPE SPECIFICATION */}
+                              {/* DATE & TYPE */}
                               <td className="p-6 pl-8">
                                 <div className="flex flex-col">
-                                  {/* Explicit Log Date */}
                                   <span className="font-black text-foreground uppercase italic text-[13px] tracking-tight group-hover:text-primary transition-colors">
                                     {formattedDate}
                                   </span>
-                                  
-                                  {/* Fixed Meta Hierarchy: Project Name • Task Type */}
                                   <span className="text-[8px] font-black tracking-widest text-muted-foreground/80 uppercase mt-0.5">
                                     {log.task?.project?.projectName || "Direct Assignment"} • {log.task?.taskType || log.type || "FIELD_TASK"}
                                   </span>
@@ -456,7 +466,7 @@ export default function EmployeeProfile() {
                                 <div className="flex flex-col gap-1.5 items-start">
                                   <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider border ${
                                     log.status === 'COMPLETED' || log.status === 'Present'
-                                      ? 'bg-emerald-500/5 text-emerald-500 border-emerald-500/20' 
+                                      ? 'bg-emerald-500/5 text-emerald-500 border-emerald-500/20'
                                       : 'bg-amber-500/5 text-amber-500 border-amber-500/20'
                                   }`}>
                                     {log.status || "PENDING"}
@@ -509,8 +519,8 @@ export default function EmployeeProfile() {
                         })
                       ) : (
                         <tr>
-                          <td colSpan={5} className="p-20 text-center text-muted-foreground text-[10px] font-black uppercase tracking-widest italic border-2 border-dashed border-border rounded-[2rem] m-4">
-                            No telemetry attendance logs discovered for this personnel record.
+                          <td colSpan={5} className="p-20 text-center text-muted-foreground text-[10px] font-black uppercase tracking-widest italic">
+                            No attendance logs found for this employee.
                           </td>
                         </tr>
                       )}
@@ -620,14 +630,14 @@ export default function EmployeeProfile() {
                                     {/* Show Quick Approval Buttons if Status is Pending */}
                                     {(leave.status === 'Pending' || !leave.status) && (
                                       <div className="flex gap-1.5 border-r border-border pr-3 mr-1">
-                                        <button 
+                                        <button
                                           onClick={() => handleQuickStatusUpdate(leave, "Approved")}
                                           title="Approve Leave"
                                           className="p-1.5 bg-emerald-500/10 hover:bg-emerald-500 hover:text-white rounded-lg text-emerald-600 transition-colors"
                                         >
                                           <Check size={12} className="stroke-[3]" />
                                         </button>
-                                        <button 
+                                        <button
                                           onClick={() => handleQuickStatusUpdate(leave, "Rejected")}
                                           title="Reject Leave"
                                           className="p-1.5 bg-red-500/10 hover:bg-red-500 hover:text-white rounded-lg text-red-600 transition-colors"
@@ -636,7 +646,7 @@ export default function EmployeeProfile() {
                                         </button>
                                       </div>
                                     )}
-                                    <button 
+                                    <button
                                       onClick={() => {
                                         setEditingLeaveIndex(i);
                                         setEditLeaveForm({
@@ -697,15 +707,34 @@ export default function EmployeeProfile() {
                   </select>
                 </div>
                 <div className="space-y-1">
+                  <label className="text-[9px] font-black uppercase text-muted-foreground">Employment Type</label>
+                  <select value={editForm.userType} onChange={(e) => setEditForm({...editForm, userType: e.target.value})} className="w-full bg-muted/30 border border-border p-3 rounded-xl font-bold outline-none">
+                    <option value="FULL_TIME">FULL TIME</option>
+                    <option value="PART_TIME">PART TIME</option>
+                    <option value="FREELANCER">FREELANCER</option>
+                    <option value="INTERN">INTERN</option>
+                  </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
                   <label className="text-[9px] font-black uppercase text-muted-foreground">Monthly Salary</label>
-                  <input type="number" value={editForm.salary} onChange={(e) => setEditForm({...editForm, salary: Number(e.target.value)})} className="w-full bg-muted/30 border border-border p-3 rounded-xl font-bold outline-none" />
+                  <input type="number" value={editForm.baseSalary} onChange={(e) => setEditForm({...editForm, baseSalary: Number(e.target.value)})} className="w-full bg-muted/30 border border-border p-3 rounded-xl font-bold outline-none" />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[9px] font-black uppercase text-muted-foreground">Efficiency Rate</label>
+                  <input type="number" step="0.1" value={editForm.efficiencyRate} onChange={(e) => setEditForm({...editForm, efficiencyRate: Number(e.target.value)})} className="w-full bg-muted/30 border border-border p-3 rounded-xl font-bold outline-none" />
                 </div>
               </div>
               <div className="space-y-1">
+                <label className="text-[9px] font-black uppercase text-muted-foreground">New Password (leave blank to keep current)</label>
+                <input type="password" value={editForm.password} onChange={(e) => setEditForm({...editForm, password: e.target.value})} className="w-full bg-muted/30 border border-border p-3 rounded-xl font-bold outline-none" placeholder="••••••••" />
+              </div>
+              <div className="space-y-1">
                 <label className="text-[9px] font-black uppercase text-muted-foreground">Verified Skills (Comma separated)</label>
-                <textarea 
-                  value={editForm.verifiedSkills.join(", ")} 
-                  onChange={(e) => setEditForm({...editForm, verifiedSkills: e.target.value.split(",").map(s => s.trim())})}
+                <textarea
+                  value={editForm.verifiedSkills.join(", ")}
+                  onChange={(e) => setEditForm({...editForm, verifiedSkills: e.target.value.split(",").map(s => s.trim()).filter(Boolean)})}
                   className="w-full bg-muted/30 border border-border p-3 rounded-xl font-bold outline-none min-h-[80px]"
                 />
               </div>

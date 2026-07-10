@@ -1,6 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
     provider = "prisma-client-js"
 }
@@ -11,8 +8,55 @@ datasource db {
 }
 
 // --------------------------------------
-// 1. Identity & SaaS Multi-Tenancy
+// 1. Enums & Embedded Types
 // --------------------------------------
+enum VendorStatus {
+    ACTIVE
+    INACTIVE
+    BLACKLISTED
+}
+
+enum TaskFrequency {
+    DAILY
+    WEEKLY
+    BI_WEEKLY
+    MONTHLY
+    QUARTERLY
+    YEARLY
+}
+
+enum BriefStatus {
+    DRAFT
+    PENDING_CLIENT_APPROVAL
+    APPROVED
+    REVISIONS_REQUIRED
+}
+
+// Status of payment specifically for a task's deliverables
+enum TaskPaymentStatus {
+    UNPAID
+    PARTIALLY_PAID
+    PAID
+    WAIVED
+}
+
+// Status of an Asset's availability
+enum AssetStatus {
+    AVAILABLE
+    IN_USE
+    MAINTENANCE
+    RETIRED
+    LOST
+}
+
+// Status for general Agency Expenses
+enum ExpenseStatus {
+    DRAFT
+    PENDING_APPROVAL
+    APPROVED
+    PAID
+    REJECTED
+}
 
 enum SubscriptionPlan {
     FREE
@@ -28,113 +72,40 @@ enum SubscriptionStatus {
     UNPAID
 }
 
-model Agency {
-    id           String  @id @default(cuid()) @map("_id")
-    agencyNo     String?
-    agencyName   String
-    operatorName String?
-    email        String? @unique
-
-    // --- BILLING INFO ---
-    stripeCustomerId String? // Stripe Customer ID
-    hasPaymentMethod Boolean @default(false) // UI: "Card Linked" status
-    billingAddress   String? // For Invoice Generation
-
-    latitude  Float? // Office Location
-    longitude Float? // Office Location
-    radius    Int    @default(100) // Meters allowed for check-in
-
-    address String? // UI: Physical address in Hurghada
-
-    // Office Schedule
-    workingHours WorkingDay[]
-
-    subscription Subscription?
-    users        User[]
-    projects     Project[]
-    clients      Client[]
-    assets       Asset[]
-    expenses     Expense[]
-    payments     Payment[]
-
-    createdAt      DateTime        @default(now())
-    updatedAt      DateTime        @updatedAt
-    payouts        Payout[]
-    attendanceLogs AttendanceLog[]
-    tasks          Task[]
-    taskExpenses   TaskExpense[]
-    comments       Comment[]
-    notifications  Notification[]
-    agencyInvoices AgencyInvoice[]
-    todos          Todo[]
-}
-
-type WorkingDay {
-    day       String // "Monday", "Tuesday", etc.
-    openTime  String // "09:00"
-    closeTime String // "17:00"
-    isClosed  Boolean @default(false)
-}
-
-model Subscription {
-    id       String             @id @default(cuid()) @map("_id")
-    agencyId String             @unique
-    agency   Agency             @relation(fields: [agencyId], references: [id])
-    plan     SubscriptionPlan   @default(FREE)
-    status   SubscriptionStatus @default(TRIALING)
-
-    // --- STRIPE / PAYMENT SYNC ---
-    stripeSubscriptionId String? // The ID of the recurring sub in Stripe
-    stripePriceId        String? // To track which specific price they are paying
-
-    // Billing Period Tracking
-    currentPeriodStart DateTime? // When the current month started
-    currentPeriodEnd   DateTime? // When the next payment is due
-    cancelAtPeriodEnd  Boolean   @default(false) // If they turned off auto-renew
-
-    // Business Logic Limits
-    maxUsers       Int     @default(5)
-    maxProjects    Int     @default(50)
-    hasAssetAccess Boolean @default(false)
-
-    // Feature Gates
-    geoFencingEnabled Boolean @default(false)
-    advancedReporting Boolean @default(false)
-    hasGeoTracking    Boolean @default(false)
-    hasNotifications  Boolean @default(true)
-
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
-}
-
-enum InvoiceType {
+enum AgencyInvoiceType {
     SUBSCRIPTION
     BUNDLE
     ADDON
 }
 
-model AgencyInvoice {
-    id       String      @id @default(cuid()) @map("_id")
-    agencyId String
-    agency   Agency      @relation(fields: [agencyId], references: [id])
-    type     InvoiceType @default(SUBSCRIPTION)
-
-    amount          Float // e.g., 99.00
-    currency        String  @default("USD")
-    status          String // "PAID", "OPEN", "VOID"
-    stripeInvoiceId String? @unique
-    pdfUrl          String? // Link to the Stripe hosted invoice
-
-    plan        SubscriptionPlan
-    periodStart DateTime
-    periodEnd   DateTime
-
-    createdAt DateTime @default(now())
+enum AgencyInvoiceStatus {
+    PAID
+    OPEN
+    VOID
+    PENDING
+    CANCELED
 }
 
-// --------------------------------------
-// 2. Users & HR
-// --------------------------------------
+enum ClientInvoiceType {
+    PROJECT_BASED
+    RETAINER
+    ADDON
+    MILESTONE
+}
+
+enum InvoiceStatus {
+    DRAFT
+    SENT
+    PARTIALLY_PAID
+    PAID
+    OVERDUE
+    VOID
+}
+
+enum RelationshipType {
+    ONE_TIME
+    RECURRING
+}
 
 enum UserType {
     FULL_TIME
@@ -147,125 +118,87 @@ enum UserRole {
     SUPERADMIN
     ADMIN
     OPERATOR
+    TEAMLEADER
     CREATIVE
+    FINANCE
+    CLIENT
 }
 
-type Leave {
-    startDate  DateTime?
-    endDate    DateTime?
-    type       String
-    status     String    @default("PENDING")
-    reason     String?
-    agencyId   String?
-    approvedBy String? // Store the name or ID of the manager
-    updatedAt  DateTime  @default(now())
-    createdAt  DateTime  @default(now())
+enum TransactionType {
+    COMMISSION
+    OVERTIME
+    BONUS
+    DEDUCTION_ABSENT
+    DEDUCTION_LATE
+    SALARY
+    EXPENSE_REIMBURSEMENT
 }
 
-model AttendanceLog {
-    id           String    @id @default(cuid()) @map("_id")
-    date         DateTime  @default(now())
-    checkInTime  DateTime
-    checkOutTime DateTime?
-    status       String
-    userId       String
-    user         User      @relation(fields: [userId], references: [id])
-
-    type AttendanceType @default(OFFICE)
-
-    isLate          Boolean @default(false)
-    checkInLocation String? // "OFFICE", "FIELD_TASK", "REMOTE"
-
-    agencyId String
-    agency   Agency @relation(fields: [agencyId], references: [id])
-
-    taskId String? @map("taskId")
-    task   Task?   @relation(fields: [taskId], references: [id])
-
-    // Geo-Validation
-    checkInLat  Float?
-    checkInLng  Float?
-    checkOutLat Float?
-    checkOutLng Float?
-
-    totalHours Float? // Calculated on check-out
-
-    createdAt DateTime @default(now())
+enum TransactionStatus {
+    PENDING
+    APPROVED
+    PAID
+    CANCELLED
 }
 
-enum AttendanceType {
+enum AttendanceLogStatus {
+    PRESENT
+    LATE_CHECKIN
+    EARLY_CHECKOUT
+    ABSENT
+    OFF
+    OUT_OF_OFFICE
+}
+
+enum AttendanceLogType {
     OFFICE
+    REMOTE
     FIELD_TASK
 }
 
-// --------------------------------------
-// 3. Client & Project Management
-// --------------------------------------
+enum TaskSessionType {
+    STANDARD
+    AFTER_HOURS
+}
 
-enum InvoiceStatus {
+enum ProjectStatus {
     DRAFT
-    SENT
-    PARTIALLY_PAID
-    PAID
-    OVERDUE
-    VOID
-}
-
-model Client {
-    id          String  @id @default(cuid()) @map("_id")
-    clientNo    String?
-    clientName  String
-    accountType String
-    status      String
-
-    agencyId String
-    agency   Agency @relation(fields: [agencyId], references: [id])
-
-    projects Project[]
-    payments Payment[]
-
-    createdAt DateTime @default(now())
-}
-
-model Project {
-    id             String   @id @default(cuid()) @map("_id")
-    projectNo      String?
-    projectName    String
-    targetDeadline DateTime
-    status         String
-    projectStory   String?
-    cloudLink      String?
-
-    // FINANCIAL DATA (The Invoice Part)
-    totalValue    Float // This IS the invoice amount (The DEBIT)
-    invoiceNo     String? // Optional: For professional tracking like "INV-101"
-    invoiceStatus InvoiceStatus @default(DRAFT) // UI: "In Production", "Paid", "Overdue"
-
-    agencyId String
-    agency   Agency @relation(fields: [agencyId], references: [id])
-
-    clientId String
-    client   Client @relation(fields: [clientId], references: [id])
-
-    tasks Task[]
-
-    createdAt    DateTime      @default(now())
-    updatedAt    DateTime      @updatedAt
-    taskExpenses TaskExpense[]
-}
-
-// --------------------------------------
-// 4. Production & Rentals
-// --------------------------------------
-
-enum TaskStatus {
-    PENDING
     ACTIVE
+    ON_HOLD
+    COMPLETED
+    CANCELLED
+    ARCHIVED
+}
+
+enum CampaignStatus {
+    PLANNED
+    ACTIVE
+    PAUSED
     COMPLETED
     CANCELLED
 }
 
-// ─── NEW ENUMS FOR OUT OF HOURS OPERATIONS ─────────────────────────────────
+enum ContractStatus {
+    DRAFT
+    ACTIVE
+    EXPIRED
+    CANCELLED
+}
+
+enum TaskStatus {
+    PENDING
+    ACTIVE
+    IN_REVIEW
+    COMPLETED
+    CANCELLED
+}
+
+enum TaskPriority {
+    LOW
+    MEDIUM
+    HIGH
+    URGENT
+}
 
 enum CompensationType {
     NONE
@@ -278,72 +211,6 @@ enum AttendanceDeduction {
     DEDUCT_DAY
 }
 
-model Task {
-    id            String     @id @default(cuid()) @map("_id")
-    taskNo        String?
-    taskType      String
-    progress      Int        @default(0)
-    status        TaskStatus @default(PENDING)
-    actualHours   Float      @default(0.0)
-    paymentStatus String     @default("Pending")
-
-    // UI: FINANCIALS PER DEPT
-
-    totalInvoice  Float @default(0.0)
-    internalCost  Float @default(0.0) // UI: "GROSS REVENUE ($)"
-    margin        Float @default(30.0) // UI: "MARGIN (%)"
-    marginAmount  Float @default(0.0) // Calculation: (internalCost * margin) / 100
-    taskNetProfit Float @default(0.0)
-    realCost      Float @default(0.0)
-
-    // UI: TIMELINE
-
-    startDate DateTime // UI: "DEPLOYMENT START"
-    endDate   DateTime // UI: "PROJECT CONCLUSION"
-
-    // UI: SCOPE & DELIVERABLES
-
-    description String?
-
-    priority   String  @default("MEDIUM") // "URGENT", "HIGH", "MEDIUM"
-    isNotified Boolean @default(false) // To prevent spamming alerts
-
-    // NEW: Geofencing for the specific Shoot
-
-    locationName String? // e.g., "Steigenberger Al Dau"
-    latitude     Float?
-    longitude    Float?
-    radius       Int     @default(200) // Meters allowed for "Arrived" status
-
-    // Tracking the Time Spent on this specific location
-
-    arrivalAt   DateTime?
-    departureAt DateTime?
-
-    // NEW: Administrative Flags for Out of Office Working Hours
-    isOutOfWorkingHours  Boolean             @default(false) // UI: Triggers when clicking "Out Working Time"
-    compensationStrategy CompensationType    @default(NONE) // UI: Option to pay "Overtime" or "Commission"
-    deductionStrategy    AttendanceDeduction @default(NONE) // UI: Option to "Deduct Day" if they skip the office
-
-    // RELATIONS
-    projectId   String
-    project     Project  @relation(fields: [projectId], references: [id])
-    assigneeIds String[] @map("assigneeIds")
-    assignees   User[]   @relation(fields: [assigneeIds], references: [id])
-    assetIds    String[]
-    assets      Asset[]  @relation(fields: [assetIds], references: [id])
-    agencyId    String
-    agency      Agency   @relation(fields: [agencyId], references: [id])
-
-    taskExpenses          TaskExpense[]
-    comments              Comment[]
-    lastUpdateTimestamp   DateTime               @updatedAt
-    createdAt             DateTime               @default(now())
-    attendanceLogs        AttendanceLog[]
-    todos                 Todo[]
-    financialTransactions FinancialTransaction[]
-}
-
 enum TaskExpenseCategory {
     EQUIPMENT
     LOCATION
@@ -351,25 +218,1040 @@ enum TaskExpenseCategory {
     CATERING
     TALENT
     RENTAL
+    SOFTWARE
+    PERMITS
+    PRODUCTION
+    OTHER
 }
 
-model TaskExpense {
-    id          String              @id @default(cuid()) @map("_id")
-    itemName    String // UI: "Camera Rental", "Location Fee", "Lunch"
-    cost        Float // UI: "Cost $"
-    category    TaskExpenseCategory @default(EQUIPMENT)
+enum PlannedExpenseStatus {
+    DRAFT
+    APPROVED
+    REJECTED
+    CONVERTED
+}
+
+enum ActualExpenseStatus {
+    PENDING
+    APPROVED
+    REIMBURSED
+    REJECTED
+}
+
+enum PaymentMethod {
+    CASH
+    BANK_TRANSFER
+    CARD
+    STRIPE
+    CHECK
+    OTHER
+}
+
+enum PaymentStatus {
+    PENDING
+    COMPLETED
+    FAILED
+    REFUNDED
+}
+
+enum PaymentAllocationStatus {
+    APPLIED
+    REVERSED
+}
+
+enum ClientStatementStatus {
+    DRAFT
+    ISSUED
+    VOID
+}
+
+enum StatementLineType {
+    OPENING_BALANCE
+    INVOICE
+    PAYMENT
+    CREDIT
+    DEBIT
+    ADJUSTMENT
+}
+
+enum ReportingPeriodStatus {
+    OPEN
+    CLOSED
+    LOCKED
+}
+
+enum NotificationType {
+    DEADLINE
+    ASSIGNMENT
+    COMMENT
+    APPROVAL
+    INVOICE
+    PAYMENT
+    SYSTEM
+}
+
+enum AuditAction {
+    CREATE
+    UPDATE
+    DELETE
+    LOGIN
+    APPROVE
+    REJECT
+    EXPORT
+    PASSWORD_CHANGE
+    PAYOUT_TRIGGERED
+}
+
+// ---- NEW ENUMS (added) ----
+
+enum CreditNoteReason {
+    REFUND
+    DISCOUNT
+    CORRECTION
+    GOODWILL
+    OTHER
+}
+
+enum CreditNoteStatus {
+    DRAFT
+    ISSUED
+    APPLIED
+    VOID
+}
+
+enum RecurringInvoiceFrequency {
+    WEEKLY
+    MONTHLY
+    QUARTERLY
+    YEARLY
+}
+
+enum CouponDiscountType {
+    PERCENTAGE
+    FIXED_AMOUNT
+}
+
+enum PerformanceReviewStatus {
+    DRAFT
+    SUBMITTED
+    ACKNOWLEDGED
+}
+
+enum AnnouncementAudience {
+    ALL_STAFF
+    DEPARTMENT
+    SPECIFIC_USERS
+}
+
+enum EmailStatus {
+    QUEUED
+    SENT
+    DELIVERED
+    BOUNCED
+    FAILED
+}
+
+enum ApprovalEntityType {
+    TASK_PLANNED_EXPENSE
+    TASK_EXPENSE
+    EXPENSE
+    CLIENT_INVOICE
+    PAYOUT
+    LEAVE
+    CONTRACT
+}
+
+enum ApprovalStatus {
+    PENDING
+    APPROVED
+    REJECTED
+    CANCELLED
+}
+
+type WorkingDay {
+    day       String
+    openTime  String
+    closeTime String
+    isClosed  Boolean @default(false)
+}
+
+type Leave {
+    startDate  DateTime?
+    endDate    DateTime?
+    type       String
+    status     String    @default("PENDING")
+    reason     String?
+    agencyId   String?
+    approvedBy String?
+    updatedAt  DateTime  @default(now())
+    createdAt  DateTime  @default(now())
+}
+
+type Address {
+    line1      String?
+    line2      String?
+    city       String?
+    state      String?
+    postalCode String?
+    country    String?
+}
+
+// --------------------------------------
+// 2. Identity & SaaS Multi-Tenancy
+// --------------------------------------
+
+model Agency {
+    id              String   @id @default(cuid()) @map("_id")
+    agencyNo        String?
+    agencyName      String
+    operatorName    String?
+    email           String?  @unique
+    phoneNumber     String?
+    field           String?
+    website         String?
+    logoUrl         String?
+    timezone        String   @default("Africa/Cairo")
+    defaultCurrency String   @default("EGP")
+    billingAddress  String?
+    address         String?
+    addressDetails  Address?
+
+    stripeCustomerId String?
+    hasPaymentMethod Boolean @default(false)
+
+    latitude     Float?
+    longitude    Float?
+    radius       Int          @default(100)
+    workingHours WorkingDay[]
+
+    subscription       Subscription?
+    agencyInvoices     AgencyInvoice[]
+    users              User[]
+    departments        Department[]
+    clients            Client[]
+    clientContacts     ClientContact[]
+    projects           Project[]
+    campaigns          Campaign[]
+    contracts          Contract[]
+    taskCategories     TaskCategory[]
+    tasks              Task[]
+    plannedExpenses    TaskPlannedExpense[]
+    taskExpenses       TaskExpense[]
+    assets             Asset[]
+    expenses           Expense[]
+    payments           Payment[]
+    paymentAllocations PaymentAllocation[]
+    clientInvoices     ClientInvoice[]
+    clientStatements   ClientStatement[]
+    reportingPeriods   ReportingPeriod[]
+    vendors            Vendor[]
+    payouts            Payout[]
+    attendanceLogs     AttendanceLog[]
+    comments           Comment[]
+    notifications      Notification[]
+    todos              Todo[]
+    attachments        Attachment[]
+    auditLogs          AuditLog[]
+    invitations        Invitation[]
+    apiKeys            ApiKey[]
+
+    createdAt     DateTime       @default(now())
+    updatedAt     DateTime       @updatedAt
+    deletedAt     DateTime?
+    webhooks      Webhook[]
+    clientBudgets ClientBudget[]
+
+    // ---- NEW relations (added) ----
+    exchangeRates             ExchangeRate[]
+    creditNotes               CreditNote[]
+    recurringInvoiceSchedules RecurringInvoiceSchedule[]
+    holidays                  Holiday[]
+    performanceReviews        PerformanceReview[]
+    tags                      Tag[]
+    announcements             Announcement[]
+    emailLogs                 EmailLog[]
+    clientFeedback            ClientFeedback[]
+    approvalRequests          ApprovalRequest[]
+    coupons                   Coupon[]
+
+    @@index([agencyName])
+}
+
+model Subscription {
+    id       String             @id @default(cuid()) @map("_id")
+    agencyId String             @unique
+    agency   Agency             @relation(fields: [agencyId], references: [id])
+    plan     SubscriptionPlan   @default(FREE)
+    status   SubscriptionStatus @default(TRIALING)
+
+    stripeSubscriptionId String?
+    stripePriceId        String?
+    currentPeriodStart   DateTime?
+    currentPeriodEnd     DateTime?
+    cancelAtPeriodEnd    Boolean   @default(false)
+
+    // ---- NEW: coupon applied to this subscription (added) ----
+    couponId String?
+    coupon   Coupon? @relation(fields: [couponId], references: [id])
+
+    maxUsers          Int     @default(5)
+    maxProjects       Int     @default(50)
+    hasAssetAccess    Boolean @default(false)
+    geoFencingEnabled Boolean @default(false)
+    advancedReporting Boolean @default(false)
+    hasGeoTracking    Boolean @default(false)
+    hasNotifications  Boolean @default(true)
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+}
+
+model AgencyInvoice {
+    id              String              @id @default(cuid()) @map("_id")
+    agencyId        String
+    agency          Agency              @relation(fields: [agencyId], references: [id])
+    type            AgencyInvoiceType   @default(SUBSCRIPTION)
+    amount          Float
+    currency        String              @default("EGP")
+    status          AgencyInvoiceStatus @default(PENDING)
+    stripeInvoiceId String?             @unique
+    pdfUrl          String?
+    plan            SubscriptionPlan
+    periodStart     DateTime
+    periodEnd       DateTime
+    createdAt       DateTime            @default(now())
+
+    @@index([agencyId, createdAt])
+}
+
+// ---- NEW model: platform-level discount coupons for SaaS billing (added) ----
+model Coupon {
+    id             String             @id @default(cuid()) @map("_id")
+    code           String             @unique
+    description    String?
+    discountType   CouponDiscountType @default(PERCENTAGE)
+    discountValue  Float
+    appliesToPlan  SubscriptionPlan?
+    maxRedemptions Int?
+    timesRedeemed  Int                @default(0)
+    validFrom      DateTime           @default(now())
+    validUntil     DateTime?
+    isActive       Boolean            @default(true)
+
+    // Coupons are platform-level, but we track which agency created/owns a
+    // referral-style coupon, if applicable.
+    agencyId      String?
+    agency        Agency?        @relation(fields: [agencyId], references: [id])
+    subscriptions Subscription[]
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@index([isActive, validUntil])
+}
+
+model Invitation {
+    id         String    @id @default(cuid()) @map("_id")
+    email      String
+    role       UserRole  @default(CREATIVE)
+    tokenHash  String    @unique
+    expiresAt  DateTime
+    acceptedAt DateTime?
+    agencyId   String
+    sentById   String?
+    sentBy     User?     @relation("InvitationsSent", fields: [sentById], references: [id])
+    agency     Agency    @relation(fields: [agencyId], references: [id])
+    createdAt  DateTime  @default(now())
+    user       User?     @relation("InvitationsAccepted", fields: [userId], references: [id])
+    userId     String?
+
+    @@unique([agencyId, email])
+}
+
+model ApiKey {
+    id      String @id @default(cuid()) @map("_id")
+    name    String // e.g., "Zapier Integration", "Slack Bot"
+    keyHash String @unique
+
+    // Security & Usage
+    scopes    String[] @default(["read:tasks"]) // Permissions (read/write/delete)
+    rateLimit Int      @default(100) // Max requests per minute
+
+    lastUsedAt    DateTime?
+    expiresAt     DateTime?
+    revokedAt     DateTime?
+    revokedReason String?
+
+    agencyId  String
+    agency    Agency   @relation(fields: [agencyId], references: [id])
+    createdAt DateTime @default(now())
+}
+
+// ---- NEW models: auth session security (added) ----
+
+model RefreshToken {
+    id        String    @id @default(cuid()) @map("_id")
+    tokenHash String    @unique
+    userId    String
+    user      User      @relation(fields: [userId], references: [id])
+    expiresAt DateTime
+    revokedAt DateTime?
+    ipAddress String?
+    userAgent String?
+    createdAt DateTime  @default(now())
+
+    @@index([userId])
+}
+
+model PasswordResetToken {
+    id        String    @id @default(cuid()) @map("_id")
+    tokenHash String    @unique
+    userId    String
+    user      User      @relation(fields: [userId], references: [id])
+    expiresAt DateTime
+    usedAt    DateTime?
+    createdAt DateTime  @default(now())
+
+    @@index([userId])
+}
+
+// --------------------------------------
+// 3. Users & HR
+// --------------------------------------
+
+model Department {
+    id             String         @id @default(cuid()) @map("_id")
+    name           String
+    agencyId       String
+    agency         Agency         @relation(fields: [agencyId], references: [id])
+    users          User[]
+    createdAt      DateTime       @default(now())
+    updatedAt      DateTime       @updatedAt
+    taskCategories TaskCategory[]
+
+    @@unique([agencyId, name])
+}
+
+model User {
+    id             String    @id @default(cuid()) @map("_id")
+    userNo         String?
+    name           String
+    email          String    @unique
+    password       String?
+    avatarUrl      String?
+    phoneNumber    String?
+    userType       UserType  @default(FULL_TIME)
+    role           UserRole  @default(CREATIVE)
+    baseSalary     Float?    @default(0.0)
+    walletBalance  Float     @default(0.0)
+    verifiedSkills String[]
+    efficiencyRate Float?    @default(1.0)
+    leaves         Leave[]
+    isActive       Boolean   @default(true)
+    lastLoginAt    DateTime?
+
+    // ---- NEW: security fields (added) ----
+    twoFactorEnabled Boolean @default(false)
+    twoFactorSecret  String?
+
+    // ---- NEW: client-portal linkage. Users with role = CLIENT can be tied
+    // to the Client record they represent, scoping their portal access. (added)
+    clientId String?
+    client   Client? @relation("ClientPortalUsers", fields: [clientId], references: [id])
+
+    agencyId     String
+    agency       Agency      @relation(fields: [agencyId], references: [id])
+    departmentId String?
+    department   Department? @relation(fields: [departmentId], references: [id])
+
+    taskIds String[] @map("taskIds")
+    tasks   Task[]   @relation("TaskAssignees", fields: [taskIds], references: [id])
+
+    attendanceLogs  AttendanceLog[]
+    comments        Comment[]
+    financialLedger FinancialTransaction[]
+    payouts         Payout[]
+    expenses        Expense[]
+    notifications   Notification[]
+    taskSessions    TaskSession[]
+    createdTodos    Todo[]                 @relation("TodoCreator")
+    attachments     Attachment[]
+    auditLogs       AuditLog[]
+
+    createdAt           DateTime     @default(now())
+    updatedAt           DateTime     @updatedAt
+    deletedAt           DateTime?
+    invitationsSent     Invitation[] @relation("InvitationsSent")
+    invitationsAccepted Invitation[] @relation("InvitationsAccepted")
+
+    // ---- NEW relations (added) ----
+    refreshTokens         RefreshToken[]
+    passwordResetTokens   PasswordResetToken[]
+    reviewsReceived       PerformanceReview[]  @relation("ReviewedUser")
+    reviewsGiven          PerformanceReview[]  @relation("ReviewerUser")
+    announcementsAuthored Announcement[]
+    approvalRequestsMade  ApprovalRequest[]    @relation("ApprovalRequester")
+    approvalDecisionsMade ApprovalRequest[]    @relation("ApprovalDecider")
+
+    @@index([agencyId, role])
+    @@index([agencyId, isActive])
+    @@index([clientId])
+}
+
+model FinancialTransaction {
+    id          String            @id @default(cuid()) @map("_id")
+    type        TransactionType
+    status      TransactionStatus @default(PENDING)
+    amount      Float
+    currency    String            @default("EGP")
     description String?
 
-    taskId String
-    task   Task   @relation(fields: [taskId], references: [id])
+    userId String
+    user   User    @relation(fields: [userId], references: [id])
+    taskId String?
+    task   Task?   @relation(fields: [taskId], references: [id])
 
-    projectId String
-    project   Project @relation(fields: [projectId], references: [id])
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@index([userId, status])
+    @@index([taskId])
+}
+
+model AttendanceLog {
+    id           String              @id @default(cuid()) @map("_id")
+    date         DateTime
+    checkInTime  DateTime
+    checkOutTime DateTime?
+    isLate       Boolean             @default(false)
+    isEarlyOut   Boolean             @default(false)
+    totalHours   Float?
+    status       AttendanceLogStatus @default(PRESENT)
+    type         AttendanceLogType   @default(OFFICE)
+
+    userId   String
+    user     User    @relation(fields: [userId], references: [id])
+    agencyId String
+    agency   Agency  @relation(fields: [agencyId], references: [id])
+    taskId   String?
+    task     Task?   @relation(fields: [taskId], references: [id])
+
+    taskSessions TaskSession[]
+    createdAt    DateTime      @default(now())
+    updatedAt    DateTime      @updatedAt
+
+    @@unique([userId, date])
+    @@index([agencyId, date])
+}
+
+model TaskSession {
+    id            String          @id @default(cuid()) @map("_id")
+    startTime     DateTime
+    endTime       DateTime?
+    totalDuration Float?
+    sessionType   TaskSessionType @default(STANDARD)
+
+    taskId          String
+    task            Task           @relation(fields: [taskId], references: [id])
+    userId          String
+    user            User           @relation(fields: [userId], references: [id])
+    attendanceLogId String?
+    attendanceLog   AttendanceLog? @relation(fields: [attendanceLogId], references: [id])
+
+    isBillable Boolean @default(true)
+    hourlyRate Float? // If the specific session is billed at a custom rate
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@index([taskId, userId])
+}
+
+model Payout {
+    id          String   @id @default(cuid()) @map("_id")
+    payoutNo    String?
+    amount      Float
+    currency    String   @default("EGP")
+    category    String
+    status      String   @default("PAID")
+    date        DateTime @default(now())
+    description String?
+
+    userId   String
+    user     User   @relation(fields: [userId], references: [id])
+    agencyId String
+    agency   Agency @relation(fields: [agencyId], references: [id])
+
+    createdAt DateTime @default(now())
+
+    @@index([agencyId, date])
+    @@index([userId])
+}
+
+// ---- NEW models: HR completeness (added) ----
+
+model Holiday {
+    id                String   @id @default(cuid()) @map("_id")
+    name              String
+    date              DateTime
+    isRecurringYearly Boolean  @default(false)
+    isPaid            Boolean  @default(true)
 
     agencyId String
     agency   Agency @relation(fields: [agencyId], references: [id])
 
     createdAt DateTime @default(now())
+
+    @@unique([agencyId, name, date])
+    @@index([agencyId, date])
+}
+
+model PerformanceReview {
+    id           String                  @id @default(cuid()) @map("_id")
+    periodStart  DateTime
+    periodEnd    DateTime
+    overallScore Float?
+    strengths    String?
+    improvements String?
+    goals        String?
+    status       PerformanceReviewStatus @default(DRAFT)
+
+    userId     String
+    user       User    @relation("ReviewedUser", fields: [userId], references: [id])
+    reviewerId String?
+    reviewer   User?   @relation("ReviewerUser", fields: [reviewerId], references: [id])
+    agencyId   String
+    agency     Agency  @relation(fields: [agencyId], references: [id])
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@index([userId, periodStart])
+    @@index([agencyId])
+}
+
+// --------------------------------------
+// 4. Clients, Projects, Campaigns & Contracts, Client Budget
+// --------------------------------------
+
+model Client {
+    id               String           @id @default(cuid()) @map("_id")
+    clientNo         String?
+    clientName       String
+    accountType      String?
+    status           String           @default("ACTIVE")
+    relationshipType RelationshipType @default(ONE_TIME)
+    email            String?
+    phoneNumber      String?
+    website          String?
+    billingAddress   Address?
+    notes            String?
+
+    // ---- NEW: outstanding-balance credit control (added) ----
+    // Null creditLimit = no cap enforced. outstandingBalance is a denormalized
+    // cache (sum of unpaid/overdue ClientInvoice.balanceDue minus unapplied
+    // credit) kept in sync by application logic whenever invoices, payments,
+    // or credit notes change, so it can be checked cheaply before creating
+    // new invoices/projects without an aggregation query on every request.
+    creditLimit         Float?
+    outstandingBalance  Float   @default(0.0)
+    isOnCreditHold      Boolean @default(false)
+    creditHoldReason    String?
+    creditLimitAlertPct Float?  @default(90.0) // warn when balance hits this % of the limit
+
+    agencyId String
+    agency   Agency @relation(fields: [agencyId], references: [id])
+
+    contacts           ClientContact[]
+    contracts          Contract[]
+    projects           Project[]
+    campaigns          Campaign[]
+    clientInvoices     ClientInvoice[]
+    payments           Payment[]
+    paymentAllocations PaymentAllocation[]
+    statements         ClientStatement[]
+
+    createdAt     DateTime       @default(now())
+    updatedAt     DateTime       @updatedAt
+    deletedAt     DateTime?
+    clientBudgets ClientBudget[]
+
+    // ---- NEW relations (added) ----
+    // Client-side portal users (role = CLIENT) who can log in and see
+    // their own projects, invoices and statements.
+    portalUsers               User[]                     @relation("ClientPortalUsers")
+    creditNotes               CreditNote[]
+    recurringInvoiceSchedules RecurringInvoiceSchedule[]
+    feedback                  ClientFeedback[]
+
+    @@index([agencyId, clientNo])
+    @@index([agencyId, clientName])
+    @@index([agencyId, isOnCreditHold])
+}
+
+model ClientBudget {
+    id              String @id @default(cuid()) @map("_id")
+    totalAmount     Float // Total authorized budget
+    spentAmount     Float  @default(0.0) // Automated aggregation
+    remainingAmount Float // totalAmount - spentAmount
+
+    currency    String   @default("USD")
+    periodStart DateTime
+    periodEnd   DateTime
+
+    isActive Boolean @default(true)
+
+    clientId String
+    client   Client @relation(fields: [clientId], references: [id])
+
+    agencyId String
+    agency   Agency @relation(fields: [agencyId], references: [id])
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@index([clientId, isActive])
+}
+
+model ReportingPeriod {
+    id          String                @id @default(cuid()) @map("_id")
+    name        String
+    periodStart DateTime
+    periodEnd   DateTime
+    status      ReportingPeriodStatus @default(OPEN)
+    closedAt    DateTime?
+
+    agencyId String
+    agency   Agency @relation(fields: [agencyId], references: [id])
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@unique([agencyId, name])
+    @@index([agencyId, periodStart, periodEnd])
+}
+
+model ClientContact {
+    id          String   @id @default(cuid()) @map("_id")
+    name        String
+    title       String?
+    email       String?
+    phoneNumber String?
+    isPrimary   Boolean  @default(false)
+    clientId    String
+    client      Client   @relation(fields: [clientId], references: [id])
+    agencyId    String
+    agency      Agency   @relation(fields: [agencyId], references: [id])
+    createdAt   DateTime @default(now())
+    updatedAt   DateTime @updatedAt
+
+    @@index([clientId])
+}
+
+model Contract {
+    id           String         @id @default(cuid()) @map("_id")
+    contractNo   String?
+    name         String
+    status       ContractStatus @default(ACTIVE)
+    startDate    DateTime?
+    endDate      DateTime?
+    monthlyValue Float?
+    currency     String         @default("EGP")
+    termsUrl     String?
+
+    clientId        String
+    client          Client                    @relation(fields: [clientId], references: [id])
+    agencyId        String
+    agency          Agency                    @relation(fields: [agencyId], references: [id])
+    taskDefinitions RecurringTaskDefinition[]
+    projects        Project[]
+    tasks           Task[]
+
+    // ---- NEW relation (added) ----
+    recurringInvoiceSchedules RecurringInvoiceSchedule[]
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@index([agencyId, contractNo])
+    @@index([clientId, status])
+}
+
+model RecurringTaskDefinition {
+    id             String        @id @default(cuid()) @map("_id")
+    contractId     String
+    contract       Contract      @relation(fields: [contractId], references: [id])
+    title          String
+    description    String?
+    frequency      TaskFrequency @default(MONTHLY)
+    countPerPeriod Int
+    categoryId     String?
+    category       TaskCategory? @relation(fields: [categoryId], references: [id])
+    plannedCost    Float         @default(0.0)
+    plannedRevenue Float         @default(0.0)
+    nextOccurrence DateTime      @default(now())
+    timeZone       String        @default("UTC")
+    isActive       Boolean       @default(true)
+    createdAt      DateTime      @default(now())
+    updatedAt      DateTime      @updatedAt
+}
+
+model Campaign {
+    id         String         @id @default(cuid()) @map("_id")
+    campaignNo String?
+    name       String
+    status     CampaignStatus @default(PLANNED)
+    objective  String?
+    budget     Float          @default(0.0)
+    currency   String         @default("EGP")
+    startDate  DateTime
+    endDate    DateTime?
+
+    agencyId String
+    agency   Agency    @relation(fields: [agencyId], references: [id])
+    clientId String
+    client   Client    @relation(fields: [clientId], references: [id])
+    projects Project[]
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@index([agencyId, campaignNo])
+    @@index([agencyId, status])
+}
+
+model Project {
+    id             String        @id @default(cuid()) @map("_id")
+    projectNo      String?
+    projectName    String
+    targetDeadline DateTime?
+    status         ProjectStatus @default(ACTIVE)
+    projectStory   String?
+    cloudLink      String?
+    totalValue     Float         @default(0.0)
+    currency       String        @default("EGP")
+    invoiceNo      String?
+    invoiceStatus  InvoiceStatus @default(DRAFT)
+
+    agencyId   String
+    agency     Agency    @relation(fields: [agencyId], references: [id])
+    clientId   String
+    client     Client    @relation(fields: [clientId], references: [id])
+    campaignId String?
+    campaign   Campaign? @relation(fields: [campaignId], references: [id])
+    contractId String?
+    contract   Contract? @relation(fields: [contractId], references: [id])
+
+    brief           CreativeBrief?
+    tasks           Task[]
+    taskExpenses    TaskExpense[]
+    plannedExpenses TaskPlannedExpense[]
+    payments        Payment[]
+    clientInvoices  ClientInvoice[]
+    attachments     Attachment[]
+
+    // ---- NEW relations (added) ----
+    tagIds   String[]
+    tags     Tag[]            @relation("ProjectTags", fields: [tagIds], references: [id])
+    feedback ClientFeedback[]
+
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
+
+    @@index([agencyId, projectNo])
+    @@index([agencyId, status])
+    @@index([clientId])
+}
+
+model CreativeBrief {
+    id           String      @id @default(cuid()) @map("_id")
+    title        String
+    status       BriefStatus @default(DRAFT)
+    budget       Float?
+    objectives   String
+    audience     String?
+    keyMessage   String?
+    deliverables String[]
+    references   String[]
+    projectId    String      @unique
+    project      Project     @relation(fields: [projectId], references: [id])
+    createdAt    DateTime    @default(now())
+    updatedAt    DateTime    @updatedAt
+}
+
+// --------------------------------------
+// 5. Production, Tasks & Expenses
+// --------------------------------------
+
+model TaskCategory {
+    id           String                    @id @default(cuid()) @map("_id")
+    name         String
+    description  String?
+    agencyId     String
+    agency       Agency                    @relation(fields: [agencyId], references: [id])
+    tasks        Task[]
+    definitions  RecurringTaskDefinition[]
+    departmentId String?
+    department   Department?               @relation(fields: [departmentId], references: [id])
+    createdAt    DateTime                  @default(now())
+    updatedAt    DateTime                  @updatedAt
+
+    @@unique([agencyId, name])
+}
+
+model Task {
+    id             String            @id @default(cuid()) @map("_id")
+    taskNo         String?
+    taskType       String
+    title          String?
+    description    String?
+    progress       Int               @default(0)
+    status         TaskStatus        @default(PENDING)
+    priority       TaskPriority      @default(MEDIUM)
+    actualHours    Float             @default(0.0)
+    estimatedHours Float             @default(0.0)
+    paymentStatus  TaskPaymentStatus @default(UNPAID)
+    isNotified     Boolean           @default(false)
+
+    totalInvoice  Float @default(0.0)
+    internalCost  Float @default(0.0)
+    margin        Float @default(30.0)
+    marginAmount  Float @default(0.0)
+    taskNetProfit Float @default(0.0)
+    realCost      Float @default(0.0)
+
+    plannedExpenseTotal Float @default(0.0)
+    plannedRevenue      Float @default(0.0)
+    approvedBudget      Float @default(0.0)
+    budgetVariance      Float @default(0.0)
+
+    startDate   DateTime?
+    endDate     DateTime?
+    dueDate     DateTime?
+    completedAt DateTime?
+
+    locationName String?
+    latitude     Float?
+    longitude    Float?
+    radius       Int       @default(200)
+    arrivalAt    DateTime?
+    departureAt  DateTime?
+
+    isOutOfWorkingHours  Boolean             @default(false)
+    compensationStrategy CompensationType    @default(NONE)
+    deductionStrategy    AttendanceDeduction @default(NONE)
+
+    // Self-relation for dependencies
+    dependsOnIds String[] @map("dependsOnIds")
+    dependsOn    Task[]   @relation("TaskDependencies", fields: [dependsOnIds], references: [id])
+    dependentIds String[] @map("dependentIds")
+    dependents   Task[]   @relation("TaskDependencies", fields: [dependentIds], references: [id])
+
+    projectId  String
+    project    Project       @relation(fields: [projectId], references: [id])
+    agencyId   String
+    agency     Agency        @relation(fields: [agencyId], references: [id])
+    categoryId String?
+    category   TaskCategory? @relation(fields: [categoryId], references: [id])
+    contractId String?
+    contract   Contract?     @relation(fields: [contractId], references: [id])
+
+    assigneeIds String[] @map("assigneeIds")
+    assignees   User[]   @relation("TaskAssignees", fields: [assigneeIds], references: [id])
+    assetIds    String[]
+    assets      Asset[]  @relation("TaskAssets", fields: [assetIds], references: [id])
+
+    plannedExpenses       TaskPlannedExpense[]
+    taskExpenses          TaskExpense[]
+    comments              Comment[]
+    attendanceLogs        AttendanceLog[]
+    todos                 Todo[]
+    financialTransactions FinancialTransaction[]
+    taskSessions          TaskSession[]
+    attachments           Attachment[]
+    invoiceItems          ClientInvoiceItem[]
+
+    // ---- NEW relation (added) ----
+    tagIds String[]
+    tags   Tag[]    @relation("TaskTags", fields: [tagIds], references: [id])
+
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
+
+    @@index([agencyId, taskNo])
+    @@index([agencyId, status])
+    @@index([projectId, status])
+    @@index([categoryId])
+}
+
+model TaskPlannedExpense {
+    id            String               @id @default(cuid()) @map("_id")
+    itemName      String
+    estimatedCost Float                @default(0.0)
+    approvedCost  Float?
+    category      TaskExpenseCategory  @default(EQUIPMENT)
+    status        PlannedExpenseStatus @default(DRAFT)
+    description   String?
+    quantity      Float                @default(1.0)
+    unitCost      Float                @default(0.0)
+    currency      String               @default("EGP")
+
+    isRecurring Boolean @default(false) // e.g., Daily transport fee
+    taxRate     Float   @default(0.0) // Tax handling is vital for professional agencies
+
+    // Calculated values for your dashboard
+    // You can handle these in your API logic, but having them here 
+    // makes UI rendering much faster.
+    totalEstimated Float @default(0.0) // (quantity * unitCost) + tax
+
+    taskId    String
+    task      Task    @relation(fields: [taskId], references: [id])
+    projectId String
+    project   Project @relation(fields: [projectId], references: [id])
+    vendorId  String?
+    vendor    Vendor? @relation(fields: [vendorId], references: [id])
+    agencyId  String
+    agency    Agency  @relation(fields: [agencyId], references: [id])
+
+    actualExpenses TaskExpense[]
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@index([taskId, status])
+    @@index([agencyId, category])
+}
+
+model TaskExpense {
+    id           String              @id @default(cuid()) @map("_id")
+    itemName     String
+    cost         Float
+    category     TaskExpenseCategory @default(EQUIPMENT)
+    status       ActualExpenseStatus @default(PENDING)
+    description  String?
+    receiptUrl   String?
+    incurredAt   DateTime?
+    reimbursable Boolean             @default(false)
+
+    taskId           String
+    task             Task                @relation(fields: [taskId], references: [id])
+    projectId        String
+    project          Project             @relation(fields: [projectId], references: [id])
+    plannedExpenseId String?
+    plannedExpense   TaskPlannedExpense? @relation(fields: [plannedExpenseId], references: [id])
+    vendorId         String?
+    vendor           Vendor?             @relation(fields: [vendorId], references: [id])
+    agencyId         String
+    agency           Agency              @relation(fields: [agencyId], references: [id])
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@index([taskId, status])
+    @@index([projectId])
+    @@index([vendorId])
 }
 
 model Comment {
@@ -379,119 +1261,540 @@ model Comment {
     author    User?    @relation(fields: [authorId], references: [id])
     taskId    String
     task      Task     @relation(fields: [taskId], references: [id])
+    agencyId  String
+    agency    Agency   @relation(fields: [agencyId], references: [id])
     createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
 
-    agencyId String
-    agency   Agency @relation(fields: [agencyId], references: [id])
+    @@index([taskId, createdAt])
 }
 
 model Todo {
-    id          String  @id @default(cuid()) @map("_id")
-    text        String // The content of the todo
+    id          String       @id @default(cuid()) @map("_id")
+    text        String
     description String?
-    completed   Boolean @default(false)
-    priority    String  @default("MEDIUM") // "HIGH", "MEDIUM", "LOW"
-    order       Int     @default(0) // For manual sorting in the UI
+    completed   Boolean      @default(false)
+    priority    TaskPriority @default(MEDIUM)
+    order       Int          @default(0)
+    dueDate     DateTime?
 
-    // Relations
-    taskId String
-    task   Task   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+    taskId      String
+    task        Task    @relation(fields: [taskId], references: [id])
+    agencyId    String
+    agency      Agency  @relation(fields: [agencyId], references: [id])
+    createdById String?
+    createdBy   User?   @relation("TodoCreator", fields: [createdById], references: [id])
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@index([taskId, completed])
+}
+
+// ---- NEW model: shared flexible labeling across Task & Project (added) ----
+model Tag {
+    id    String @id @default(cuid()) @map("_id")
+    name  String
+    color String @default("#6366F1")
+
+    agencyId String
+    agency   Agency @relation(fields: [agencyId], references: [id])
+
+    taskIds    String[]
+    tasks      Task[]    @relation("TaskTags", fields: [taskIds], references: [id])
+    projectIds String[]
+    projects   Project[] @relation("ProjectTags", fields: [projectIds], references: [id])
+
+    createdAt DateTime @default(now())
+
+    @@unique([agencyId, name])
+}
+
+// --------------------------------------
+// 6. Invoicing, Payments, Vendors & Assets
+// --------------------------------------
+
+model ClientInvoice {
+    id          String            @id @default(cuid()) @map("_id")
+    invoiceNo   String
+    type        ClientInvoiceType @default(PROJECT_BASED)
+    status      InvoiceStatus     @default(DRAFT)
+    subtotal    Float             @default(0.0)
+    taxAmount   Float             @default(0.0)
+    discount    Float             @default(0.0)
+    totalAmount Float             @default(0.0)
+    amountPaid  Float             @default(0.0)
+    balanceDue  Float             @default(0.0)
+    currency    String            @default("EGP")
+    issuedAt    DateTime?
+    dueDate     DateTime?
+    paidAt      DateTime?
+    periodStart DateTime?
+    periodEnd   DateTime?
+    notes       String?
+
+    agencyId  String
+    agency    Agency   @relation(fields: [agencyId], references: [id])
+    clientId  String
+    client    Client   @relation(fields: [clientId], references: [id])
+    projectId String?
+    project   Project? @relation(fields: [projectId], references: [id])
+
+    items          ClientInvoiceItem[]
+    payments       Payment[]
+    allocations    PaymentAllocation[]
+    statementLines ClientStatementLine[]
+
+    // ---- NEW relation (added) ----
+    creditNotes CreditNote[]
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@unique([agencyId, invoiceNo])
+    @@index([clientId, status])
+    @@index([agencyId, issuedAt])
+    @@index([clientId, dueDate])
+}
+
+model ClientInvoiceItem {
+    id             String  @id @default(cuid()) @map("_id")
+    description    String
+    quantity       Float   @default(1.0)
+    unitPrice      Float   @default(0.0)
+    total          Float   @default(0.0)
+    taxRate        Float   @default(0.0) // Percentage (e.g., 14.0 for VAT)
+    discountAmount Float   @default(0.0)
+    isBillable     Boolean @default(true)
+
+    invoiceId String
+    invoice   ClientInvoice @relation(fields: [invoiceId], references: [id])
+    taskId    String?
+    task      Task?         @relation(fields: [taskId], references: [id])
+
+    createdAt DateTime @default(now())
+}
+
+model Payment {
+    id              String        @id @default(cuid()) @map("_id")
+    paymentNo       String?
+    amount          Float
+    unappliedAmount Float         @default(0.0)
+    currency        String        @default("EGP")
+    method          PaymentMethod @default(CASH)
+    status          PaymentStatus @default(COMPLETED)
+    datePaid        DateTime
+    description     String?
+    referenceNo     String?
+
+    agencyId       String
+    agency         Agency                @relation(fields: [agencyId], references: [id])
+    clientId       String
+    client         Client                @relation(fields: [clientId], references: [id])
+    projectId      String?
+    project        Project?              @relation(fields: [projectId], references: [id])
+    invoiceId      String?
+    invoice        ClientInvoice?        @relation(fields: [invoiceId], references: [id])
+    allocations    PaymentAllocation[]
+    statementLines ClientStatementLine[]
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@index([agencyId, paymentNo])
+    @@index([clientId, datePaid])
+    @@index([invoiceId])
+    @@index([agencyId, status, datePaid])
+}
+
+model PaymentAllocation {
+    id          String                  @id @default(cuid()) @map("_id")
+    amount      Float
+    currency    String                  @default("EGP")
+    status      PaymentAllocationStatus @default(APPLIED)
+    allocatedAt DateTime                @default(now())
+    notes       String?
+
+    agencyId  String
+    agency    Agency        @relation(fields: [agencyId], references: [id])
+    clientId  String
+    client    Client        @relation(fields: [clientId], references: [id])
+    paymentId String
+    payment   Payment       @relation(fields: [paymentId], references: [id])
+    invoiceId String
+    invoice   ClientInvoice @relation(fields: [invoiceId], references: [id])
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@index([paymentId])
+    @@index([invoiceId])
+    @@index([clientId, allocatedAt])
+}
+
+model ClientStatement {
+    id               String                @id @default(cuid()) @map("_id")
+    statementNo      String
+    status           ClientStatementStatus @default(DRAFT)
+    periodStart      DateTime
+    periodEnd        DateTime
+    openingBalance   Float                 @default(0.0)
+    invoicedAmount   Float                 @default(0.0)
+    paidAmount       Float                 @default(0.0)
+    creditAmount     Float                 @default(0.0)
+    adjustmentAmount Float                 @default(0.0)
+    closingBalance   Float                 @default(0.0)
+    currency         String                @default("EGP")
+    issuedAt         DateTime?
+    dueDate          DateTime?
+    pdfUrl           String?
+    notes            String?
+
+    agencyId String
+    agency   Agency                @relation(fields: [agencyId], references: [id])
+    clientId String
+    client   Client                @relation(fields: [clientId], references: [id])
+    lines    ClientStatementLine[]
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@unique([agencyId, statementNo])
+    @@index([clientId, periodStart, periodEnd])
+    @@index([agencyId, status])
+}
+
+model ClientStatementLine {
+    id          String            @id @default(cuid()) @map("_id")
+    lineDate    DateTime
+    type        StatementLineType
+    description String
+    debit       Float             @default(0.0)
+    credit      Float             @default(0.0)
+    balance     Float             @default(0.0)
+    sortOrder   Int               @default(0)
+
+    statementId String
+    statement   ClientStatement @relation(fields: [statementId], references: [id])
+    invoiceId   String?
+    invoice     ClientInvoice?  @relation(fields: [invoiceId], references: [id])
+    paymentId   String?
+    payment     Payment?        @relation(fields: [paymentId], references: [id])
+
+    createdAt DateTime @default(now())
+
+    @@index([statementId, sortOrder])
+    @@index([invoiceId])
+    @@index([paymentId])
+}
+
+// ---- NEW model: refunds / write-offs / goodwill credits against invoices (added) ----
+model CreditNote {
+    id           String           @id @default(cuid()) @map("_id")
+    creditNoteNo String
+    amount       Float
+    currency     String           @default("EGP")
+    reason       CreditNoteReason @default(OTHER)
+    status       CreditNoteStatus @default(DRAFT)
+    notes        String?
+
+    agencyId  String
+    agency    Agency         @relation(fields: [agencyId], references: [id])
+    clientId  String
+    client    Client         @relation(fields: [clientId], references: [id])
+    invoiceId String?
+    invoice   ClientInvoice? @relation(fields: [invoiceId], references: [id])
+
+    issuedAt  DateTime?
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+
+    @@unique([agencyId, creditNoteNo])
+    @@index([clientId])
+    @@index([invoiceId])
+}
+
+// ---- NEW model: automatic generation schedule for retainer/recurring invoices (added) ----
+model RecurringInvoiceSchedule {
+    id          String                    @id @default(cuid()) @map("_id")
+    name        String
+    amount      Float
+    currency    String                    @default("EGP")
+    frequency   RecurringInvoiceFrequency @default(MONTHLY)
+    dayOfMonth  Int?
+    nextRunDate DateTime
+    isActive    Boolean                   @default(true)
+
+    agencyId   String
+    agency     Agency    @relation(fields: [agencyId], references: [id])
+    clientId   String
+    client     Client    @relation(fields: [clientId], references: [id])
+    contractId String?
+    contract   Contract? @relation(fields: [contractId], references: [id])
+
+    lastGeneratedInvoiceId String?
+    lastRunAt              DateTime?
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@index([agencyId, nextRunDate])
+    @@index([clientId])
+}
+
+// ---- NEW model: multi-currency support (agency default is EGP, but
+// invoices/payments/expenses can be in other currencies) (added) ----
+model ExchangeRate {
+    id            String   @id @default(cuid()) @map("_id")
+    baseCurrency  String
+    quoteCurrency String
+    rate          Float
+    effectiveDate DateTime @default(now())
+    source        String   @default("manual")
+
+    agencyId String
+    agency   Agency @relation(fields: [agencyId], references: [id])
+
+    createdAt DateTime @default(now())
+
+    @@unique([agencyId, baseCurrency, quoteCurrency, effectiveDate])
+    @@index([agencyId, effectiveDate])
+}
+
+model Vendor {
+    id              String               @id @default(cuid()) @map("_id")
+    vendorNo        String?
+    name            String
+    email           String?
+    phoneNumber     String?
+    status          VendorStatus         @default(ACTIVE)
+    category        String?
+    address         Address?
+    taxNumber       String?
+    notes           String?
+    paymentTerms    String               @default("COD") // e.g., "COD", "NET-30"
+    agencyId        String
+    agency          Agency               @relation(fields: [agencyId], references: [id])
+    plannedExpenses TaskPlannedExpense[]
+    expenses        TaskExpense[]
+    createdAt       DateTime             @default(now())
+    updatedAt       DateTime             @updatedAt
+
+    @@index([agencyId, vendorNo])
+    @@index([agencyId, name])
+}
+
+model Asset {
+    id                 String      @id @default(cuid()) @map("_id")
+    assetNo            String?
+    assetName          String
+    category           String
+    purchaseDate       DateTime?
+    currentValue       Float
+    availabilityStatus AssetStatus @default(AVAILABLE)
+    serialNumber       String?
+    location           String?
+    maintenanceDueAt   DateTime?
+
+    agencyId String
+    agency   Agency   @relation(fields: [agencyId], references: [id])
+    taskIds  String[]
+    tasks    Task[]   @relation("TaskAssets", fields: [taskIds], references: [id])
+
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
+
+    @@index([agencyId, assetNo])
+    @@index([agencyId, availabilityStatus])
+}
+
+model Expense {
+    id           String        @id @default(cuid()) @map("_id")
+    expenseNo    String?
+    resourceName String
+    category     String
+    amount       Float
+    currency     String        @default("EGP")
+    status       ExpenseStatus @default(DRAFT)
+    date         DateTime
+    description  String?
+
+    agencyId String
+    agency   Agency  @relation(fields: [agencyId], references: [id])
+    userId   String? @map("userId")
+    user     User?   @relation(fields: [userId], references: [id])
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@index([agencyId, expenseNo])
+    @@index([agencyId, date])
+}
+
+// --------------------------------------
+// 7. Collaboration, Files & Audit
+// --------------------------------------
+
+model Notification {
+    id        String           @id @default(cuid()) @map("_id")
+    title     String
+    message   String
+    type      NotificationType @default(SYSTEM)
+    isRead    Boolean          @default(false)
+    actionUrl String?
+
+    userId   String
+    user     User   @relation(fields: [userId], references: [id])
+    agencyId String
+    agency   Agency @relation(fields: [agencyId], references: [id])
+
+    createdAt DateTime  @default(now())
+    readAt    DateTime?
+
+    @@index([userId, isRead])
+}
+
+model Attachment {
+    id          String  @id @default(cuid()) @map("_id")
+    fileName    String
+    fileUrl     String
+    mimeType    String?
+    size        Int?
+    description String?
+
+    agencyId     String
+    agency       Agency   @relation(fields: [agencyId], references: [id])
+    uploadedById String?
+    uploadedBy   User?    @relation(fields: [uploadedById], references: [id])
+    projectId    String?
+    project      Project? @relation(fields: [projectId], references: [id])
+    taskId       String?
+    task         Task?    @relation(fields: [taskId], references: [id])
+
+    createdAt DateTime @default(now())
+
+    @@index([agencyId, createdAt])
+    @@index([projectId])
+    @@index([taskId])
+}
+
+model AuditLog {
+    id         String      @id @default(cuid()) @map("_id")
+    action     AuditAction
+    entityType String
+    entityId   String
+    message    String?
+    metadata   Json?
+    ipAddress  String?
+    userAgent  String?
+
+    agencyId String
+    agency   Agency  @relation(fields: [agencyId], references: [id])
+    actorId  String?
+    actor    User?   @relation(fields: [actorId], references: [id])
+
+    timestamp DateTime @default(now())
+
+    @@index([agencyId, entityType, entityId])
+    @@index([actorId, timestamp])
+}
+
+model Webhook {
+    id       String   @id @default(cuid()) @map("_id")
+    name     String
+    url      String
+    events   String[] // e.g., ["task.completed", "invoice.paid"]
+    secret   String? // For payload signing/security
+    isActive Boolean  @default(true)
 
     agencyId String
     agency   Agency @relation(fields: [agencyId], references: [id])
 
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
+
+    @@index([agencyId, isActive])
 }
 
-// --------------------------------------
-// 5. Payments & Assets
-// --------------------------------------
-
-model Payment {
-    id          String   @id @default(cuid()) @map("_id")
-    paymentNo   String?
-    amount      Float
-    method      String
-    datePaid    DateTime
-    description String?
+// ---- NEW model: internal company-wide / department-wide announcements (added) ----
+model Announcement {
+    id        String               @id @default(cuid()) @map("_id")
+    title     String
+    body      String
+    audience  AnnouncementAudience @default(ALL_STAFF)
+    publishAt DateTime             @default(now())
+    expiresAt DateTime?
 
     agencyId String
-    agency   Agency @relation(fields: [agencyId], references: [id])
-    clientId String
-    client   Client @relation(fields: [clientId], references: [id])
+    agency   Agency  @relation(fields: [agencyId], references: [id])
+    authorId String?
+    author   User?   @relation(fields: [authorId], references: [id])
 
     createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@index([agencyId, publishAt])
 }
 
-model Asset {
-    id                 String   @id @default(cuid()) @map("_id")
-    assetNo            String?
-    assetName          String
-    category           String
-    purchaseDate       DateTime
-    currentValue       Float
-    availabilityStatus String
+// ---- NEW model: generic approval workflow, used for expenses, invoices,
+// payouts, leave requests, etc. so approvals aren't hardcoded per-entity (added) ----
+model ApprovalRequest {
+    id         String             @id @default(cuid()) @map("_id")
+    entityType ApprovalEntityType
+    entityId   String
+    status     ApprovalStatus     @default(PENDING)
+    notes      String?
+    decidedAt  DateTime?
 
-    agencyId String
-    agency   Agency @relation(fields: [agencyId], references: [id])
-
-    taskIds String[]
-    tasks   Task[]   @relation(fields: [taskIds], references: [id])
+    agencyId    String
+    agency      Agency  @relation(fields: [agencyId], references: [id])
+    requesterId String?
+    requester   User?   @relation("ApprovalRequester", fields: [requesterId], references: [id])
+    deciderId   String?
+    decider     User?   @relation("ApprovalDecider", fields: [deciderId], references: [id])
 
     createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@index([agencyId, entityType, entityId])
+    @@index([status])
 }
 
-model Expense {
-    id           String   @id @default(cuid()) @map("_id")
-    expenseNo    String?
-    resourceName String
-    category     String
-    amount       Float
-    status       String
-    date         DateTime
-    description  String?
-    agencyId     String
-    agency       Agency   @relation(fields: [agencyId], references: [id])
+// ---- NEW model: outbound email/notification delivery tracking (added) ----
+model EmailLog {
+    id           String      @id @default(cuid()) @map("_id")
+    toEmail      String
+    subject      String
+    template     String?
+    status       EmailStatus @default(QUEUED)
+    errorMessage String?
+    sentAt       DateTime?
 
-    userId String? @map("userId")
-    user   User?   @relation(fields: [userId], references: [id])
+    agencyId String?
+    agency   Agency? @relation(fields: [agencyId], references: [id])
 
     createdAt DateTime @default(now())
+
+    @@index([agencyId, createdAt])
+    @@index([toEmail])
 }
 
-model Payout {
-    id          String   @id @default(cuid()) @map("_id")
-    payoutNo    String?
-    amount      Float
-    category    String // e.g., "Salary", "Bonus", "Commission"
-    status      String   @default("PAID")
-    date        DateTime @default(now())
-    description String?
-
-    // Relation to Employee
-    userId String
-    user   User   @relation(fields: [userId], references: [id])
-
-    // Relation to Agency (for security)
-    agencyId String
-    agency   Agency @relation(fields: [agencyId], references: [id])
-
-    createdAt DateTime @default(now())
-}
-
-model Notification {
+// ---- NEW model: client satisfaction ratings on completed projects (added) ----
+model ClientFeedback {
     id      String  @id @default(cuid()) @map("_id")
-    title   String
-    message String
-    type    String // "DEADLINE", "ASSIGNMENT", "SYSTEM"
-    isRead  Boolean @default(false)
+    rating  Int // 1-5
+    comment String?
 
-    userId String
-    user   User   @relation(fields: [userId], references: [id])
-
-    agencyId String
-    agency   Agency @relation(fields: [agencyId], references: [id])
+    agencyId  String
+    agency    Agency   @relation(fields: [agencyId], references: [id])
+    clientId  String
+    client    Client   @relation(fields: [clientId], references: [id])
+    projectId String?
+    project   Project? @relation(fields: [projectId], references: [id])
 
     createdAt DateTime @default(now())
+
+    @@index([clientId])
+    @@index([projectId])
 }

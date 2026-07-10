@@ -1,228 +1,244 @@
-// app/api/finance/overview/route.ts
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/authOptions";
 
-export async function GET() {
-  const session = await getServerSession(authOptions);
-
-  if (!session?.user?.agencyId) {
-    return new NextResponse("Unauthorized", { status: 401 });
-  }
-
-  const agencyId = session.user.agencyId;
-
+export async function GET(req: Request) {
   try {
-    // Fetch all data in parallel for performance
-    const [projects, payments, users, payouts, assets, taskExpenses, expenses] =
-      await Promise.all([
-        // Projects = invoices (totalValue is the invoice amount)
-        prisma.project.findMany({
-          where: { agencyId },
-          select: {
-            totalValue: true,
-            invoiceStatus: true,
-            tasks: {
-              select: {
-                taskNetProfit: true,
-                internalCost: true,
-                realCost: true,
-              },
-            },
+    // 1. Authenticate & Verify Tenant Multi-Tenancy
+    const session = await getServerSession(authOptions);
+    const agencyId = (session as any)?.user?.agencyId;
+    if (!agencyId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // 2. Parse Query Search Range Filters
+    const { searchParams } = new URL(req.url);
+    const startDateParam = searchParams.get("startDate");
+    const endDateParam = searchParams.get("endDate");
+
+    // Default Date Range Boundaries if not provided
+    const dateQuery: any = {};
+    if (startDateParam) dateQuery.gte = new Date(startDateParam);
+    if (endDateParam) dateQuery.lte = new Date(endDateParam);
+
+    const hasDateFilter = Object.keys(dateQuery).length > 0;
+
+    // 3. Concurrent Database Queries execution for maximum performance
+    const [agencyUsers, agencyProjects, agencyAssets, agencyExpenses, agencyPayouts] = await Promise.all([
+      // A. Pull Active Staffing, Salaries, Ledger variations, and Embedded Leaves
+      prisma.user.findMany({
+        where: { agencyId },
+        include: {
+          financialLedger: {
+            where: hasDateFilter ? { createdAt: dateQuery } : undefined,
           },
-        }),
-
-        // Payments = cash actually received from clients
-        prisma.payment.findMany({
-          where: { agencyId },
-          select: { amount: true, datePaid: true },
-        }),
-
-        // Users = salary-based payroll
-        prisma.user.findMany({
-          where: { agencyId },
-          select: {
-            id: true,
-            name: true,
-            salary: true,
-            efficiencyRate: true,
-            userType: true,
+          payouts: {
+            where: hasDateFilter ? { date: dateQuery } : undefined,
           },
-        }),
+        },
+      }),
 
-        // Payouts = actual disbursements (salaries, bonuses, commissions)
-        prisma.payout.findMany({
-          where: { agencyId },
-          select: { amount: true, category: true, date: true },
-        }),
+      // B. Pull Revenue Projects data along with scope task expenses
+      prisma.project.findMany({
+        where: {
+          agencyId,
+          ...(hasDateFilter ? { createdAt: dateQuery } : {}),
+        },
+        include: {
+          taskExpenses: true,
+        },
+      }),
 
-        // Assets = equipment owned
-        prisma.asset.findMany({
-          where: { agencyId },
-          select: { currentValue: true, category: true },
-        }),
+      // C. Aggregated Book Value Valuations of Assets
+      prisma.asset.findMany({
+        where: { agencyId },
+      }),
 
-        // TaskExpenses = external rentals & production costs
-        prisma.taskExpense.findMany({
-          where: { agencyId },
-          select: { cost: true, category: true },
-        }),
+      // D. Fixed Agency Overhead Operations
+      prisma.expense.findMany({
+        where: {
+          agencyId,
+          ...(hasDateFilter ? { date: dateQuery } : {}),
+        },
+      }),
 
-        // Expenses = agency overhead (fixed operational costs)
-        prisma.expense.findMany({
-          where: { agencyId },
-          select: { amount: true, category: true, date: true, status: true },
-        }),
-      ]);
+      // E. Explicit Global Disbursements Breakdown
+      prisma.payout.findMany({
+        where: {
+          agencyId,
+          status: "PAID",
+          ...(hasDateFilter ? { date: dateQuery } : {}),
+        },
+        include: {
+          user: { select: { name: true } },
+        },
+      }),
+    ]);
 
-    // ─────────────────────────────────────────────────────────────
-    // CLIENT STATS
-    // ─────────────────────────────────────────────────────────────
+    // ─── 4. CALCULATE METRICS BREAKDOWN ────────────────────────────────────────
 
-    const totalInvoiced = projects.reduce((sum, p) => sum + (p.totalValue ?? 0), 0);
+    // --- CLIENT & REVENUE STATS ---
+    let totalInvoiced = 0;
+    let totalReceived = 0;
+    let totalDue = 0;
+    let totalProjectProfitAmount = 0;
+    const invoiceBreakdown: Record<string, number> = {
+      DRAFT: 0,
+      SENT: 0,
+      PARTIALLY_PAID: 0,
+      PAID: 0,
+      OVERDUE: 0,
+      VOID: 0,
+    };
 
-    const totalReceived = payments.reduce((sum, p) => sum + (p.amount ?? 0), 0);
+    agencyProjects.forEach((proj) => {
+      totalInvoiced += proj.totalValue;
+      
+      // Update Invoice Status Partition
+      const statusKey = proj.invoiceStatus || "DRAFT";
+      invoiceBreakdown[statusKey] = (invoiceBreakdown[statusKey] || 0) + proj.totalValue;
 
-    // Amount billed but not yet paid
-    const totalDue = totalInvoiced - totalReceived;
+      // Handle Cash Collections vs Outstanding Receivables positions
+      if (statusKey === "PAID") {
+        totalReceived += proj.totalValue;
+      } else if (statusKey === "PARTIALLY_PAID") {
+        // Safe split: Assume 50% received for partials if no multi-payment table is aggregated
+        totalReceived += proj.totalValue * 0.5;
+        totalDue += proj.totalValue * 0.5;
+      } else if (statusKey !== "VOID" && statusKey !== "DRAFT") {
+        totalDue += proj.totalValue;
+      }
 
-    // Net profit across all tasks
-    const allTaskProfits = projects.flatMap((p) =>
-      p.tasks.map((t) => t.taskNetProfit ?? 0)
-    );
-    const averageProjectProfit =
-      allTaskProfits.length > 0
-        ? allTaskProfits.reduce((s, v) => s + v, 0) / allTaskProfits.length
-        : 0;
+      // Calculate Gross Profit margin metrics per Project profile scope
+      const projectCost = proj.taskExpenses.reduce((sum, exp) => sum + exp.cost, 0);
+      totalProjectProfitAmount += (proj.totalValue - projectCost);
+    });
 
-    // Invoice status breakdown (useful for the UI waterfall)
-    const invoiceBreakdown = projects.reduce(
-      (acc, p) => {
-        const status = p.invoiceStatus ?? "DRAFT";
-        acc[status] = (acc[status] ?? 0) + (p.totalValue ?? 0);
-        return acc;
-      },
-      {} as Record<string, number>
-    );
+    const averageProjectProfit = agencyProjects.length > 0 
+      ? totalProjectProfitAmount / agencyProjects.length 
+      : 0;
 
-    // ─────────────────────────────────────────────────────────────
-    // EMPLOYEE / PAYROLL STATS
-    // ─────────────────────────────────────────────────────────────
 
-    // Monthly payroll = sum of all user salaries (stored as monthly)
-    const monthlyPayroll = users.reduce((sum, u) => sum + (u.salary ?? 0), 0);
+    // --- EMPLOYEE STATS ---
+    let monthlyPayroll = 0;
+    let totalDisbursed = 0;
+    let totalEfficiencySum = 0;
+    const payoutBreakdown: Record<string, number> = {};
+    
+    // Track payouts per single staff identity to isolate Top Earner
+    const staffEarningsTracker: Record<string, number> = {};
 
-    // Total disbursed (actual payouts sent out)
-    const totalDisbursed = payouts.reduce((sum, p) => sum + (p.amount ?? 0), 0);
+    agencyUsers.forEach((user) => {
+      monthlyPayroll += user.baseSalary ?? 0;
+      totalEfficiencySum += user.efficiencyRate ?? 1.0;
+    });
 
-    // Average efficiency rate across staff
-    const avgEfficiency =
-      users.length > 0
-        ? users.reduce((sum, u) => sum + (u.efficiencyRate ?? 1), 0) / users.length
-        : 1;
+    agencyPayouts.forEach((payout) => {
+      totalDisbursed += payout.amount;
+      
+      // Breakdown by Payout Category (e.g. Salary, Bonus, Commission)
+      const cat = payout.category || "Other";
+      payoutBreakdown[cat] = (payoutBreakdown[cat] || 0) + payout.amount;
 
-    // Top earner = highest salary user (proxy for biggest contributor)
-    const topEarnerUser = users.reduce(
-      (top, u) => ((u.salary ?? 0) > (top?.salary ?? 0) ? u : top),
-      users[0] ?? null
-    );
+      // Map to identifying owner profile name
+      const employeeName = payout.user?.name || "Unknown Staff";
+      staffEarningsTracker[employeeName] = (staffEarningsTracker[employeeName] || 0) + payout.amount;
+    });
 
-    // Payroll breakdown by category (Salary vs Bonus vs Commission)
-    const payoutBreakdown = payouts.reduce(
-      (acc, p) => {
-        acc[p.category] = (acc[p.category] ?? 0) + p.amount;
-        return acc;
-      },
-      {} as Record<string, number>
-    );
+    // Isolate Top Earner
+    let topEarner: string | null = null;
+    let maxEarning = 0;
+    Object.entries(staffEarningsTracker).forEach(([name, amt]) => {
+      if (amt > maxEarning) {
+        maxEarning = amt;
+        topEarner = name;
+      }
+    });
 
-    // ─────────────────────────────────────────────────────────────
-    // EQUIPMENT / ASSET STATS
-    // ─────────────────────────────────────────────────────────────
+    const averageEfficiency = agencyUsers.length > 0 
+      ? totalEfficiencySum / agencyUsers.length 
+      : 1.0;
 
-    // Total book value of owned assets
-    const assetValuation = assets.reduce((sum, a) => sum + (a.currentValue ?? 0), 0);
 
-    // External rental outflow from task production expenses
-    const rentalOutflow = taskExpenses
-      .filter((e) => e.category === "EQUIPMENT" || e.category === "RENTAL")
-      .reduce((sum, e) => sum + (e.cost ?? 0), 0);
+    // --- PRODUCTION EXPENSES & ASSETS ---
+    const assetValuation = agencyAssets.reduce((sum, asset) => sum + asset.currentValue, 0);
+    
+    let rentalOutflow = 0;
+    let totalProductionSpend = 0;
+    const expenseCategoryBreakdown: Record<string, number> = {
+      EQUIPMENT: 0,
+      LOCATION: 0,
+      TRANSPORT: 0,
+      CATERING: 0,
+      TALENT: 0,
+      RENTAL: 0,
+    };
 
-    // All task expense outflow (full production cost)
-    const totalProductionSpend = taskExpenses.reduce(
-      (sum, e) => sum + (e.cost ?? 0),
-      0
-    );
+    agencyProjects.forEach((proj) => {
+      proj.taskExpenses.forEach((exp) => {
+        totalProductionSpend += exp.cost;
+        const cat = exp.category || "EQUIPMENT";
+        expenseCategoryBreakdown[cat] = (expenseCategoryBreakdown[cat] || 0) + exp.cost;
 
-    // Breakdown by category
-    const expenseCategoryBreakdown = taskExpenses.reduce(
-      (acc, e) => {
-        acc[e.category] = (acc[e.category] ?? 0) + e.cost;
-        return acc;
-      },
-      {} as Record<string, number>
-    );
+        if (cat === "RENTAL") {
+          rentalOutflow += exp.cost;
+        }
+      });
+    });
 
-    // ─────────────────────────────────────────────────────────────
-    // OVERHEAD / FIXED COSTS
-    // ─────────────────────────────────────────────────────────────
 
-    // Fixed agency overhead (from Expense model)
-    const fixedCosts = expenses.reduce((sum, e) => sum + (e.amount ?? 0), 0);
+    // --- OVERHEAD FIXED COSTS ---
+    let fixedCosts = 0;
+    const overheadBreakdown: Record<string, number> = {};
 
-    // Daily burn rate = fixed monthly costs / 30
-    const burnRate = fixedCosts / 30;
+    agencyExpenses.forEach((exp) => {
+      fixedCosts += exp.amount;
+      const cat = exp.category || "General Operations";
+      overheadBreakdown[cat] = (overheadBreakdown[cat] || 0) + exp.amount;
+    });
 
-    // Overhead by category
-    const overheadBreakdown = expenses.reduce(
-      (acc, e) => {
-        acc[e.category] = (acc[e.category] ?? 0) + e.amount;
-        return acc;
-      },
-      {} as Record<string, number>
-    );
+    // Daily operational burn rate metrics based on days in period window
+    let daysInPeriod = 30; // standard fallback defaults
+    if (startDateParam && endDateParam) {
+      const diffTime = Math.abs(new Date(endDateParam).getTime() - new Date(startDateParam).getTime());
+      daysInPeriod = Math.max(Math.ceil(diffTime / (1000 * 60 * 60 * 24)), 1);
+    }
+    const burnRate = fixedCosts / daysInPeriod;
 
-    // ─────────────────────────────────────────────────────────────
-    // RETURN STRUCTURED RESPONSE
-    // ─────────────────────────────────────────────────────────────
 
+    // ─── 5. DISPATCH PAYLOAD COMPLIANT RESPONSE ────────────────────────────────
     return NextResponse.json({
       clientStats: {
-        totalInvoiced,        // Total value of all projects billed
-        totalReceived,        // Cash in the door from payments
-        totalDue,             // Outstanding receivables
-        averageProjectProfit, // Avg net profit per task
-        invoiceBreakdown,     // { DRAFT, SENT, PAID, OVERDUE, ... }
+        totalInvoiced,
+        totalReceived,
+        totalDue,
+        averageProjectProfit,
+        invoiceBreakdown,
       },
-
       employeeStats: {
-        monthlyPayroll,       // Sum of all staff salaries
-        totalDisbursed,       // Total payouts actually sent
-        averageEfficiency: Number(avgEfficiency.toFixed(2)),
-        topEarner: topEarnerUser?.name ?? null,
-        headCount: users.length,
-        payoutBreakdown,      // { Salary, Bonus, Commission }
+        monthlyPayroll,
+        totalDisbursed,
+        averageEfficiency,
+        topEarner,
+        headCount: agencyUsers.length,
+        payoutBreakdown,
       },
-
       equipmentStats: {
-        assetValuation,           // Total book value of owned assets
-        rentalOutflow,            // External rental spend
-        totalProductionSpend,     // All task-level expenses
-        expenseCategoryBreakdown, // { EQUIPMENT, LOCATION, TRANSPORT, ... }
+        assetValuation,
+        rentalOutflow,
+        totalProductionSpend,
+        expenseCategoryBreakdown,
       },
-
       overhead: {
-        fixedCosts,        // Total agency expenses
-        burnRate,          // Daily burn (fixedCosts / 30)
-        overheadBreakdown, // Broken down by expense category
+        fixedCosts,
+        burnRate,
+        overheadBreakdown,
       },
     });
-  } catch (error) {
-    console.error("FINANCE_OVERVIEW_ERROR:", error);
-    return NextResponse.json(
-      { error: "Failed to load financial data" },
-      { status: 500 }
-    );
+
+  } catch (err) {
+    console.error("[FINANCE_OVERVIEW_GET]", err);
+    return NextResponse.json({ error: "Internal Fiscal Core Server Error" }, { status: 500 });
   }
 }

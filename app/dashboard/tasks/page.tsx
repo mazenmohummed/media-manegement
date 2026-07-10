@@ -7,14 +7,17 @@ import 'react-big-calendar/lib/css/react-big-calendar.css';
 import { useRouter } from "next/navigation";
 
 const localizer = momentLocalizer(moment);
-const CATEGORIES = ["CONSULTATION", "VIDEO", "DESIGN", "PHOTO", "REALS"];
+// Matching your exact capital-case data model formats
+const CATEGORIES = ["Consultation", "Video", "Design", "Photo", "Reals"];
 type FilterMode = "PRESET" | "MONTH" | "CUSTOM";
 
 export default function TaskManagementPage() {
-    const router = useRouter();
+  const router = useRouter();
   const [tasks, setTasks] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [agencyId] = useState("cmn54lzs80000xmuszsm3i9z3");
+  
+  // Updated to match your active MongoDB record group parameter layout
+  const [agencyId] = useState("cmqv7pkzo0000xmkk0u7229sf");
 
   // --- FILTERS STATE ---
   const [selectedCats, setSelectedCats] = useState<string[]>([]);
@@ -23,7 +26,6 @@ export default function TaskManagementPage() {
   const [selectedMonth, setSelectedMonth] = useState<string>(new Date().getMonth().toString());
   const [dateRange, setDateRange] = useState({ start: "", end: "" });
   const [generalSearch, setGeneralSearch] = useState("");
-  const [selectedTask, setSelectedTask] = useState<any | null>(null);
 
   // --- CALENDAR SPECIFIC STATE ---
   const [view, setView] = useState<any>(Views.MONTH);
@@ -37,14 +39,29 @@ export default function TaskManagementPage() {
     try {
       const res = await fetch(`/api/tasks?agencyId=${agencyId}`);
       const data = await res.json();
-      setTasks(data);
-    } catch (err) { console.error(err); } 
-    finally { setLoading(false); }
+      
+      if (Array.isArray(data)) {
+        setTasks(data);
+      } else if (data && Array.isArray(data.tasks)) {
+        setTasks(data.tasks);
+      } else if (data && Array.isArray(data.data)) {
+        setTasks(data.data);
+      } else {
+        console.warn("Received structured data wrapping object payload:", data);
+        setTasks([]);
+      }
+    } catch (err) { 
+      console.error("Failed to query production node registers:", err); 
+      setTasks([]);
+    } finally { 
+      setLoading(false); 
+    }
   };
 
-  useEffect(() => { fetchTasks(); }, []);
+  useEffect(() => { 
+    fetchTasks(); 
+  }, [agencyId]);
 
-  // Sync Calendar view when month/preset changes
   useEffect(() => {
     if (filterMode === "MONTH") {
       const newDate = new Date();
@@ -53,31 +70,26 @@ export default function TaskManagementPage() {
     }
   }, [selectedMonth, filterMode]);
 
-  const updateTaskStatus = async (id: string, status: string, progress: number) => {
-    try {
-      const res = await fetch('/api/tasks', {
-        method: 'PATCH',
-        body: JSON.stringify({ id, status, progress })
-      });
-      if (res.ok) fetchTasks(); 
-    } catch (err) { console.error(err); }
-  };
-
   // --- FILTER ENGINE ---
   const filteredTasks = useMemo(() => {
-    return tasks.filter(task => {
-      // 1. Category Filter (Case-Insensitive)
-      const taskCat = task.taskType?.toUpperCase();
-      const catMatch = selectedCats.length === 0 || selectedCats.includes(taskCat);
+    const reliableTasksArray = Array.isArray(tasks) ? tasks : [];
+
+    return reliableTasksArray.filter(task => {
+      // 1. Normalized Case-Insensitive Category Filter
+      const taskCat = task.taskType?.trim().toUpperCase();
+      const catMatch = selectedCats.length === 0 || 
+        selectedCats.some(c => c.toUpperCase() === taskCat);
       
-      // 2. Search Filter
-      const searchLower = generalSearch.toLowerCase();
-      const searchMatch = generalSearch === "" || 
+      // 2. Search Filter matching task fields safely
+      const searchLower = generalSearch.toLowerCase().trim();
+      const searchMatch = searchLower === "" || 
         task.project?.projectName?.toLowerCase().includes(searchLower) || 
         task.taskType?.toLowerCase().includes(searchLower) ||
-        task.assignee?.name?.toLowerCase().includes(searchLower);
+        task.taskNo?.toLowerCase().includes(searchLower) ||
+        task.description?.toLowerCase().includes(searchLower);
 
       // 3. Time Filter Logic
+      if (!task.startDate) return catMatch && searchMatch;
       const taskDate = new Date(task.startDate);
       let timeMatch = true;
 
@@ -103,18 +115,18 @@ export default function TaskManagementPage() {
 
   const combinedEvents = useMemo(() => {
     return filteredTasks.map(task => ({
-      id: task.id,
-      title: `[${task.status}] ${task.project?.projectName || 'No Project'} - ${task.taskType}`,
+      id: task.id || task._id,
+      title: `[${task.taskNo || "TASK"}] ${task.taskType}`,
       start: new Date(task.startDate),
-      end: new Date(task.endDate),
+      end: task.endDate ? new Date(task.endDate) : new Date(task.startDate),
       resource: task,
     }));
   }, [filteredTasks]);
 
-  if (loading) return <div className="p-20 text-center font-black animate-pulse">SYNCING PRODUCTION NODES...</div>;
+  if (loading) return <div className="p-20 text-center font-black animate-pulse text-xs tracking-widest">SYNCING PRODUCTION NODES...</div>;
 
   return (
-    <div className="max-w-7xl mx-auto p-8 space-y-10 bg-background min-h-screen">
+    <div className="max-w-7xl mx-auto p-8 space-y-10 bg-background min-h-screen text-foreground">
       {/* HEADER & SEARCH */}
       <header className="flex flex-col md:flex-row justify-between items-start md:items-end border-b border-border pb-8 gap-6">
         <div>
@@ -124,13 +136,13 @@ export default function TaskManagementPage() {
         <input 
           type="text" 
           placeholder="Search Nodes..." 
-          className="bg-card border-2 border-blue-500/20 rounded-2xl px-5 py-3 text-xs font-bold uppercase outline-none focus:border-blue-500 w-full md:w-80"
+          className="bg-card border-2 border-border rounded-2xl px-5 py-3 text-xs font-bold uppercase outline-none focus:border-blue-500 w-full md:w-80"
           value={generalSearch}
           onChange={(e) => setGeneralSearch(e.target.value)}
         />
       </header>
 
-      {/* NEW ADVANCED FILTER SECTION */}
+      {/* ADVANCED FILTER SECTION */}
       <div className="bg-card border border-border p-6 rounded-[2.5rem] shadow-sm space-y-6">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
           <div className="space-y-3">
@@ -181,7 +193,7 @@ export default function TaskManagementPage() {
         <div className="flex flex-wrap gap-2">
           {CATEGORIES.map(cat => (
             <button key={cat} onClick={() => setSelectedCats(prev => prev.includes(cat) ? prev.filter(c => c !== cat) : [...prev, cat])}
-              className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all ${selectedCats.includes(cat) ? "bg-blue-600 border-blue-600 text-white shadow-md shadow-blue-500/20" : "bg-background border-border text-muted-foreground hover:border-foreground"}`}>
+              className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all ${selectedCats.includes(cat) ? "bg-blue-600 border-blue-600 text-white shadow-md shadow-blue-500/20" : "bg-card border-border text-muted-foreground hover:border-foreground"}`}>
               {cat}
             </button>
           ))}
@@ -194,112 +206,108 @@ export default function TaskManagementPage() {
         </div>
       </div>
 
-    {/* TASKS TABLE */}
-    <div className="bg-card border border-border rounded-[2.5rem] overflow-hidden shadow-sm">
-      <table className="w-full text-left border-collapse">
-        <thead className="bg-muted/30 text-[10px] uppercase font-black text-muted-foreground border-b border-border">
-          <tr>
-            <th className="p-6">Task Node</th>
-            <th className="p-6">Priority</th> {/* NEW COLUMN */}
-            <th className="p-6">Progress</th> {/* NEW COLUMN */}
-            <th className="p-6">Status</th>
-            <th className="p-6">Last Update</th>
-            <th className="p-6">Assignee</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-border">
-          {filteredTasks.length === 0 ? (
+      {/* TASKS TABLE */}
+      <div className="bg-card border border-border rounded-[2.5rem] overflow-hidden shadow-sm">
+        <table className="w-full text-left border-collapse">
+          <thead className="bg-muted/30 text-[10px] uppercase font-black text-muted-foreground border-b border-border">
             <tr>
-              <td colSpan={6} className="p-20 text-center text-muted-foreground font-black uppercase text-[10px]">
-                No Nodes matching current filters
-              </td>
+              <th className="p-6">Task Node</th>
+              <th className="p-6">Priority</th>
+              <th className="p-6">Progress</th>
+              <th className="p-6">Status</th>
+              <th className="p-6">Timeline context</th>
+              <th className="p-6">Assignee</th>
             </tr>
-          ) : (
-            filteredTasks.map((task) => (
-              <tr 
-                key={task.id} 
-                onClick={() => router.push(`/dashboard/tasks/${task.id}`)}
-                className="hover:bg-muted/10 transition-colors group cursor-pointer"
-              >
-                {/* 1. TASK NODE */}
-                <td className="p-6">
-                  <div className="font-bold text-sm">{task.taskType}</div>
-                  <div className="text-[9px] text-muted-foreground font-bold uppercase">
-                    {task.project?.projectName}
-                  </div>
-                </td>
-
-                {/* 2. PRIORITY (NEW) */}
-                <td className="p-6">
-                  <span className={`text-[8px] font-black uppercase px-2 py-1 rounded-md border ${
-                    task.priority === 'URGENT' 
-                      ? "bg-red-50 text-red-600 border-red-200" 
-                      : task.priority === 'HIGH'
-                      ? "bg-orange-50 text-orange-600 border-orange-200"
-                      : "bg-blue-50 text-blue-600 border-blue-200"
-                  }`}>
-                    {task.priority || 'MEDIUM'}
-                  </span>
-                </td>
-
-                {/* 3. PROGRESS (NEW) */}
-                <td className="p-6">
-                  <div className="flex items-center gap-3">
-                    <div className="flex-1 min-w-[80px] bg-muted h-1.5 rounded-full overflow-hidden">
-                      <div 
-                        className={`h-full transition-all duration-500 ${
-                          task.progress === 100 ? "bg-emerald-500" : "bg-foreground"
-                        }`} 
-                        style={{ width: `${task.progress}%` }} 
-                      />
-                    </div>
-                    <span className="text-[10px] font-black w-8">{task.progress}%</span>
-                  </div>
-                </td>
-
-                {/* 4. STATUS */}
-                <td className="p-6">
-                  <span className={`text-[8px] font-black uppercase px-2 py-1 rounded-md border ${
-                    task.status === 'COMPLETED' 
-                      ? "bg-emerald-50 text-emerald-700 border-emerald-200" 
-                      : "bg-muted text-muted-foreground border-border"
-                  }`}>
-                    {task.status}
-                  </span>
-                </td>
-
-                {/* 5. LAST UPDATE */}
-                <td className="p-6">
-                  <div className="text-[10px] font-bold text-foreground uppercase tracking-tight">
-                    {task.lastUpdateTimestamp 
-                      ? moment(task.lastUpdateTimestamp).format("MMM DD, YYYY") 
-                      : "NO HISTORY"}
-                  </div>
-                  <div className="text-[8px] text-muted-foreground font-medium">
-                    {task.lastUpdateTimestamp && moment(task.lastUpdateTimestamp).format("hh:mm A")}
-                  </div>
-                </td>
-
-                {/* 6. ASSIGNEE */}
-                <td className="p-6 text-sm font-bold text-blue-600">
-                  {task.assignees && task.assignees.length > 0 ? (
-                    <div className="flex flex-col gap-1">
-                      {task.assignees.map((user: any) => (
-                        <span key={user.id} className="block">
-                          {user.name || "Unknown User"}
-                        </span>
-                      ))}
-                    </div>
-                  ) : (
-                    <span className="text-muted-foreground italic font-medium">UNASSIGNED</span>
-                  )}
+          </thead>
+          <tbody className="divide-y divide-border">
+            {filteredTasks.length === 0 ? (
+              <tr>
+                <td colSpan={6} className="p-20 text-center text-muted-foreground font-black uppercase text-[10px]">
+                  No Nodes matching current workspace filters
                 </td>
               </tr>
-            ))
-          )}
-        </tbody>
-      </table>
-    </div>
+            ) : (
+              filteredTasks.map((task) => (
+                <tr 
+                  key={task.id || task._id} 
+                  onClick={() => router.push(`/dashboard/tasks/${task.id || task._id}`)}
+                  className="hover:bg-muted/10 transition-colors group cursor-pointer"
+                >
+                  {/* 1. TASK NODE */}
+                  <td className="p-6">
+                    <div className="font-bold text-sm text-foreground">{task.taskType}</div>
+                    <div className="text-[9px] text-blue-600 font-mono font-bold uppercase tracking-tight">
+                      {task.taskNo || "NO ID"} {task.project?.projectName ? `| ${task.project.projectName}` : ""}
+                    </div>
+                  </td>
+
+                  {/* 2. PRIORITY */}
+                  <td className="p-6">
+                    <span className={`text-[8px] font-black uppercase px-2 py-1 rounded-md border ${
+                      task.priority === 'URGENT' || task.priority === 'HIGH'
+                        ? "bg-red-500/10 text-red-500 border-red-500/20" 
+                        : "bg-blue-500/10 text-blue-500 border-blue-500/20"
+                    }`}>
+                      {task.priority || 'MEDIUM'}
+                    </span>
+                  </td>
+
+                  {/* 3. PROGRESS */}
+                  <td className="p-6">
+                    <div className="flex items-center gap-3">
+                      <div className="flex-1 min-w-[80px] bg-muted h-1.5 rounded-full overflow-hidden">
+                        <div 
+                          className={`h-full transition-all duration-500 ${
+                            task.progress === 100 ? "bg-emerald-500" : "bg-blue-600"
+                          }`} 
+                          style={{ width: `${task.progress || 0}%` }} 
+                        />
+                      </div>
+                      <span className="text-[10px] font-black w-8">{task.progress || 0}%</span>
+                    </div>
+                  </td>
+
+                  {/* 4. STATUS */}
+                  <td className="p-6">
+                    <span className={`text-[8px] font-black uppercase px-2 py-1 rounded-md border ${
+                      task.status === 'COMPLETED' 
+                        ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20" 
+                        : "bg-amber-500/10 text-amber-500 border-amber-500/20"
+                    }`}>
+                      {task.status}
+                    </span>
+                  </td>
+
+                  {/* 5. TIMELINE CONTEXT */}
+                  <td className="p-6">
+                    <div className="text-[10px] font-bold uppercase tracking-tight">
+                      {task.startDate ? moment(task.startDate).format("MMM DD, YYYY") : "NO DATE"}
+                    </div>
+                    <div className="text-[8px] text-muted-foreground font-medium">
+                      {task.startDate && moment(task.startDate).format("hh:mm A")}
+                    </div>
+                  </td>
+
+                  {/* 6. ASSIGNEES RELATION */}
+                  <td className="p-6 text-xs font-bold text-foreground">
+                    {task.assignees && task.assignees.length > 0 ? (
+                      <div className="flex flex-col gap-1">
+                        {task.assignees.map((user: any) => (
+                          <span key={user.id || user._id} className="block text-blue-600">
+                            {user.name}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-muted-foreground text-[10px] italic font-medium">UNASSIGNED</span>
+                    )}
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
 
       {/* CALENDAR */}
       <div className="bg-card p-8 border border-border rounded-[2.5rem] shadow-sm overflow-hidden">
@@ -314,8 +322,6 @@ export default function TaskManagementPage() {
             views={['month', 'week', 'day', 'agenda']}
             step={60}
             timeslots={1}
-            min={new Date(0, 0, 0, 8, 0, 0)}
-            max={new Date(0, 0, 0, 20, 0, 0)}
             eventPropGetter={(event: any) => ({
               style: {
                 backgroundColor: event.resource.status === 'COMPLETED' ? '#10b981' : '#2563eb',
@@ -326,7 +332,6 @@ export default function TaskManagementPage() {
                 padding: '2px 5px'
               }
             })}
-            onSelectEvent={(event) => setSelectedTask(event.resource)}
           />
         </div>
       </div>

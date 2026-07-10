@@ -72,14 +72,20 @@ export const TodoList = ({ taskId, todos, onUpdate, onCommit }: TodoListProps) =
       setIsAdding(false);
     }
   };
-  const handleFinalCommit = async () => {
+ const handleFinalCommit = async () => {
   setIsCommitting(true);
   try {
-    await onCommit();
+    const res = await fetch(`/api/tasks/${taskId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "COMPLETED" }), // ← just status, nothing else
+    });
+    if (!res.ok) throw new Error("Failed to commit");
+    onCommit();
+  } catch (err) {
+    console.error("Commit Error:", err);
   } finally {
-    // We keep it true for a moment to prevent "flicker" 
-    // before the parent page re-fetches or redirects
-    setIsCommitting(false); 
+    setIsCommitting(false);
   }
 };
 

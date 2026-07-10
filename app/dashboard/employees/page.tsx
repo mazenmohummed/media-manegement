@@ -2,416 +2,348 @@
 
 import React, { useEffect, useState, useMemo } from "react";
 import Link from "next/link";
-import { UserPlus, Search, ArrowUpRight, UserCheck, X } from "lucide-react";
-import { format } from "date-fns";
+import {
+  UserPlus, Search, Loader2, Users, Clock, Zap, 
+  DollarSign, Wallet, SlidersHorizontal, TrendingUp, CheckSquare, 
+  UserCheck
+} from "lucide-react";
 import { useSession } from "next-auth/react";
 import PerformanceTable from "@/components/main/employees/PerformanceTable";
 
+// ─── Interfaces ───────────────────────────────────────────────────────────────
 interface Employee {
   id: string;
   name: string;
-  role: string;
   email: string;
+  role: string;
   userType: "FULL_TIME" | "PART_TIME" | "FREELANCER" | "INTERN";
+  baseSalary: number;
+  walletBalance: number;
   efficiencyRate: number;
-  // new canonical fields
-  baseSalary?: number;    // monthly salary for staff
-  walletBalance?: number; // accrued balance (freelancer pending fees / accruals)
-  // legacy compatibility (some endpoints might still use salary)
-  salary?: number;
-
   verifiedSkills: string[];
-  workingHours: number;
-  extraPayouts: number;
-  expenses: number;
-  lateDays: number;
+  isCheckedInToday: boolean;
   totalRevenue: number;
   profitContribution: number;
-  tasks: { internalCost: number; status: string; paymentStatus: string }[];
-  attendanceLogs: { type: string; date: string; isLate: boolean; totalHours: number }[];
+  commissions: number;
+  overtime: number;
+  totalWorkingHours: number;
+  lateCount: number;
+  totalPayouts: number;
+  ledgerTotal: number;
+  tasksCount: number;
+  completedTasksCount: number;
+  activeTasksCount: number;
+  attendanceLogs?: Array<{ type: string }>;
 }
 
-export default function EmployeesDirectory() {
+interface Metrics {
+  employeeCount: number;
+  totalRevenue: number;
+  totalProfit: number;
+  totalPayroll: number;
+  totalWallet: number;
+  avgEfficiency: number;
+  checkedInToday: number;
+  upcomingRevenue: number;
+  upcomingRevenueBreakdown: {
+    pending: number;
+    partiallyPaid: number;
+  };
+}
+
+const USER_TYPE_LABEL: Record<string, string> = {
+  FULL_TIME: "Full Time",
+  PART_TIME: "Part Time",
+  FREELANCER: "Freelancer",
+  INTERN: "Intern",
+};
+
+const USER_TYPE_COLOR: Record<string, string> = {
+  FULL_TIME: "bg-blue-500/10 text-blue-500",
+  PART_TIME: "bg-purple-500/10 text-purple-500",
+  FREELANCER: "bg-amber-500/10 text-amber-500",
+  INTERN: "bg-slate-500/10 text-slate-400",
+};
+
+
+
+export default function EmployeesPage() {
   const { data: session, status } = useSession();
-  const agencyId = session?.user?.agencyId;
 
   const [employees, setEmployees] = useState<Employee[]>([]);
-  const [search, setSearch] = useState("");
+  const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [loading, setLoading] = useState(true);
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [selectedUserType, setSelectedUserType] = useState("FULL_TIME");
 
-  const TODAY_STR = format(new Date(), "yyyy-MM-dd");
+  // Filter States
+  const [search, setSearch] = useState("");
+  const [typeFilter, setTypeFilter] = useState("ALL");
+  const [roleFilter, setRoleFilter] = useState("ALL");
+  const [sortBy, setSortBy] = useState("name");
 
   useEffect(() => {
-    async function loadDirectory() {
-      if (!agencyId) return;
+    if (status !== "authenticated") return;
+    (async () => {
       try {
-        const res = await fetch(`/api/employees?agencyId=${agencyId}`);
+        const res = await fetch("/api/employees");
         const data = await res.json();
-        
-        const incoming = Array.isArray(data.employees) ? data.employees : [];
-
-        // Normalize fields to support schema change (baseSalary + walletBalance).
-        const normalized: Employee[] = incoming.map((emp: any) => {
-          const baseSalary = typeof emp.baseSalary === "number"
-            ? emp.baseSalary
-            : typeof emp.salary === "number"
-              ? emp.salary
-              : 0;
-
-          const walletBalance = typeof emp.walletBalance === "number"
-            ? emp.walletBalance
-            : // fallback for older APIs that returned salary as accrued balance for freelancers
-            (emp.userType === "FREELANCER" && typeof emp.salary === "number" ? emp.salary : 0);
-
-          return {
-            ...emp,
-            baseSalary,
-            walletBalance,
-            salary: emp.salary, // preserve if present
-          } as Employee;
-        });
-
-        setEmployees(normalized);
+        setEmployees(data.employees ?? []);
       } catch (err) {
-        console.error("Directory Sync Failed:", err);
-        setEmployees([]);
+        console.error("Failed to fetch workforce arrays:", err);
       } finally {
         setLoading(false);
       }
-    }
-    if (status === "authenticated") loadDirectory();
-    else if (status === "unauthenticated") setLoading(false);
-  }, [agencyId, status]);
+    })();
+  }, [status]);
 
-  const filtered = useMemo(() => {
-    return employees.filter(emp => 
-      emp.name.toLowerCase().includes(search.toLowerCase()) ||
-      emp.role.toLowerCase().includes(search.toLowerCase())
+  const filteredAndSorted = useMemo(() => {
+    let result = employees.filter((e) => {
+      const matchSearch =
+        e.name.toLowerCase().includes(search.toLowerCase()) ||
+        e.role.toLowerCase().includes(search.toLowerCase()) ||
+        e.email.toLowerCase().includes(search.toLowerCase()) ||
+        e.verifiedSkills.some((s) => s.toLowerCase().includes(search.toLowerCase()));
+
+      const matchType = typeFilter === "ALL" || e.userType === typeFilter;
+      const matchRole = roleFilter === "ALL" || e.role.toUpperCase() === roleFilter;
+
+      
+
+      return matchSearch && matchType && matchRole;
+    });
+
+    return result.sort((a, b) => {
+      if (sortBy === "name") return a.name.localeCompare(b.name);
+      if (sortBy === "revenue") return b.totalRevenue - a.totalRevenue;
+      if (sortBy === "efficiency") return b.efficiencyRate - a.efficiencyRate;
+      if (sortBy === "wallet") return b.walletBalance - a.walletBalance;
+      return 0;
+    });
+  }, [employees, search, typeFilter, roleFilter, sortBy]);
+
+  
+
+  if (status === "loading" || loading) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center gap-4">
+        <Loader2 className="animate-spin text-primary" size={32} />
+        <p className="text-[9px] font-black uppercase tracking-widest opacity-40 animate-pulse">
+          Syncing talent registry...
+        </p>
+      </div>
     );
-  }, [search, employees]);
-
-  // Payroll: sum of base salaries + pending wallet balances (liabilities)
-  const totalPayroll = useMemo(() => {
-    return employees.reduce((acc, emp) => {
-      const base = emp.baseSalary ?? 0;
-      const wallet = emp.walletBalance ?? 0;
-      return acc + base + wallet;
-    }, 0);
-  }, [employees]);
-
-  const handleAddEmployee = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    if (!agencyId) return alert("Session expired. Please log in again.");
-
-    setIsSubmitting(true);
-    const formData = new FormData(e.currentTarget);
-    const password = formData.get("password") as string;
-    const confirmPassword = formData.get("confirmPassword") as string;
-
-    if (password !== confirmPassword) {
-      alert("Passwords do not match!");
-      setIsSubmitting(false);
-      return;
-    }
-
-    const skillsRaw = formData.get("verifiedSkills") as string;
-    const skillsArray = skillsRaw 
-      ? skillsRaw.split(",").map(s => s.trim()).filter(Boolean) 
-      : [];
-
-    // Send baseSalary (schema aligned) instead of legacy 'salary'
-    const payload = {
-      name: formData.get("name"),
-      email: formData.get("email"),
-      password,
-      role: formData.get("role"),
-      userType: formData.get("userType"),
-      baseSalary: parseFloat(formData.get("salary") as string) || 0,
-      agencyId,
-      verifiedSkills: skillsArray,
-      // walletBalance intentionally omitted (defaults to 0)
-    };
-
-    try {
-      const response = await fetch("/api/employees", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-
-      const result = await response.json();
-      if (response.ok) {
-        // normalize returned employee (server may return baseSalary or salary)
-        const emp = {
-          ...result,
-          baseSalary: result.baseSalary ?? result.salary ?? 0,
-          walletBalance: result.walletBalance ?? result.salary ?? 0,
-        } as Employee;
-
-        setIsModalOpen(false);
-        setEmployees((prev) => [...prev, emp]);
-      } else {
-        alert(result.error || "Failed to onboard employee");
-      }
-    } catch (err) {
-      console.error("Connection error:", err);
-      alert("Connection error while onboarding");
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  if (status === "loading" || loading) return (
-    <div className="min-h-screen flex items-center justify-center bg-background text-[10px] font-black uppercase tracking-[0.5em] animate-pulse italic">
-      Syncing Global Talent...
-    </div>
-  );
+  }
 
   return (
-    <div className="max-w-7xl mx-auto p-4 md:p-8 space-y-12 bg-background min-h-screen text-foreground">
-      
+    <div className="max-w-7xl mx-auto p-4 md:p-8 space-y-10 min-h-screen bg-background">
       {/* HEADER */}
-      <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 bg-card p-8 rounded-[2.5rem] border border-border shadow-sm">
+      <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
         <div>
-          <h1 className="text-4xl font-black uppercase italic tracking-tighter">Staff Registry</h1>
-          <p className="text-muted-foreground font-medium text-sm">Human Resource Management & Productivity</p>
-        </div>
-        
-        <div className="flex items-center gap-4 w-full md:w-auto">
-          <div className="relative flex-1 md:w-64">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <input 
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search by name or role..." 
-              className="w-full bg-background border border-border pl-12 pr-4 py-3 rounded-2xl text-[11px] font-black uppercase outline-none focus:ring-2 ring-primary/20"
-            />
-          </div>
-          <button 
-            onClick={() => setIsModalOpen(true)}
-            className="bg-foreground text-background p-4 rounded-2xl hover:scale-95 transition-all shadow-lg hover:bg-primary"
-          >
-            <UserPlus className="w-5 h-5" />
-          </button>
+          <p className="text-[9px] font-black uppercase tracking-widest opacity-40 mb-1">Human Resources</p>
+          <h1 className="text-5xl md:text-7xl font-black uppercase italic tracking-tighter leading-none">
+            Staff Registry
+          </h1>
         </div>
       </header>
 
-      {/* MODAL (Onboard Talent) */}
-      {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm">
-          <div className="bg-card border border-border w-full max-w-lg rounded-[2.5rem] shadow-2xl p-8 max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-center mb-8">
-              <h2 className="text-2xl font-black uppercase italic tracking-tighter">Onboard Talent</h2>
-              <button onClick={() => setIsModalOpen(false)} className="p-2 hover:bg-muted rounded-full transition-colors">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleAddEmployee} className="space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black uppercase text-muted-foreground ml-2">Full Name</label>
-                  <input name="name" required className="w-full bg-background border border-border p-4 rounded-2xl outline-none text-sm focus:border-primary transition-colors" placeholder="Name" />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black uppercase text-muted-foreground ml-2">Work Email</label>
-                  <input name="email" type="email" required className="w-full bg-background border border-border p-4 rounded-2xl outline-none text-sm focus:border-primary transition-colors" placeholder="email@agency.com" />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black uppercase text-muted-foreground ml-2">Internal Role</label>
-                  <select name="role" required className="w-full bg-background border border-border p-4 rounded-2xl outline-none font-black uppercase text-[10px]">
-                    <option value="CREATIVE">Creative</option>
-                    <option value="OPERATOR">Operator</option>
-                    <option value="ADMIN">Admin</option>
-                  </select>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black uppercase text-muted-foreground ml-2">Contract Type</label>
-                  <select name="userType" value={selectedUserType} onChange={(e) => setSelectedUserType(e.target.value)} className="w-full bg-background border border-border p-4 rounded-2xl outline-none font-black uppercase text-[10px]">
-                    <option value="FULL_TIME">Full Time</option>
-                    <option value="PART_TIME">Part Time</option>
-                    <option value="FREELANCER">Freelancer</option>
-                    <option value="INTERN">Intern</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black uppercase text-muted-foreground ml-2">
-                    {selectedUserType === "FREELANCER" ? "Project Rate ($)" : "Monthly Salary ($)"}
-                  </label>
-                  <input name="salary" type="number" step="0.01" required className="w-full bg-background border border-border p-4 rounded-2xl outline-none text-sm font-mono" placeholder="0.00" />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black uppercase text-muted-foreground ml-2">Verified Skills</label>
-                  <input name="verifiedSkills" className="w-full bg-background border border-border p-4 rounded-2xl outline-none text-sm" placeholder="React, Figma, SEO..." />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4 pt-2 border-t border-border">
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black uppercase text-muted-foreground ml-2">Password</label>
-                  <input name="password" type="password" required className="w-full bg-background border border-border p-4 rounded-2xl outline-none text-sm" placeholder="••••••••" />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black uppercase text-muted-foreground ml-2">Confirm</label>
-                  <input name="confirmPassword" type="password" required className="w-full bg-background border border-border p-4 rounded-2xl outline-none text-sm" placeholder="••••••••" />
-                </div>
-              </div>
-
-              <button disabled={isSubmitting} className="w-full bg-foreground text-background py-5 rounded-3xl font-black uppercase italic tracking-widest hover:bg-primary hover:text-white transition-all disabled:opacity-50 shadow-xl shadow-foreground/10">
-                {isSubmitting ? "Initializing Record..." : "Confirm Onboarding"}
-              </button>
-            </form>
-          </div>
+      {/* METRICS DASHBOARD */}
+      {metrics && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <MetricCard icon={<Users size={14} />} label="Workforce" value={metrics.employeeCount} />
+          <MetricCard icon={<UserCheck size={14} />} label="On-Site Today" value={metrics.checkedInToday} color="text-emerald-500" />
+          <MetricCard icon={<TrendingUp size={14} />} label="Total Revenue" value={`$${Math.round(metrics.totalRevenue).toLocaleString()}`} color="text-emerald-500" />
+          <UpcomingRevenueCard total={metrics.upcomingRevenue} breakdown={metrics.upcomingRevenueBreakdown} />
+          <MetricCard icon={<DollarSign size={14} />} label="Payroll Load" value={`$${Math.round(metrics.totalPayroll).toLocaleString()}`} color="text-rose-500" />
+          <MetricCard icon={<Wallet size={14} />} label="Pending Wallet" value={`$${Math.round(metrics.totalWallet).toLocaleString()}`} color="text-amber-500" />
+          <MetricCard icon={<CheckSquare size={14} />} label="Avg Efficiency" value={`${(metrics.avgEfficiency * 100).toFixed(0)}%`} />
+          <MetricCard icon={<TrendingUp size={14} />} label="Total Profit" value={`$${Math.round(metrics.totalProfit).toLocaleString()}`} color="text-blue-500" />
         </div>
       )}
 
-      {/* STATS */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatBlock label="Total Workforce" value={employees.length} />
-        <StatBlock 
-            label="On-Site Today" 
-            value={employees.filter(e => e.attendanceLogs?.some(log => log.date === TODAY_STR && log.type === "Work Day")).length} 
-            color="text-emerald-500" 
-        />
-        <StatBlock 
-            label="Avg Efficiency" 
-            value={`${((employees.reduce((acc, e) => acc + (e.efficiencyRate || 0), 0) / (employees.length || 1)) * 100).toFixed(0)}%`} 
-        />
-        <StatBlock 
-            label="Total Payroll" 
-            value={`$${Math.round(totalPayroll).toLocaleString()}`}
-            color="text-orange-600"
-        />
+      {/* FILTERS */}
+      <div className="bg-card border border-border p-6 rounded-[2rem] space-y-4">
+        <div className="flex items-center gap-2 text-muted-foreground">
+          <SlidersHorizontal size={12} />
+          <span className="text-[9px] font-black uppercase tracking-wider">Registry Filters</span>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
+          <div className="relative md:col-span-4">
+            <Search size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search name, role, skill..."
+              className="w-full bg-muted/40 border border-border pl-10 pr-4 py-3 rounded-xl text-[11px] font-bold focus:outline-none"
+            />
+          </div>
+          <div className="md:col-span-3">
+            <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className="w-full bg-muted/40 border border-border px-3 py-3 rounded-xl text-[11px] font-bold focus:outline-none">
+              <option value="ALL">All Contracts</option>
+              <option value="FULL_TIME">Full Time</option>
+              <option value="PART_TIME">Part Time</option>
+              <option value="FREELANCER">Freelancer</option>
+              <option value="INTERN">Intern</option>
+            </select>
+          </div>
+          <div className="md:col-span-3">
+            <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)} className="w-full bg-muted/40 border border-border px-3 py-3 rounded-xl text-[11px] font-bold focus:outline-none">
+              <option value="ALL">All Roles</option>
+              <option value="CREATIVE">Creative</option>
+              <option value="OPERATOR">Operator</option>
+              <option value="ADMIN">Admin</option>
+            </select>
+          </div>
+          <div className="md:col-span-2">
+            <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="w-full bg-muted/40 border border-border px-3 py-3 rounded-xl text-[11px] font-bold focus:outline-none">
+              <option value="name">Sort by Name</option>
+              <option value="revenue">Sort by Revenue</option>
+              <option value="efficiency">Sort by Efficiency</option>
+              <option value="wallet">Sort by Balance</option>
+            </select>
+          </div>
+        </div>
       </div>
 
+   
+      {/* PERFORMANCE TERMINAL SYSTEM TABLE */}
       <PerformanceTable 
-        performanceData={employees.map(emp => ({
+        performanceData={filteredAndSorted.map((emp: any) => ({
           name: emp.name,
           skills: emp.verifiedSkills || [],
-          tasksCompleted: emp.tasks?.filter(t => t.status === "COMPLETED").length || 0,
-          tasksCount: emp.tasks?.length || 0,
+          tasksCompleted: emp.completedTasksCount || 0,
+          tasksCount: emp.tasksCount || 0,
           revenueGenerated: emp.totalRevenue || 0, 
-          workingHours: emp.workingHours || 0,
-          lateDays: emp.lateDays || 0,
+          workingHours: emp.totalWorkingHours || 0,
+          lateDays: emp.lateCount || 0,
           baseSalary: emp.baseSalary || 0, 
-          extraPayouts: emp.extraPayouts || 0,
-          expenses: emp.expenses || 0,
+          commissions: emp.commissions || 0, 
+          overtime: emp.overtime || 0,
+          deductions: emp.deductions || 0, 
+          extraPayouts: emp.totalPayouts || 0,
+          expenses: emp.ledgerTotal || 0,
           efficiency: emp.efficiencyRate || 0,
-          activeLeaves: emp.attendanceLogs?.filter(log => log.type === "Vacation").length || 0,
+          // ✅ Fixed: Changed to check the embedded leaves array for approved statuses
+          activeLeaves: emp.leaves?.filter((leave: any) => {
+            return leave.status?.trim().toUpperCase() === "APPROVED";
+          }).length || 0,
           walletBalance: emp.walletBalance || 0,
         }))} 
       />
-
-      {/* GRID ENGINE */}
-      <section className="space-y-6">
-        <h2 className="text-[10px] font-black text-primary uppercase tracking-[0.3em] flex items-center gap-2 px-2">
-          <UserCheck className="w-3 h-3" /> Talent Breakdown
-        </h2>
-        
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filtered.map((emp) => {
-            const isAway = emp.attendanceLogs?.some(log => log.date === TODAY_STR && log.type === "Vacation");
-            const tasks = emp.tasks || [];
-
-            const activeTasksCount = tasks.filter(t => t.status === "ACTIVE").length;
-            const doneTasksCount = tasks.filter(t => t.status?.toUpperCase() === "COMPLETED" || t.status?.toUpperCase() === "FINISHED").length;
-            const dueTasksCount = tasks.filter(t => t.status?.toUpperCase() === "PENDING" || t.status?.toUpperCase() === "TODO").length;
-
-            // Freelancer: use walletBalance as accumulatedPay. Staff: show baseSalary as monthly payout.
-            const accumulatedPay = emp.userType === "FREELANCER"
-              ? (emp.walletBalance ?? 0)
-              : (emp.baseSalary ?? 0);
-
-            const paymentLabel = emp.userType === "FREELANCER" ? "Pending Fees" : "Monthly Payout";
-
-            return (
-              <Link key={emp.id} href={`/dashboard/employees/${emp.id}`}>
-                <div className={`bg-card border p-8 rounded-[2.5rem] transition-all group relative overflow-hidden flex flex-col justify-between h-full ${isAway ? 'border-orange-500/30 bg-orange-500/5' : 'border-border hover:border-primary/40'}`}>
-                  <div className="absolute top-0 right-0 p-6 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <ArrowUpRight className="w-5 h-5 text-primary" />
-                  </div>
-                  
-                  <div>
-                    <div className="flex items-center gap-4 mb-8">
-                      <div className={`w-14 h-14 rounded-2xl flex items-center justify-center font-black text-xl italic ${isAway ? 'bg-orange-500 text-white' : 'bg-muted text-muted-foreground group-hover:bg-primary group-hover:text-primary-foreground'}`}>
-                        {emp.name.charAt(0)}
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <h3 className="font-black uppercase text-lg leading-tight">{emp.name}</h3>
-                          {isAway && <span className="px-2 py-0.5 rounded-full bg-orange-500 text-[8px] text-white font-black uppercase">Away</span>}
-                        </div>
-                        <p className="text-[9px] font-black text-blue-600 uppercase tracking-widest">{emp.role}</p>
-                      </div>
-                    </div>
-
-                    {/* TASK ANALYTICS GRID */}
-                    <div className="grid grid-cols-3 gap-2 mb-8 border-y border-border/50 py-4">
-                      <div className="text-center">
-                        <p className="text-[7px] font-black uppercase text-muted-foreground">Active</p>
-                        <p className="text-sm font-black">{activeTasksCount}</p>
-                      </div>
-                      <div className="text-center border-x border-border/50">
-                        <p className="text-[7px] font-black uppercase text-muted-foreground">Done</p>
-                        <p className="text-sm font-black text-emerald-500">{doneTasksCount}</p>
-                      </div>
-                      <div className="text-center">
-                        <p className="text-[7px] font-black uppercase text-muted-foreground">Due</p>
-                        <p className={`text-sm font-black ${dueTasksCount > 0 ? 'text-orange-500' : ''}`}>
-                          {dueTasksCount}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="flex gap-2 mb-8 flex-wrap">
-                      {emp.verifiedSkills?.slice(0, 3).map(skill => (
-                        <span key={skill} className="text-[7px] font-black uppercase border border-border px-2 py-1 rounded-md opacity-60">
-                          {skill}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="space-y-4 pt-6 border-t border-border">
-                    <div className="flex justify-between items-end">
-                      <div>
-                        <p className="text-[8px] font-black text-muted-foreground uppercase mb-1 italic">
-                          {paymentLabel}
-                        </p>
-                        <p className={`text-xl font-black font-mono ${accumulatedPay > 0 ? 'text-orange-600' : 'text-foreground'}`}>
-                          ${accumulatedPay.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                        </p>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-[8px] font-black text-muted-foreground uppercase mb-1">Efficiency</p>
-                        <p className="font-black text-sm">{((emp.efficiencyRate || 0) * 100).toFixed(0)}%</p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </Link>
-            );
-          })}
+            {/* CARDS REGISTRY */}
+      {filteredAndSorted.length === 0 ? (
+        <div className="text-center py-24 opacity-30">
+          <Users size={40} className="mx-auto mb-4" />
+          <p className="text-sm font-black uppercase tracking-widest">No matching users</p>
         </div>
-      </section>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+          {filteredAndSorted.map((emp) => (
+            <EmployeeCard key={emp.id} emp={emp} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
-function StatBlock({ label, value, color = "text-foreground" }: { label: string, value: string | number, color?: string }) {
+// ─── Sub-Components ──────────────────────────────────────────────────────────
+function MetricCard({ icon, label, value, color = "text-foreground" }: {
+  icon: React.ReactNode; label: string; value: string | number; color?: string;
+}) {
   return (
-    <div className="bg-card border border-border p-6 rounded-[2rem] shadow-sm">
-      <p className="text-[8px] font-black text-muted-foreground uppercase tracking-widest mb-2">{label}</p>
-      <p className={`text-2xl font-black font-mono tracking-tighter ${color}`}>{value}</p>
+    <div className="bg-card border border-border p-5 rounded-3xl hover:border-primary/30 transition-all">
+      <div className="flex items-center gap-2 mb-3 opacity-50">
+        {icon}
+        <span className="text-[8px] font-black uppercase tracking-widest">{label}</span>
+      </div>
+      <p className={`text-2xl font-black italic ${color}`}>{value}</p>
     </div>
+  );
+}
+
+function UpcomingRevenueCard({ total, breakdown }: { total: number; breakdown: { pending: number; partiallyPaid: number } }) {
+  return (
+    <div className="bg-card border border-border p-5 rounded-3xl hover:border-primary/30 transition-all flex flex-col justify-between group relative overflow-hidden">
+      <div>
+        <div className="flex items-center gap-2 mb-3 opacity-50">
+          <Clock size={14} className="text-blue-400 group-hover:rotate-12 transition-transform" />
+          <span className="text-[8px] font-black uppercase tracking-widest">Upcoming Revenue</span>
+        </div>
+        <p className="text-2xl font-black italic text-blue-400">${Math.round(total).toLocaleString()}</p>
+      </div>
+      <div className="mt-4 pt-3 border-t border-border/60 flex items-center justify-between text-[8px] font-black uppercase tracking-wider opacity-60">
+        <div className="flex flex-col">
+          <span className="opacity-40 mb-0.5">Unbilled Pipeline</span>
+          <span className="text-foreground font-mono font-bold">${Math.round(breakdown.pending).toLocaleString()}</span>
+        </div>
+        <div className="w-[1px] h-5 bg-border/60 mx-2" />
+        <div className="flex flex-col text-right">
+          <span className="opacity-40 mb-0.5">Partial Paid Collect</span>
+          <span className="text-amber-500 font-mono font-bold">${Math.round(breakdown.partiallyPaid).toLocaleString()}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EmployeeCard({ emp }: { emp: Employee }) {
+  const isFreelancer = emp.userType === "FREELANCER";
+  const payDisplay = isFreelancer ? emp.walletBalance : emp.baseSalary;
+  const payLabel = isFreelancer ? "Pending Fees" : "Monthly Salary";
+
+  return (
+    <Link href={`/dashboard/employees/${emp.id}`}>
+      <div className="bg-card border border-border p-6 rounded-[2.5rem] hover:border-primary/40 transition-all group relative overflow-hidden flex flex-col h-full">
+        <div className="relative z-10 flex items-start justify-between mb-6">
+          <div className="flex items-center gap-3">
+            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-black text-lg ${emp.isCheckedInToday ? "bg-emerald-500 text-white" : "bg-muted text-muted-foreground group-hover:bg-primary group-hover:text-background"} transition-colors`}>
+              {emp.name.charAt(0).toUpperCase()}
+            </div>
+            <div>
+              <p className="text-sm font-black uppercase leading-tight">{emp.name}</p>
+              <p className="text-[8px] font-black text-primary uppercase tracking-widest">{emp.role}</p>
+            </div>
+          </div>
+          <span className={`text-[7px] font-black uppercase px-2 py-0.5 rounded-full ${USER_TYPE_COLOR[emp.userType]}`}>
+            {USER_TYPE_LABEL[emp.userType]}
+          </span>
+        </div>
+
+        {/* Operational Tasks Grid */}
+        <div className="grid grid-cols-3 gap-2 py-3 border-t border-border/50 text-center">
+          <div><p className="text-sm font-black text-blue-500">{emp.activeTasksCount}</p><p className="text-[7px] font-black uppercase opacity-40">Active</p></div>
+          <div><p className="text-sm font-black text-emerald-500">{emp.completedTasksCount}</p><p className="text-[7px] font-black uppercase opacity-40">Done</p></div>
+          <div><p className="text-sm font-black">{emp.tasksCount}</p><p className="text-[7px] font-black uppercase opacity-40">Total</p></div>
+        </div>
+
+        {/* Ledger Micro Tracking Grid (Commissions & Overtime Added Here) */}
+        <div className="grid grid-cols-2 gap-2 py-2 border-y border-border/50 mb-4 bg-muted/10 rounded-xl px-2">
+          <div className="text-left border-r border-border/40 pr-2">
+            <span className="text-[6.5px] font-black uppercase opacity-40 block">Commission</span>
+            <span className="text-xs font-mono font-black text-emerald-500">+${emp.commissions.toFixed(2)}</span>
+          </div>
+          <div className="text-right pl-2">
+            <span className="text-[6.5px] font-black uppercase opacity-40 block">Overtime</span>
+            <span className="text-xs font-mono font-black text-blue-400">+${emp.overtime.toFixed(2)}</span>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-1 mb-5 min-h-[20px]">
+          {emp.verifiedSkills.slice(0, 2).map(skill => (
+            <span key={skill} className="text-[7px] font-black uppercase px-2 py-0.5 border border-border rounded-md opacity-50">{skill}</span>
+          ))}
+        </div>
+
+        <div className="mt-auto pt-4 border-t border-border flex items-end justify-between">
+          <div>
+            <p className="text-[7px] font-black uppercase opacity-40 mb-0.5">{payLabel}</p>
+            <p className="text-xl font-black font-mono">${payDisplay.toLocaleString()}</p>
+          </div>
+          <div className="text-right">
+            <p className="text-[7px] font-black uppercase opacity-40 mb-0.5">Efficiency</p>
+            <p className="text-sm font-black">{((emp.efficiencyRate ?? 1) * 100).toFixed(0)}%</p>
+          </div>
+        </div>
+      </div>
+    </Link>
   );
 }

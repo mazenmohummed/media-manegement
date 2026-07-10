@@ -27,7 +27,7 @@ export async function POST(
       return NextResponse.json({ error: "Employee not found" }, { status: 404 });
     }
 
-    // Since leaves are embedded inside the User document in MongoDB, we push directly to the field array
+    // Since leaves are embedded inside the User document in MongoDB, push directly to the field array
     const newLeave = {
       startDate: new Date(startDate),
       endDate: new Date(endDate),
@@ -61,15 +61,12 @@ export async function PUT(
   try {
     const session = await getServerSession(authOptions);
     const agencyId = session?.user?.agencyId;
-    // Optional: Extract requester role if you want to explicitly restrict non-admins from updating state
-    // const userRole = session?.user?.role; 
-
     const { id } = await params;
 
     if (!agencyId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const body = await req.json();
-    // targetStartDate acts as our composite locator matching our embedded item index
+    // targetStartDate acts as our composite locator matching the embedded item
     const { targetStartDate, startDate, endDate, type, status } = body;
 
     if (!targetStartDate) {
@@ -84,11 +81,6 @@ export async function PUT(
       return NextResponse.json({ error: "Employee or leaves ledger not found" }, { status: 404 });
     }
 
-    // Optional Guard: If an identity check is needed to ensure only valid roles perform status modifications
-    // if (status && status !== "Pending" && userRole !== "ADMIN") {
-    //   return NextResponse.json({ error: "Forbidden: Only administrators can alter request status" }, { status: 403 });
-    // }
-
     let targetFound = false;
 
     // Map through array to find and modify the target item
@@ -101,7 +93,7 @@ export async function PUT(
           startDate: startDate ? new Date(startDate) : leave.startDate,
           endDate: endDate ? new Date(endDate) : leave.endDate,
           type: type || leave.type,
-          status: status || leave.status, // Assigns "Approved", "Rejected", or falls back
+          status: status || leave.status, // "Approved", "Rejected", or falls back
           updatedAt: new Date()
         };
       }
@@ -112,7 +104,7 @@ export async function PUT(
       return NextResponse.json({ error: "Specific leave target record not found" }, { status: 404 });
     }
 
-    // Save the entire updated array back to the parent Document
+    // Save the entire updated array back to the parent document
     await prisma.user.update({
       where: { id },
       data: {
@@ -120,9 +112,9 @@ export async function PUT(
       }
     });
 
-    return NextResponse.json({ 
-      message: status ? `Leave request status marked as ${status}` : "Leave record updated successfully", 
-      leaves: updatedLeaves 
+    return NextResponse.json({
+      message: status ? `Leave request status marked as ${status}` : "Leave record updated successfully",
+      leaves: updatedLeaves
     });
   } catch (error) {
     console.error("UPDATE_LEAVE_ERROR:", error);

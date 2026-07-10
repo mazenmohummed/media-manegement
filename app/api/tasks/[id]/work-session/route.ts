@@ -1,5 +1,7 @@
+// api/tasks/[id]/work-session/route.ts
+
 import { NextResponse } from "next/server";
-import { db as prisma } from "@/lib/db"; 
+import prisma from "@/lib/prisma";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/authOptions";
 
@@ -8,10 +10,10 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await getServerSession(authOptions);
-    const userId = session?.user?.id;
+    const session  = await getServerSession(authOptions);
+    const userId   = session?.user?.id;
     const agencyId = session?.user?.agencyId;
-    const { id: taskIdFromRoute } = await params;
+    const { id: taskId } = await params;
 
     if (!userId || !agencyId) {
       return new NextResponse("Unauthorized", { status: 401 });
@@ -21,142 +23,120 @@ export async function POST(
 
     if (!action || lat === undefined || lng === undefined) {
       return NextResponse.json(
-        { error: "Missing coordinates or action" },
+        { error: "Missing action or coordinates" },
         { status: 400 }
       );
     }
 
-    // --- START LOGIC ---
+    const now           = new Date();
+    const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+    // ── START ─────────────────────────────────────────────────────────────────
     if (action === "START") {
-      const activeSession = await prisma.attendanceLog.findFirst({
-        where: { userId, taskId: taskIdFromRoute, checkOutTime: null },
-        include: { task: true } // Include task metadata for immediate frontend consumption
+      // Guard: task must exist and belong to agency
+      const task = await prisma.task.findUnique({
+        where: { id: taskId },
+        select: { id: true, agencyId: true },
       });
-
-      if (activeSession) return NextResponse.json(activeSession);
-
-      // Fetch task details to attach task name context strings dynamically if necessary
-      const structuralTask = await prisma.task.findUnique({
-        where: { id: taskIdFromRoute },
-        select: { id: true }
-      });
-
-      // 2. Safeguard: Block execution if the task ID is invalid
-      if (!structuralTask) {
-        return NextResponse.json(
-          { error: "Target production task node not found." },
-          { status: 444 }
-        );
+      if (!task || task.agencyId !== agencyId) {
+        return NextResponse.json({ error: "Task not found." }, { status: 404 });
       }
 
-      // 3. Proceed with creating the log safely...
-      const newLog = await prisma.attendanceLog.create({
-        data: {
-          userId,
-          taskId: taskIdFromRoute,
-          agencyId,
-          checkInTime: new Date(),
-          status: "ACTIVE",
-          type: "FIELD_TASK",
-          checkInLocation: "FIELD_TASK",
-          checkInLat: lat,
-          checkInLng: lng,
-        },
-        include: { task: true }
+      // Guard: no double-start — return existing open session if present
+      const existing = await prisma.taskSession.findFirst({
+        where: { taskId, userId, endTime: null },
       });
+      if (existing) {
+        return NextResponse.json(existing);
+      }
 
-      return NextResponse.json(newLog);
-    }
-
-    // --- STOP LOGIC ---
-    if (action === "STOP") {
-      let logToClose = await prisma.attendanceLog.findFirst({
+      // Check if user has an open OFFICE attendance log today
+      const officeLog = await prisma.attendanceLog.findFirst({
         where: {
           userId,
-          taskId: taskIdFromRoute,
+          agencyId,
+          date:         todayMidnight,
+          type:         "OFFICE",
           checkOutTime: null,
+        },
+        select: { id: true },
+      });
+
+      const sessionType = officeLog ? "STANDARD" : "AFTER_HOURS";
+
+      const newSession = await prisma.taskSession.create({
+        data: {
+          startTime:   now,
+          sessionType,
+          task:        { connect: { id: taskId } },
+          user:        { connect: { id: userId } },
+          ...(officeLog
+            ? { attendanceLog: { connect: { id: officeLog.id } } }
+            : {}),
         },
       });
 
-      // Fallback 1: MongoDB $exists check via findRaw
-      if (!logToClose) {
-        console.log("Prisma null check failed. Trying $exists fallback...");
-        const rawResults = await prisma.attendanceLog.findRaw({
+      return NextResponse.json(newSession);
+    }
+
+    // ── STOP ──────────────────────────────────────────────────────────────────
+    if (action === "STOP") {
+      // Find the open session for this user + task
+      let openSession = await prisma.taskSession.findFirst({
+        where: { taskId, userId, endTime: null },
+      });
+
+      // MongoDB fallback: Prisma null-check sometimes misses missing fields
+      if (!openSession) {
+        const rawResults = await (prisma.taskSession as any).findRaw({
           filter: {
-            userId: userId,
-            taskId: taskIdFromRoute,
-            checkOutTime: { $exists: false },
+            taskId,
+            userId,
+            endTime: { $exists: false },
           },
+          options: { sort: { startTime: -1 }, limit: 1 },
         });
 
         const rawArray = rawResults as unknown as any[];
         if (rawArray.length > 0) {
-          const raw = rawArray[0];
-          const rawId = raw._id?.$oid ?? raw._id;
-          logToClose = await prisma.attendanceLog.findUnique({
+          const rawId = rawArray[0]._id?.$oid ?? rawArray[0]._id;
+          openSession = await prisma.taskSession.findUnique({
             where: { id: rawId },
           });
         }
       }
 
-      // Fallback 2: Broad application query strategy
-      if (!logToClose) {
-        console.log("Attempting broad $exists fallback for any open session...");
-        const rawResults = await prisma.attendanceLog.findRaw({
-          filter: {
-            userId: userId,
-            checkOutTime: { $exists: false },
-          },
-          options: { sort: { checkInTime: -1 }, limit: 1 },
-        });
-
-        const rawArray = rawResults as unknown as any[];
-        if (rawArray.length > 0) {
-          const raw = rawArray[0];
-          const rawId = raw._id?.$oid ?? raw._id;
-          logToClose = await prisma.attendanceLog.findUnique({
-            where: { id: rawId },
-          });
-        }
-      }
-
-      if (!logToClose) {
+      if (!openSession) {
         return NextResponse.json(
-          { error: "No active session found.", debug: { userId, taskIdFromRoute } },
+          { error: "No active task session found.", debug: { userId, taskId } },
           { status: 404 }
         );
       }
 
-      // --- Close the session and calculate differentials ---
-      const checkOutTime = new Date();
-      const diffMs = checkOutTime.getTime() - logToClose.checkInTime.getTime();
-      const sessionHours = Math.max(0, diffMs / (1000 * 60 * 60));
+      const endTime       = now;
+      const totalDuration = Math.max(
+        0,
+        (endTime.getTime() - openSession.startTime.getTime()) / (1000 * 60 * 60)
+      );
 
-      // Execute transactional status update adjustments
-      const [updatedLog] = await prisma.$transaction([
-        prisma.attendanceLog.update({
-          where: { id: logToClose.id },
-          data: {
-            checkOutTime,
-            checkOutLat: lat,
-            checkOutLng: lng,
-            totalHours: sessionHours,
-            status: "COMPLETED",
-          },
-          include: { task: true }
+      // Close session + increment task actualHours atomically
+      const [updatedSession] = await prisma.$transaction([
+        prisma.taskSession.update({
+          where: { id: openSession.id },
+          data:  { endTime, totalDuration },
         }),
         prisma.task.update({
-          where: { id: logToClose.taskId || taskIdFromRoute }, // Fallback protection
-          data: { actualHours: { increment: sessionHours } },
+          where: { id: taskId },
+          data:  { actualHours: { increment: totalDuration } },
         }),
       ]);
 
-      return NextResponse.json(updatedLog);
+      return NextResponse.json(updatedSession);
     }
 
-    return new NextResponse("Invalid Action", { status: 400 });
-  } catch (error) {
-    console.error("SESSION_ERROR:", error);
+    return new NextResponse("Invalid action", { status: 400 });
+  } catch (err) {
+    console.error("[WORK_SESSION_ERROR]", err);
     return new NextResponse("Internal Error", { status: 500 });
   }
 }

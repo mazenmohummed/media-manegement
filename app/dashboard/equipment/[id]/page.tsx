@@ -120,7 +120,7 @@ export default function AssetDetailPage() {
       {/* BACK NAVIGATION & ACTIONS CONTROLS */}
       <div className="flex justify-between items-center border-b border-border pb-6 flex-wrap gap-4">
         <Link 
-          href="/equipment" 
+          href="/dashboard/equipment" 
           className="text-[10px] font-black uppercase tracking-widest text-muted-foreground hover:text-foreground transition-all flex items-center gap-2"
         >
           ← Return To Fleet Registry

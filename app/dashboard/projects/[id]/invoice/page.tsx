@@ -1,207 +1,215 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, Printer, CreditCard } from "lucide-react";
-import { Prisma } from "@prisma/client";
+import React, { useEffect, useState, use } from "react";
+import { useRouter } from "next/navigation";
+import { ArrowLeft, Printer, Loader2 } from "lucide-react";
 
-// Define the type to match your specific schema fields
-type ProjectWithRelations = Prisma.ProjectGetPayload<{
-  include: { 
-    client: true, 
-    agency: true, 
-    tasks: true 
-  }
-}>;
+interface PageProps {
+  params: Promise<{ id: string }>;
+}
 
-export default function ProjectInvoicePage() {
-  const { id } = useParams();
+export default function ProjectInvoicePage({ params }: PageProps) {
+  const resolvedParams = use(params);
+  const id = resolvedParams.id;
   const router = useRouter();
-  const [project, setProject] = useState<ProjectWithRelations | null>(null);
+  
+  const [project, setProject] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    async function fetchProject() {
+    async function fetchProjectInvoice() {
       try {
-        const res = await fetch(`/api/projects/${id}`);
-        if (res.ok) setProject(await res.json());
-      } catch (err) { console.error(err); }
-      finally { setLoading(false); }
+        const res = await fetch(`/api/projects/${id}/invoice`);
+        if (res.ok) {
+          const data = await res.json();
+          setProject(data);
+        }
+      } catch (err) { 
+        console.error(err); 
+      } finally { 
+        setLoading(false); 
+      }
     }
-    fetchProject();
+    if (id) fetchProjectInvoice();
   }, [id]);
 
-  const handlePrint = () => window.print();
+  const handlePrint = () => {
+    window.print();
+  };
 
   if (loading) return (
-    <div className="p-20 text-center font-black animate-pulse text-blue-600 uppercase tracking-widest">
-      Generating Invoice...
+    <div className="h-screen flex items-center justify-center bg-background">
+      <div className="text-center font-black animate-pulse text-blue-600 uppercase tracking-widest flex items-center gap-2 text-sm">
+        <Loader2 className="animate-spin" size={16} /> Generating Digital Statement Ledger...
+      </div>
     </div>
   );
   
-  if (!project) return <div className="p-20 text-center font-bold">Invoice not found.</div>;
+  if (!project) return <div className="p-12 font-bold uppercase text-center text-xs tracking-widest text-muted-foreground">Invoice parameters missing or invalid.</div>;
 
-  /**
-   * NEW FINANCIAL LOGIC:
-   * We no longer calculate margin/expenses on the fly here.
-   * We trust the 'totalInvoice' field from your Task model.
-   */
-  const grandTotal = project.tasks.reduce((acc, task) => acc + (task.totalInvoice || 0), 0);
+  const invoiceTotal = project.calculatedTotal || project.totalValue || 0;
 
   return (
-    <div className="invoice-wrapper min-h-screen mx-auto bg-slate-50 md:p-4">
+    <div className="min-h-screen bg-background text-foreground p-4 sm:p-8 md:p-12 print:p-0 print:bg-white">
       
+      {/* ─── INJECTED GLOBAL PRINT OVERRIDES ─── */}
       <style jsx global>{`
         @media print {
-          @page { size: A4; margin: 0 !important; }
-          html, body { margin: 0 !important; padding: 0 !important; background: white !important; }
-          body * { visibility: hidden; }
-          .printable-area, .printable-area * { visibility: visible; }
-          .printable-area {
-            position: absolute !important;
-            top: 0 !important;
-            left: 0 !important;
-            width: 165mm !important;
-            padding: 0mm !important;
+          /* Force hide ALL parent dashboard elements, sidebar wrappers, and layout headers */
+          html, body, main, div, nav, aside {
+            background: transparent !important;
             box-shadow: none !important;
-            border: none !important;
           }
-          .no-print { display: none !important; }
-          .bg-slate-900 { 
-            background-color: #0f172a !important; 
-            print-color-adjust: exact !important; 
-            -webkit-print-color-adjust: exact !important;
+          
+          /* Target your layout's main wrapper tree to prevent clipping or offsetting */
+          body * {
+            visibility: hidden !important;
+          }
+          
+          /* Only display the primary print container and everything contained within it */
+          #isolated-invoice-print-area, #isolated-invoice-print-area * {
+            visibility: visible !important;
+          }
+          
+          /* Dock the printable block perfectly to full dimensions at the very top-left corner */
+          #isolated-invoice-print-area {
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            border: none !important;
+            background-color: white !important;
+            color: black !important;
+          }
+
+          /* Prevent table columns from fracturing ungracefully */
+          tr, td, th {
+            page-break-inside: avoid !important;
           }
         }
       `}</style>
 
-      {/* ACTION BAR */}
-      <div className="no-print flex justify-between  items-center my- bg-white p-4 rounded-2xl border border-slate-200 max-w-3xl mx-auto shadow-sm">
-        <button onClick={() => router.back()} className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-slate-500 hover:text-black transition-colors">
-          <ArrowLeft size={14} /> Back
+      {/* ─── ACTION NAVBAR (HIDDEN ON PRINT) ─── */}
+      <div className="max-w-4xl mx-auto flex justify-between items-center mb-8 pb-4 border-b border-border print:hidden">
+        <button 
+          onClick={() => router.back()} 
+          className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-muted-foreground hover:text-foreground transition-all"
+        >
+          <ArrowLeft size={14} /> Back to Desk
         </button>
-        <button onClick={handlePrint} className="flex items-center gap-2 bg-slate-900 text-white px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:scale-[1.02] active:scale-95 transition-all shadow-lg">
-          <Printer size={14} /> Print Invoice
+        
+        <button 
+          onClick={handlePrint}
+          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white font-black uppercase tracking-widest text-[10px] px-5 py-3 rounded-xl shadow-lg shadow-blue-600/20 transition-all active:scale-95"
+        >
+          <Printer size={14} /> Print Invoice / Save PDF
         </button>
       </div>
 
-      <div className="printable-area max-w-5xl w-fit mx-auto mt-10 bg-white p-8 md:p-16 shadow-2xl border border-slate-100 space-y-2">
+      {/* ─── INVOICE SHEET CONTAINER ─── */}
+      <div 
+        id="isolated-invoice-print-area" 
+        className="max-w-4xl mx-auto bg-card border border-border rounded-[2.5rem] p-8 sm:p-12 md:p-16 shadow-2xl print:bg-white print:p-0 print:border-none print:shadow-none print:rounded-none"
+      >
         
-        {/* HEADER: AGENCY INFO */}
-        <div className="flex justify-between items-start">
-          <div className="space-y-4">
-            <div className="bg-slate-900 text-white px-2 py-1 inline-block text-[9px] font-black uppercase tracking-[0.3em]">
-              Official Document
+        {/* HEADER BRANDING */}
+        <div className="flex flex-col sm:flex-row justify-between gap-2 mb-4 print:flex-row print:justify-between print:items-start">
+          <div className="space-y-2">
+            <h1 className="text-3xl font-black italic tracking-tighter uppercase text-foreground print:text-black">
+              {project.agency?.agencyName || "AGENCY WORKSPACE"}
+            </h1>
+            <p className="text-xs text-muted-foreground font-mono font-medium print:text-neutral-600">{project.agency?.address || ""}</p>
+          </div>
+          <div className="sm:text-right space-y-1 print:text-right">
+            <span className="text-[9px] font-black uppercase tracking-widest bg-blue-600/10 text-blue-500 border border-blue-600/20 px-2.5 py-1 rounded-md inline-block print:border-neutral-300 print:text-black">
+              Statement Invoice
+            </span>
+            <p className="text-lg font-black font-mono mt-2 text-foreground print:text-black">{project.invoiceNo || `INV-${project.projectNo || "AUTO"}`}</p>
+            <p className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest print:text-neutral-500">
+              Issued: {project.createdAt ? new Date(project.createdAt).toLocaleDateString(undefined, { dateStyle: 'long' }) : "N/A"}
+            </p>
+          </div>
+        </div>
+
+        {/* METADATA TARGETS GRID */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-8 border-t border-b border-border py-8 mb-12 print:grid-cols-2 print:border-neutral-200">
+          <div>
+            <p className="text-[9px] font-black text-muted-foreground uppercase tracking-widest mb-2 italic print:text-neutral-500">Billed Destination</p>
+            <p className="text-base font-black uppercase tracking-tight text-foreground print:text-black">{project.client?.clientName}</p>
+            
+          </div>
+          <div className="sm:text-right print:text-right">
+            <p className="text-[9px] font-black text-muted-foreground uppercase tracking-widest mb-2 italic print:text-neutral-500">Project Context</p>
+            <p className="text-base font-black uppercase tracking-tight text-foreground print:text-black">{project.projectName}</p>
+            <p className="text-xs font-bold text-muted-foreground mt-0.5 print:text-neutral-600">Status Tracking Position: <span className="text-blue-600 font-mono print:text-black">{project.invoiceStatus || "SENT"}</span></p>
+          </div>
+        </div>
+
+        {/* LINE ITEMS TABLE */}
+        <div className="space-y-4 mb-12">
+          <p className="text-[9px] font-black text-muted-foreground uppercase tracking-widest italic print:text-neutral-500">Itemized Production Log</p>
+          <div className="border border-border rounded-2xl overflow-hidden bg-muted/20 print:border-neutral-200 print:bg-transparent">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="border-b border-border bg-muted/50 text-[9px] font-black uppercase tracking-widest text-muted-foreground print:border-neutral-200 print:text-black">
+                  <th className="p-4 pl-6">Line Item / Task Segment Description</th>
+                  <th className="p-4 text-right pr-6">Cost Valuation (USD)</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border text-xs font-bold text-foreground print:divide-neutral-200 print:text-black">
+                {project.tasks && project.tasks.length > 0 ? (
+                  project.tasks.map((task: any) => (
+                    <tr key={task.id} className="print:border-b print:border-neutral-100">
+                      <td className="p-4 pl-6 font-black uppercase tracking-tight">
+                        {task.taskType || "General Production Allotment"}
+                      </td>
+                      <td className="p-4 text-right pr-6 font-mono text-sm text-foreground print:text-black">
+                        ${(task.totalInvoice || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={2} className="p-8 text-center text-muted-foreground uppercase tracking-widest text-[10px] font-black">
+                      No separate task segments aggregated. Base contract value model applied.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* TOTALS OVERVIEW BREAKDOWN */}
+        <div className="flex justify-end">
+          <div className="w-full sm:max-w-sm border border-border bg-muted/20 rounded-2xl p-6 space-y-4 print:border-neutral-200 print:max-w-[320px]">
+            <div className="flex justify-between items-center text-xs opacity-60 font-bold print:text-black print:opacity-100">
+              <span className="uppercase tracking-widest">Gross Subtotal</span>
+              <span className="font-mono">${invoiceTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
             </div>
-            <div>
-              <h1 className="text-4xl font-black uppercase tracking-tighter text-slate-900 leading-none">
-                {project.agency?.agencyName || "Agency Name"}
-              </h1>
-              <p className="text-[11px] font-bold text-slate-500 uppercase mt-2 tracking-widest">
-                {project.agency?.address}
+            <div className="border-t border-border border-dashed my-2 print:border-neutral-200"></div>
+            <div className="flex justify-between items-center">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.1em] text-blue-500 print:text-black italic">Total Balance Due</p>
+                <p className="text-[9px] font-bold text-muted-foreground uppercase print:text-neutral-500">Currency standard: USD</p>
+              </div>
+              <p className="text-2xl font-black italic tracking-tighter text-foreground font-mono print:text-black">
+                ${invoiceTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
               </p>
             </div>
           </div>
-          <div className="text-right">
-            <h2 className="text-6xl font-black text-slate-200 italic tracking-tighter leading-none">
-              #{project.projectNo || project.id.slice(-5).toUpperCase()}
-            </h2>
-            <p className="text-[10px] font-black text-slate-900 uppercase mt-4 tracking-tighter">
-              Issue Date: {new Date().toLocaleDateString('en-US', { day: '2-digit', month: 'long', year: 'numeric' })}
-            </p>
-          </div>
         </div>
 
-        <div className="h-[2px] bg-slate-900 w-full" />
-
-        {/* RECIPIENT & PROJECT INFO */}
-        <div className="grid grid-cols-2 gap-12">
-          <div>
-            <p className="text-[9px] font-black text-blue-600 uppercase mb-2 tracking-[0.2em]">Bill To</p>
-            <h3 className="text-2xl font-black uppercase italic text-slate-900">{project.client?.clientName}</h3>
-            <p className="text-[10px] font-bold text-slate-400 mt-1 uppercase tracking-widest">Client Ref: {project.client?.id.slice(-8)}</p>
-          </div>
-          <div className="text-right">
-            <p className="text-[9px] font-black text-blue-600 uppercase mb-2 tracking-[0.2em]">Project Title</p>
-            <h3 className="text-2xl font-black uppercase italic text-slate-900">{project.projectName}</h3>
-          </div>
-        </div>
-
-        {/* SERVICES TABLE */}
-        <div className="overflow-hidden rounded-3xl border border-slate-200">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-slate-900 text-white">
-                <th className="py-5 px-8 text-[9px] font-black uppercase tracking-[0.2em]">Description of Services</th>
-                <th className="py-5 px-8 text-[9px] font-black uppercase tracking-[0.2em] text-right">Amount (USD)</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {project.tasks.map((task) => (
-                <tr key={task.id} className="group">
-                  <td className="p-2">
-                    <p className="text-base font-black uppercase text-slate-900 tracking-tight">
-                      {task.taskType} PRODUCTION
-                    </p>
-                    <p className="text-[10px] text-slate-400 font-bold uppercase mt-1 tracking-tighter leading-relaxed max-w-md">
-                      Comprehensive handling of {task.taskType.toLowerCase()} resources and production management.
-                    </p>
-                  </td>
-                  <td className="p-2 text-right align-top">
-                    <span className="text-lg font-black text-slate-900">
-                      ${(task.totalInvoice || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-
-        {/* SUMMARY SECTION */}
-        <div className="flex pt-2">
-          {/* mx-auto centers this block horizontally inside the parent flex container */}
-          <div className="w-full md:w-1/2 mx-auto bg-slate-900 p-6  rounded-[3rem] text-white shadow-2xl relative overflow-hidden">
-            
-            {/* Cleaned up internal layout using space-y-6 instead of huge margins */}
-            <div className="relative z-10 space-y-2">
-              
-              <div className="flex w-full m-auto opacity-50">
-                <div className="mx-auto ">
-                <span className="text-[10px] font-black uppercase tracking-widest">Subtotal</span>
-                </div>
-                <div className="mx-auto">
-                <span className="text-sm font-bold">${grandTotal.toLocaleString()}</span>
-                </div>
-              </div>
-              
-
-
-              <div className="flex w-full">
-                <div className="mx-auto">
-                  <p className="text-[10px] font-black uppercase tracking-[0.2em] mb-1 text-blue-400">Total Balance Due</p>
-                  <p className="text-xs opacity-40 font-bold uppercase tracking-tighter">Currency: USD</p>
-                </div>
-                <div className="mx-auto">
-                <span className="text-3xl font-black italic tracking-tighter">
-                  ${grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                </span>
-                </div>
-              </div>
-
-            </div>
-            
-          
-          </div>
-        </div>
-
-        <footer className="pt-20 text-center">
-          <div className="inline-block border-t border-slate-100 pt-8 px-12">
-            <p className="text-[9px] font-black uppercase tracking-[0.5em] text-slate-300">
-              Generated via {project.agency?.agencyName || "Agency"} Management Portal
-            </p>
-          </div>
+        {/* FOOTER METADATA */}
+        <footer className="mt-20 pt-8 border-t border-border text-center print:border-neutral-200">
+          <p className="text-[9px] font-black uppercase tracking-[0.3em] text-muted-foreground/40 italic print:text-neutral-400">
+            Generated via {project.agency?.agencyName || "Workspace"} Management Portal
+          </p>
         </footer>
+
       </div>
     </div>
   );
