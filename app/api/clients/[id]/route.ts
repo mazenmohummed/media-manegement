@@ -3,14 +3,11 @@ import { getServerSession } from "next-auth/next";
 import prisma from "@/lib/prisma";
 import { authOptions } from "@/lib/authOptions";
 
-const DEFAULT_AGENCY_ID = "cmqv7pkzo0000xmkk0u7229sf";
-
 type RouteContext = {
   params: Promise<{ id: string }> | { id: string };
 };
 
 type PatchClientBody = {
-  agencyId?: string;
   clientName?: string;
   accountType?: string;
   status?: string;
@@ -50,19 +47,6 @@ const numberOrNull = (value: unknown) => {
 async function getRouteId(context: RouteContext) {
   const params = await context.params;
   return params.id;
-}
-
-async function getAgencyId(req: Request, bodyAgencyId?: string) {
-  const session = await getServerSession(authOptions).catch(() => null);
-  const sessionAgencyId = session?.user?.agencyId;
-
-  if (sessionAgencyId) return sessionAgencyId;
-
-  const headerAgencyId = clean(req.headers.get("x-agency-id"));
-  if (headerAgencyId) return headerAgencyId;
-
-  const url = new URL(req.url);
-  return clean(url.searchParams.get("agencyId")) ?? clean(bodyAgencyId) ?? DEFAULT_AGENCY_ID;
 }
 
 const formatClient = (client: any) => {
@@ -126,8 +110,14 @@ const formatClient = (client: any) => {
 };
 
 export async function GET(req: Request, context: RouteContext) {
+  const session = await getServerSession(authOptions).catch(() => null);
+  const agencyId = session?.user?.agencyId;
+
+  if (!agencyId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const id = await getRouteId(context);
-  const agencyId = await getAgencyId(req);
 
   try {
     const client = await prisma.client.findFirst({
@@ -221,9 +211,15 @@ export async function GET(req: Request, context: RouteContext) {
 }
 
 export async function PATCH(req: Request, context: RouteContext) {
+  const session = await getServerSession(authOptions).catch(() => null);
+  const agencyId = session?.user?.agencyId;
+
+  if (!agencyId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const id = await getRouteId(context);
   const body = (await req.json()) as PatchClientBody;
-  const agencyId = await getAgencyId(req, body.agencyId);
 
   try {
     const existingClient = await prisma.client.findFirst({

@@ -1,19 +1,19 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma"; // Adjust this path based on your setup
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/authOptions"; // Adjust path to your NextAuth options
+import { prisma } from "@/lib/prisma";
 
-export async function GET(request: Request) {
+export async function GET() {
   try {
-    const { searchParams } = new URL(request.url);
-    const agencyId = searchParams.get("agencyId");
+    const session = await getServerSession(authOptions);
 
-    if (!agencyId) {
-      return NextResponse.json({ error: "Agency ID is required" }, { status: 400 });
+    if (!session || !session.user?.agencyId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Match your Prisma schema relations exactly
     const tasks = await prisma.task.findMany({
       where: {
-        agencyId: agencyId,
+        agencyId: session.user.agencyId,
       },
       include: {
         project: {

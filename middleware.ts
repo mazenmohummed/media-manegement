@@ -1,7 +1,6 @@
+// middleware.ts
 import { withAuth } from "next-auth/middleware";
 import { NextResponse } from "next/server";
-
-// middleware.ts
 
 export default withAuth(
   function middleware(req) {
@@ -11,18 +10,17 @@ export default withAuth(
     const isApiRoute = pathname.startsWith("/api");
     const isOnboardingPage = pathname === "/onboarding";
 
-    // 1. Redirect to Onboarding: ONLY for Pages, NEVER for API
+    // 1. Un-boarded users hitting page routes -> redirect to /onboarding
     if (token && !token.agencyId && !isOnboardingPage && !isApiRoute) {
       return NextResponse.redirect(new URL("/onboarding", req.url));
     }
 
-    // 2. STOP: If it's an API route, do not allow any redirects to happen here.
-    // If the token is missing, withAuth's 'authorized' callback handles the 401.
+    // 2. API Routes -> never redirect, let authorization & route helpers manage 401/403
     if (isApiRoute) {
-      return NextResponse.next(); 
+      return NextResponse.next();
     }
 
-    // 3. Prevent Re-onboarding for Pages
+    // 3. Fully onboarded users trying to revisit onboarding -> redirect to /dashboard
     if (token?.agencyId && isOnboardingPage) {
       return NextResponse.redirect(new URL("/dashboard", req.url));
     }
@@ -36,22 +34,14 @@ export default withAuth(
   }
 );
 
-
 export const config = {
   matcher: [
     /*
-     * Match all request paths except for the ones starting with:
-     * - api/auth (NextAuth internal routes)
-     * - _next/static (static files)
-     * - _next/image (image optimization files)
-     * - favicon.ico (favicon file)
-     * - public folder files
+     * Protect dashboard, onboarding, and ALL API endpoints except /api/auth/*
+     * and static assets.
      */
-    "/dashboard/:path*", 
+    "/dashboard/:path*",
     "/onboarding",
-    "/api/finance/:path*",
-    "/api/projects/:path*",
-    "/api/employees/:path*",
-    "/api/attendance/:path*",
+    "/api/((?!auth).*)",
   ],
 };

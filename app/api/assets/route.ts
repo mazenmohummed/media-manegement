@@ -4,31 +4,20 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/authOptions";
 import { AssetStatus } from "@prisma/client";
 
-export async function GET(req: Request) {
+export async function GET() {
   const session = await getServerSession(authOptions);
   
-  // Parse searchParams from request URL
-  const { searchParams } = new URL(req.url);
-  const queryAgencyId = searchParams.get("agencyId");
+  // Strictly rely on session agency ID to avoid unauthorized context leakage
+  const agencyId = session?.user?.agencyId;
 
-  // Use session agencyId first, fallback to query parameter
-  const targetAgencyId = session?.user?.agencyId || queryAgencyId;
-
-  if (!targetAgencyId) {
-    return new NextResponse("Unauthorized or Missing Agency ID", { status: 401 });
+  if (!agencyId) {
+    return new NextResponse("Unauthorized", { status: 401 });
   }
 
   try {
-
-    console.log({
-  sessionAgencyId: session?.user?.agencyId,
-  queryAgencyId,
-  targetAgencyId,
-});
-
     const assets = await prisma.asset.findMany({
       where: {
-        agencyId: targetAgencyId,
+        agencyId,
         deletedAt: null,
       },
       include: {
@@ -45,8 +34,6 @@ export async function GET(req: Request) {
         },
       },
     });
-
-    console.log(assets);
 
     const totalInvestment = assets.reduce(
       (sum, a) => sum + (Number(a.currentValue) || 0),
@@ -94,7 +81,6 @@ export async function POST(req: Request) {
         purchaseDate: purchaseDate ? new Date(purchaseDate) : null,
         currentValue: parseFloat(purchasePrice) || 0,
         availabilityStatus: formattedStatus,
-        // Always attach the asset to the current user's session agency ID
         agencyId: session.user.agencyId, 
       },
     });

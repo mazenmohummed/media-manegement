@@ -3,12 +3,12 @@ generator client {
 }
 
 datasource db {
-    provider = "mongodb"
+    provider = "postgresql"
     url      = env("DATABASE_URL")
 }
 
 // --------------------------------------
-// 1. Enums & Embedded Types
+// 1. Enums
 // --------------------------------------
 enum VendorStatus {
     ACTIVE
@@ -32,7 +32,6 @@ enum BriefStatus {
     REVISIONS_REQUIRED
 }
 
-// Status of payment specifically for a task's deliverables
 enum TaskPaymentStatus {
     UNPAID
     PARTIALLY_PAID
@@ -40,7 +39,6 @@ enum TaskPaymentStatus {
     WAIVED
 }
 
-// Status of an Asset's availability
 enum AssetStatus {
     AVAILABLE
     IN_USE
@@ -49,7 +47,6 @@ enum AssetStatus {
     LOST
 }
 
-// Status for general Agency Expenses
 enum ExpenseStatus {
     DRAFT
     PENDING_APPROVAL
@@ -302,8 +299,6 @@ enum AuditAction {
     PAYOUT_TRIGGERED
 }
 
-// ---- NEW ENUMS (added) ----
-
 enum CreditNoteReason {
     REFUND
     DISCOUNT
@@ -413,10 +408,6 @@ enum ProposalStatus {
     REJECTED
     EXPIRED
 }
-
-// ---- NEW ENUMS (gap-fill pass: Project Planning/WBS, Procurement,
-// Creative Development, Production, Digital Marketing, Campaign
-// Management, Reporting, Knowledge Base, Resource Management) (added) ----
 
 enum RiskLevel {
     LOW
@@ -535,72 +526,100 @@ enum ReportFormat {
     DASHBOARD
 }
 
-type WorkingDay {
+// --------------------------------------
+// PostgreSQL Converted Models from Mongo Types
+// --------------------------------------
+
+model WorkingDay {
+    id        String  @id @default(cuid())
     day       String
     openTime  String
     closeTime String
     isClosed  Boolean @default(false)
+
+    agencyId String
+    agency   Agency @relation(fields: [agencyId], references: [id])
 }
 
-type Leave {
+model Leave {
+    id         String    @id @default(cuid())
     startDate  DateTime?
     endDate    DateTime?
     type       String
     status     String    @default("PENDING")
     reason     String?
-    agencyId   String?
     approvedBy String?
     updatedAt  DateTime  @default(now())
     createdAt  DateTime  @default(now())
+
+    userId   String
+    user     User    @relation(fields: [userId], references: [id])
+    agencyId String?
+    agency   Agency? @relation(fields: [agencyId], references: [id])
 }
 
-type Address {
+model Address {
+    id         String  @id @default(cuid())
     line1      String?
     line2      String?
     city       String?
     state      String?
     postalCode String?
     country    String?
+
+    agency   Agency? @relation(fields: [agencyId], references: [id])
+    agencyId String? @unique
+
+    client   Client? @relation(fields: [clientId], references: [id])
+    clientId String? @unique
+
+    vendor   Vendor? @relation(fields: [vendorId], references: [id])
+    vendorId String? @unique
 }
 
-type DiscoveryPersona {
+model DiscoveryPersona {
+    id             String  @id @default(cuid())
     name           String
     demographics   String?
     psychographics String?
     buyingBehavior String?
     goals          String?
     frustrations   String?
+
+    opportunityId String
+    opportunity   Opportunity @relation(fields: [opportunityId], references: [id])
 }
 
-type DiscoveryCompetitor {
+model DiscoveryCompetitor {
+    id          String  @id @default(cuid())
     name        String
     strengths   String?
     weaknesses  String?
     pricingNote String?
     marketShare String?
+
+    opportunityId String
+    opportunity   Opportunity @relation(fields: [opportunityId], references: [id])
 }
 
-type DiscoveryProduct {
+model DiscoveryProduct {
+    id         String  @id @default(cuid())
     name       String
     sku        String?
     price      Float?
     usp        String?
     painPoints String?
+
+    opportunityId String
+    opportunity   Opportunity @relation(fields: [opportunityId], references: [id])
 }
 
 // --------------------------------------
 // 2. Identity & SaaS Multi-Tenancy
 // --------------------------------------
-// --------------------------------------
-// 0. NEW ENUMS — CRM / Pre-Sales
-// --------------------------------------
-
-// --------------------------------------
-// 1. Department 1 — Business Development
-// --------------------------------------
 
 model Lead {
-    id                String     @id @default(cuid()) @map("_id")
+    id                String     @id @default(cuid())
     leadNo            String?
     companyName       String
     contactName       String?
@@ -631,7 +650,7 @@ model Lead {
 }
 
 model LeadInteraction {
-    id         String          @id @default(cuid()) @map("_id")
+    id         String          @id @default(cuid())
     type       InteractionType
     summary    String
     occurredAt DateTime        @default(now())
@@ -648,19 +667,13 @@ model LeadInteraction {
     @@index([leadId, occurredAt])
 }
 
-// --------------------------------------
-// 2 & 3. Departments 2-3 — Discovery + Strategy
-// (both live under Opportunity, since a qualified Lead becomes one)
-// --------------------------------------
-
 model Opportunity {
-    id       String           @id @default(cuid()) @map("_id")
+    id       String           @id @default(cuid())
     name     String
     stage    OpportunityStage @default(DISCOVERY)
     budget   Float?
     currency String           @default("EGP")
 
-    // Discovery
     companyMission      String?
     brandValues         String?
     personas            DiscoveryPersona[]
@@ -668,7 +681,6 @@ model Opportunity {
     products            DiscoveryProduct[]
     marketResearchNotes String?
 
-    // Strategy
     marketingStrategy     String?
     communicationStrategy String?
     mediaStrategy         String?
@@ -689,12 +701,8 @@ model Opportunity {
     @@index([agencyId, stage])
 }
 
-// --------------------------------------
-// 4. Department 4 — Proposal
-// --------------------------------------
-
 model Proposal {
-    id              String         @id @default(cuid()) @map("_id")
+    id              String         @id @default(cuid())
     proposalNo      String?
     status          ProposalStatus @default(DRAFT)
     totalAmount     Float          @default(0.0)
@@ -712,7 +720,6 @@ model Proposal {
 
     lineItems ProposalLineItem[]
 
-    // set once accepted + converted
     contractId String?   @unique
     contract   Contract? @relation(fields: [contractId], references: [id])
 
@@ -723,7 +730,7 @@ model Proposal {
 }
 
 model ProposalLineItem {
-    id          String @id @default(cuid()) @map("_id")
+    id          String @id @default(cuid())
     description String
     quantity    Float  @default(1.0)
     unitPrice   Float  @default(0.0)
@@ -736,7 +743,7 @@ model ProposalLineItem {
 }
 
 model Agency {
-    id              String   @id @default(cuid()) @map("_id")
+    id              String   @id @default(cuid())
     agencyNo        String?
     agencyName      String
     operatorName    String?
@@ -796,7 +803,6 @@ model Agency {
     webhooks      Webhook[]
     clientBudgets ClientBudget[]
 
-    // ---- NEW relations (added) ----
     exchangeRates             ExchangeRate[]
     creditNotes               CreditNote[]
     recurringInvoiceSchedules RecurringInvoiceSchedule[]
@@ -813,7 +819,6 @@ model Agency {
     opportunities             Opportunity[]
     proposals                 Proposal[]
 
-    // ---- NEW relations: gap-fill pass (added) ----
     milestones               Milestone[]
     projectTemplates         ProjectTemplate[]
     quotations               Quotation[]
@@ -827,12 +832,13 @@ model Agency {
     knowledgeArticles        KnowledgeArticle[]
     reports                  Report[]
     resourceAllocations      ResourceAllocation[]
+    leaves                   Leave[]
 
     @@index([agencyName])
 }
 
 model Subscription {
-    id       String             @id @default(cuid()) @map("_id")
+    id       String             @id @default(cuid())
     agencyId String             @unique
     agency   Agency             @relation(fields: [agencyId], references: [id])
     plan     SubscriptionPlan   @default(FREE)
@@ -844,7 +850,6 @@ model Subscription {
     currentPeriodEnd     DateTime?
     cancelAtPeriodEnd    Boolean   @default(false)
 
-    // ---- NEW: coupon applied to this subscription (added) ----
     couponId String?
     coupon   Coupon? @relation(fields: [couponId], references: [id])
 
@@ -861,7 +866,7 @@ model Subscription {
 }
 
 model AgencyInvoice {
-    id              String              @id @default(cuid()) @map("_id")
+    id              String              @id @default(cuid())
     agencyId        String
     agency          Agency              @relation(fields: [agencyId], references: [id])
     type            AgencyInvoiceType   @default(SUBSCRIPTION)
@@ -878,9 +883,8 @@ model AgencyInvoice {
     @@index([agencyId, createdAt])
 }
 
-// ---- NEW model: platform-level discount coupons for SaaS billing (added) ----
 model Coupon {
-    id             String             @id @default(cuid()) @map("_id")
+    id             String             @id @default(cuid())
     code           String             @unique
     description    String?
     discountType   CouponDiscountType @default(PERCENTAGE)
@@ -892,8 +896,6 @@ model Coupon {
     validUntil     DateTime?
     isActive       Boolean            @default(true)
 
-    // Coupons are platform-level, but we track which agency created/owns a
-    // referral-style coupon, if applicable.
     agencyId      String?
     agency        Agency?        @relation(fields: [agencyId], references: [id])
     subscriptions Subscription[]
@@ -905,7 +907,7 @@ model Coupon {
 }
 
 model Invitation {
-    id         String    @id @default(cuid()) @map("_id")
+    id         String    @id @default(cuid())
     email      String
     role       UserRole  @default(CREATIVE)
     tokenHash  String    @unique
@@ -923,13 +925,12 @@ model Invitation {
 }
 
 model ApiKey {
-    id      String @id @default(cuid()) @map("_id")
-    name    String // e.g., "Zapier Integration", "Slack Bot"
+    id      String @id @default(cuid())
+    name    String
     keyHash String @unique
 
-    // Security & Usage
-    scopes    String[] @default(["read:tasks"]) // Permissions (read/write/delete)
-    rateLimit Int      @default(100) // Max requests per minute
+    scopes    String[] @default(["read:tasks"])
+    rateLimit Int      @default(100)
 
     lastUsedAt    DateTime?
     expiresAt     DateTime?
@@ -941,10 +942,8 @@ model ApiKey {
     createdAt DateTime @default(now())
 }
 
-// ---- NEW models: auth session security (added) ----
-
 model RefreshToken {
-    id        String    @id @default(cuid()) @map("_id")
+    id        String    @id @default(cuid())
     tokenHash String    @unique
     userId    String
     user      User      @relation(fields: [userId], references: [id])
@@ -958,7 +957,7 @@ model RefreshToken {
 }
 
 model PasswordResetToken {
-    id        String    @id @default(cuid()) @map("_id")
+    id        String    @id @default(cuid())
     tokenHash String    @unique
     userId    String
     user      User      @relation(fields: [userId], references: [id])
@@ -974,7 +973,7 @@ model PasswordResetToken {
 // --------------------------------------
 
 model Department {
-    id             String         @id @default(cuid()) @map("_id")
+    id             String         @id @default(cuid())
     name           String
     agencyId       String
     agency         Agency         @relation(fields: [agencyId], references: [id])
@@ -987,7 +986,7 @@ model Department {
 }
 
 model User {
-    id             String    @id @default(cuid()) @map("_id")
+    id             String    @id @default(cuid())
     userNo         String?
     name           String
     email          String    @unique
@@ -1004,12 +1003,9 @@ model User {
     isActive       Boolean   @default(true)
     lastLoginAt    DateTime?
 
-    // ---- NEW: security fields (added) ----
     twoFactorEnabled Boolean @default(false)
     twoFactorSecret  String?
 
-    // ---- NEW: client-portal linkage. Users with role = CLIENT can be tied
-    // to the Client record they represent, scoping their portal access. (added)
     clientId String?
     client   Client? @relation("ClientPortalUsers", fields: [clientId], references: [id])
 
@@ -1018,8 +1014,7 @@ model User {
     departmentId String?
     department   Department? @relation(fields: [departmentId], references: [id])
 
-    taskIds String[] @map("taskIds")
-    tasks   Task[]   @relation("TaskAssignees", fields: [taskIds], references: [id])
+    tasks Task[] @relation("TaskAssignees")
 
     attendanceLogs  AttendanceLog[]
     comments        Comment[]
@@ -1038,7 +1033,6 @@ model User {
     invitationsSent     Invitation[] @relation("InvitationsSent")
     invitationsAccepted Invitation[] @relation("InvitationsAccepted")
 
-    // ---- NEW relations (added) ----
     refreshTokens         RefreshToken[]
     passwordResetTokens   PasswordResetToken[]
     reviewsReceived       PerformanceReview[]    @relation("ReviewedUser")
@@ -1058,7 +1052,7 @@ model User {
 }
 
 model FinancialTransaction {
-    id          String            @id @default(cuid()) @map("_id")
+    id          String            @id @default(cuid())
     type        TransactionType
     status      TransactionStatus @default(PENDING)
     amount      Float
@@ -1078,7 +1072,7 @@ model FinancialTransaction {
 }
 
 model AttendanceLog {
-    id           String              @id @default(cuid()) @map("_id")
+    id           String              @id @default(cuid())
     date         DateTime
     checkInTime  DateTime
     checkOutTime DateTime?
@@ -1104,7 +1098,7 @@ model AttendanceLog {
 }
 
 model TaskSession {
-    id            String          @id @default(cuid()) @map("_id")
+    id            String          @id @default(cuid())
     startTime     DateTime
     endTime       DateTime?
     totalDuration Float?
@@ -1118,7 +1112,7 @@ model TaskSession {
     attendanceLog   AttendanceLog? @relation(fields: [attendanceLogId], references: [id])
 
     isBillable Boolean @default(true)
-    hourlyRate Float? // If the specific session is billed at a custom rate
+    hourlyRate Float?
 
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
@@ -1127,7 +1121,7 @@ model TaskSession {
 }
 
 model Payout {
-    id          String   @id @default(cuid()) @map("_id")
+    id          String   @id @default(cuid())
     payoutNo    String?
     amount      Float
     currency    String   @default("EGP")
@@ -1147,10 +1141,8 @@ model Payout {
     @@index([userId])
 }
 
-// ---- NEW models: HR completeness (added) ----
-
 model Holiday {
-    id                String   @id @default(cuid()) @map("_id")
+    id                String   @id @default(cuid())
     name              String
     date              DateTime
     isRecurringYearly Boolean  @default(false)
@@ -1166,7 +1158,7 @@ model Holiday {
 }
 
 model PerformanceReview {
-    id           String                  @id @default(cuid()) @map("_id")
+    id           String                  @id @default(cuid())
     periodStart  DateTime
     periodEnd    DateTime
     overallScore Float?
@@ -1190,11 +1182,11 @@ model PerformanceReview {
 }
 
 // --------------------------------------
-// 4. Clients, Projects, Campaigns & Contracts, Client Budget
+// 4. Clients, Projects, Campaigns & Contracts
 // --------------------------------------
 
 model Client {
-    id               String           @id @default(cuid()) @map("_id")
+    id               String           @id @default(cuid())
     clientNo         String?
     clientName       String
     accountType      String?
@@ -1206,17 +1198,11 @@ model Client {
     billingAddress   Address?
     notes            String?
 
-    // ---- NEW: outstanding-balance credit control (added) ----
-    // Null creditLimit = no cap enforced. outstandingBalance is a denormalized
-    // cache (sum of unpaid/overdue ClientInvoice.balanceDue minus unapplied
-    // credit) kept in sync by application logic whenever invoices, payments,
-    // or credit notes change, so it can be checked cheaply before creating
-    // new invoices/projects without an aggregation query on every request.
     creditLimit         Float?
     outstandingBalance  Float   @default(0.0)
     isOnCreditHold      Boolean @default(false)
     creditHoldReason    String?
-    creditLimitAlertPct Float?  @default(90.0) // warn when balance hits this % of the limit
+    creditLimitAlertPct Float?  @default(90.0)
 
     agencyId String
     agency   Agency @relation(fields: [agencyId], references: [id])
@@ -1235,9 +1221,6 @@ model Client {
     deletedAt     DateTime?
     clientBudgets ClientBudget[]
 
-    // ---- NEW relations (added) ----
-    // Client-side portal users (role = CLIENT) who can log in and see
-    // their own projects, invoices and statements.
     portalUsers               User[]                     @relation("ClientPortalUsers")
     creditNotes               CreditNote[]
     recurringInvoiceSchedules RecurringInvoiceSchedule[]
@@ -1250,10 +1233,10 @@ model Client {
 }
 
 model ClientBudget {
-    id              String @id @default(cuid()) @map("_id")
-    totalAmount     Float // Total authorized budget
-    spentAmount     Float  @default(0.0) // Automated aggregation
-    remainingAmount Float // totalAmount - spentAmount
+    id              String @id @default(cuid())
+    totalAmount     Float
+    spentAmount     Float  @default(0.0)
+    remainingAmount Float
 
     currency    String   @default("USD")
     periodStart DateTime
@@ -1274,7 +1257,7 @@ model ClientBudget {
 }
 
 model ReportingPeriod {
-    id          String                @id @default(cuid()) @map("_id")
+    id          String                @id @default(cuid())
     name        String
     periodStart DateTime
     periodEnd   DateTime
@@ -1292,7 +1275,7 @@ model ReportingPeriod {
 }
 
 model ClientContact {
-    id          String   @id @default(cuid()) @map("_id")
+    id          String   @id @default(cuid())
     name        String
     title       String?
     email       String?
@@ -1309,7 +1292,7 @@ model ClientContact {
 }
 
 model Contract {
-    id           String         @id @default(cuid()) @map("_id")
+    id           String         @id @default(cuid())
     contractNo   String?
     name         String
     status       ContractStatus @default(ACTIVE)
@@ -1327,7 +1310,6 @@ model Contract {
     projects        Project[]
     tasks           Task[]
 
-    // ---- NEW relation (added) ----
     recurringInvoiceSchedules RecurringInvoiceSchedule[]
 
     createdAt DateTime  @default(now())
@@ -1339,7 +1321,7 @@ model Contract {
 }
 
 model RecurringTaskDefinition {
-    id             String        @id @default(cuid()) @map("_id")
+    id             String        @id @default(cuid())
     contractId     String
     contract       Contract      @relation(fields: [contractId], references: [id])
     title          String
@@ -1358,7 +1340,7 @@ model RecurringTaskDefinition {
 }
 
 model Campaign {
-    id         String         @id @default(cuid()) @map("_id")
+    id         String         @id @default(cuid())
     campaignNo String?
     name       String
     status     CampaignStatus @default(PLANNED)
@@ -1383,7 +1365,7 @@ model Campaign {
 }
 
 model Project {
-    id             String        @id @default(cuid()) @map("_id")
+    id             String        @id @default(cuid())
     projectNo      String?
     projectName    String
     targetDeadline DateTime?
@@ -1413,12 +1395,9 @@ model Project {
     clientInvoices  ClientInvoice[]
     attachments     Attachment[]
 
-    // ---- NEW relations (added) ----
-    tagIds   String[]
-    tags     Tag[]            @relation("ProjectTags", fields: [tagIds], references: [id])
+    tags     Tag[]            @relation("ProjectTags")
     feedback ClientFeedback[]
 
-    // ---- NEW relations: gap-fill pass (added) ----
     quotations               Quotation[]
     purchaseOrders           PurchaseOrder[]
     vendorPerformanceReviews VendorPerformanceReview[]
@@ -1438,7 +1417,7 @@ model Project {
 }
 
 model CreativeBrief {
-    id           String      @id @default(cuid()) @map("_id")
+    id           String      @id @default(cuid())
     title        String
     status       BriefStatus @default(DRAFT)
     budget       Float?
@@ -1453,13 +1432,8 @@ model CreativeBrief {
     updatedAt    DateTime    @updatedAt
 }
 
-// ---- NEW model: Work Breakdown Structure milestone (Dept 6 — Project
-// Planning). A Project is broken into Milestones (Discovery, Strategy,
-// Creative, Production, Social, Ads, PR, Reporting...), each with an owner,
-// deadline, budget, risk level, approval stage and dependencies; Tasks then
-// roll up under a Milestone. (added) ----
 model Milestone {
-    id            String                 @id @default(cuid()) @map("_id")
+    id            String                 @id @default(cuid())
     name          String
     description   String?
     order         Int                    @default(0)
@@ -1478,11 +1452,8 @@ model Milestone {
     ownerId   String?
     owner     User?   @relation("MilestoneOwner", fields: [ownerId], references: [id])
 
-    // Self-relation for milestone-level dependencies (e.g. Production depends on Creative)
-    dependsOnIds String[]    @map("dependsOnIds")
-    dependsOn    Milestone[] @relation("MilestoneDependencies", fields: [dependsOnIds], references: [id])
-    dependentIds String[]    @map("dependentIds")
-    dependents   Milestone[] @relation("MilestoneDependencies", fields: [dependentIds], references: [id])
+    dependsOn  Milestone[] @relation("MilestoneDependencies")
+    dependents Milestone[] @relation("MilestoneDependencies")
 
     tasks Task[]
 
@@ -1493,15 +1464,11 @@ model Milestone {
     @@index([agencyId, status])
 }
 
-// ---- NEW models: reusable Project/Task templates so a signed Contract can
-// auto-generate a Project -> Milestones -> Tasks WBS instead of starting
-// from a blank page ("Department 5/6" automation + "Project Templates"
-// module). (added) ----
 model ProjectTemplate {
-    id          String       @id @default(cuid()) @map("_id")
+    id          String       @id @default(cuid())
     name        String
     description String?
-    serviceType String? // e.g. "Product Launch", "Always-On Social"
+    serviceType String?
     type        TemplateType @default(PROJECT)
 
     agencyId String
@@ -1515,8 +1482,8 @@ model ProjectTemplate {
 }
 
 model ProjectTemplateItem {
-    id             String        @id @default(cuid()) @map("_id")
-    milestoneName  String // groups tasks under a milestone name at instantiation time
+    id             String        @id @default(cuid())
+    milestoneName  String
     taskTitle      String
     taskType       String
     description    String?
@@ -1538,7 +1505,7 @@ model ProjectTemplateItem {
 // --------------------------------------
 
 model TaskCategory {
-    id            String                    @id @default(cuid()) @map("_id")
+    id            String                    @id @default(cuid())
     name          String
     description   String?
     agencyId      String
@@ -1555,7 +1522,7 @@ model TaskCategory {
 }
 
 model Task {
-    id             String            @id @default(cuid()) @map("_id")
+    id             String            @id @default(cuid())
     taskNo         String?
     taskType       String
     title          String?
@@ -1596,11 +1563,8 @@ model Task {
     compensationStrategy CompensationType    @default(NONE)
     deductionStrategy    AttendanceDeduction @default(NONE)
 
-    // Self-relation for dependencies
-    dependsOnIds String[] @map("dependsOnIds")
-    dependsOn    Task[]   @relation("TaskDependencies", fields: [dependsOnIds], references: [id])
-    dependentIds String[] @map("dependentIds")
-    dependents   Task[]   @relation("TaskDependencies", fields: [dependentIds], references: [id])
+    dependsOn  Task[] @relation("TaskDependencies")
+    dependents Task[] @relation("TaskDependencies")
 
     projectId   String
     project     Project       @relation(fields: [projectId], references: [id])
@@ -1613,10 +1577,8 @@ model Task {
     milestoneId String?
     milestone   Milestone?    @relation(fields: [milestoneId], references: [id])
 
-    assigneeIds String[] @map("assigneeIds")
-    assignees   User[]   @relation("TaskAssignees", fields: [assigneeIds], references: [id])
-    assetIds    String[]
-    assets      Asset[]  @relation("TaskAssets", fields: [assetIds], references: [id])
+    assignees User[]  @relation("TaskAssignees")
+    assets    Asset[] @relation("TaskAssets")
 
     plannedExpenses       TaskPlannedExpense[]
     taskExpenses          TaskExpense[]
@@ -1630,9 +1592,7 @@ model Task {
     invoiceItems          ClientInvoiceItem[]
     resourceAllocations   ResourceAllocation[]
 
-    // ---- NEW relation (added) ----
-    tagIds String[]
-    tags   Tag[]    @relation("TaskTags", fields: [tagIds], references: [id])
+    tags Tag[] @relation("TaskTags")
 
     createdAt DateTime  @default(now())
     updatedAt DateTime  @updatedAt
@@ -1645,7 +1605,7 @@ model Task {
 }
 
 model TaskPlannedExpense {
-    id            String               @id @default(cuid()) @map("_id")
+    id            String               @id @default(cuid())
     itemName      String
     estimatedCost Float                @default(0.0)
     approvedCost  Float?
@@ -1656,13 +1616,10 @@ model TaskPlannedExpense {
     unitCost      Float                @default(0.0)
     currency      String               @default("EGP")
 
-    isRecurring Boolean @default(false) // e.g., Daily transport fee
-    taxRate     Float   @default(0.0) // Tax handling is vital for professional agencies
+    isRecurring Boolean @default(false)
+    taxRate     Float   @default(0.0)
 
-    // Calculated values for your dashboard
-    // You can handle these in your API logic, but having them here 
-    // makes UI rendering much faster.
-    totalEstimated Float @default(0.0) // (quantity * unitCost) + tax
+    totalEstimated Float @default(0.0)
 
     taskId    String
     task      Task    @relation(fields: [taskId], references: [id])
@@ -1683,7 +1640,7 @@ model TaskPlannedExpense {
 }
 
 model TaskExpense {
-    id           String              @id @default(cuid()) @map("_id")
+    id           String              @id @default(cuid())
     itemName     String
     cost         Float
     category     TaskExpenseCategory @default(EQUIPMENT)
@@ -1713,7 +1670,7 @@ model TaskExpense {
 }
 
 model Comment {
-    id        String   @id @default(cuid()) @map("_id")
+    id        String   @id @default(cuid())
     text      String
     authorId  String?
     author    User?    @relation(fields: [authorId], references: [id])
@@ -1728,7 +1685,7 @@ model Comment {
 }
 
 model Todo {
-    id          String       @id @default(cuid()) @map("_id")
+    id          String       @id @default(cuid())
     text        String
     description String?
     completed   Boolean      @default(false)
@@ -1749,33 +1706,25 @@ model Todo {
     @@index([taskId, completed])
 }
 
-// ---- NEW model: shared flexible labeling across Task & Project (added) ----
 model Tag {
-    id    String @id @default(cuid()) @map("_id")
+    id    String @id @default(cuid())
     name  String
     color String @default("#6366F1")
 
     agencyId String
     agency   Agency @relation(fields: [agencyId], references: [id])
 
-    taskIds    String[]
-    tasks      Task[]    @relation("TaskTags", fields: [taskIds], references: [id])
-    projectIds String[]
-    projects   Project[] @relation("ProjectTags", fields: [projectIds], references: [id])
+    tasks    Task[]    @relation("TaskTags")
+    projects Project[] @relation("ProjectTags")
 
     createdAt DateTime @default(now())
 
     @@unique([agencyId, name])
 }
 
-// ---- NEW models: Department 9 — Creative Development (Concept A/B/C, each
-// with moodboards/storyboards/scripts/mockups) and Department 10 —
-// Production (versioned assets going V1 -> Client Review -> V2 -> Internal
-// Review -> V3 -> Approved). Nothing moves to Production before a Concept
-// is approved. (added) ----
 model Concept {
-    id          String        @id @default(cuid()) @map("_id")
-    name        String // e.g. "Concept A"
+    id          String        @id @default(cuid())
+    name        String
     description String?
     status      ConceptStatus @default(DRAFT)
 
@@ -1793,7 +1742,7 @@ model Concept {
 }
 
 model CreativeAsset {
-    id   String            @id @default(cuid()) @map("_id")
+    id   String            @id @default(cuid())
     name String
     type CreativeAssetType @default(OTHER)
 
@@ -1811,7 +1760,7 @@ model CreativeAsset {
 }
 
 model CreativeAssetVersion {
-    id        String                     @id @default(cuid()) @map("_id")
+    id        String                     @id @default(cuid())
     versionNo Int                        @default(1)
     fileUrl   String?
     status    CreativeAssetVersionStatus @default(DRAFT)
@@ -1829,12 +1778,8 @@ model CreativeAssetVersion {
     @@index([creativeAssetId, versionNo])
 }
 
-// ---- NEW models: Department 11 — Digital Marketing setup (ad campaigns
-// with UTM/pixel tracking) and Department 13 — Campaign Management (daily
-// performance snapshots: reach, CTR, CPC, CPM, ROAS...). A drop in CTR can
-// drive an auto-generated optimization Task assigned to a Media Buyer. (added) ----
 model DigitalAdCampaign {
-    id              String                @id @default(cuid()) @map("_id")
+    id              String                @id @default(cuid())
     name            String
     platform        AdPlatform            @default(FACEBOOK)
     status          DigitalCampaignStatus @default(DRAFT)
@@ -1866,7 +1811,7 @@ model DigitalAdCampaign {
 }
 
 model AdMetricSnapshot {
-    id          String   @id @default(cuid()) @map("_id")
+    id          String   @id @default(cuid())
     date        DateTime
     reach       Int      @default(0)
     impressions Int      @default(0)
@@ -1892,12 +1837,8 @@ model AdMetricSnapshot {
     @@index([agencyId, date])
 }
 
-// ---- NEW model: Department 18 — Knowledge Base. Reusable institutional
-// knowledge (best-performing ads, approved proposal templates, brand
-// guidelines, lessons learned) so the next project starts with accumulated
-// experience instead of a blank page. (added) ----
 model KnowledgeArticle {
-    id      String               @id @default(cuid()) @map("_id")
+    id      String               @id @default(cuid())
     title   String
     type    KnowledgeArticleType @default(OTHER)
     content String
@@ -1914,11 +1855,8 @@ model KnowledgeArticle {
     @@index([agencyId, type])
 }
 
-// ---- NEW model: Department 17 — Reporting. Generated end-of-campaign
-// deliverables (marketing/financial/project/ROI reports) as PDF, PPTX or
-// dashboard exports. (added) ----
 model Report {
-    id          String       @id @default(cuid()) @map("_id")
+    id          String       @id @default(cuid())
     name        String
     type        ReportType   @default(PROJECT)
     format      ReportFormat @default(PDF)
@@ -1941,13 +1879,9 @@ model Report {
     @@index([clientId])
 }
 
-// ---- NEW model: Department 7 — Resource Management. Tracks how much of a
-// person's time/workload is allocated to a Project (and optionally a
-// specific Task) over a date range, plus the cost rate for that
-// allocation, so a PM can see who's overloaded before assigning more work. (added) ----
 model ResourceAllocation {
-    id                String    @id @default(cuid()) @map("_id")
-    allocationPercent Float     @default(100.0) // % of the person's capacity committed
+    id                String    @id @default(cuid())
+    allocationPercent Float     @default(100.0)
     hourlyCost        Float?
     startDate         DateTime
     endDate           DateTime?
@@ -1973,7 +1907,7 @@ model ResourceAllocation {
 // --------------------------------------
 
 model ClientInvoice {
-    id          String            @id @default(cuid()) @map("_id")
+    id          String            @id @default(cuid())
     invoiceNo   String
     type        ClientInvoiceType @default(PROJECT_BASED)
     status      InvoiceStatus     @default(DRAFT)
@@ -2003,7 +1937,6 @@ model ClientInvoice {
     allocations    PaymentAllocation[]
     statementLines ClientStatementLine[]
 
-    // ---- NEW relation (added) ----
     creditNotes CreditNote[]
 
     createdAt DateTime @default(now())
@@ -2016,12 +1949,12 @@ model ClientInvoice {
 }
 
 model ClientInvoiceItem {
-    id             String  @id @default(cuid()) @map("_id")
+    id             String  @id @default(cuid())
     description    String
     quantity       Float   @default(1.0)
     unitPrice      Float   @default(0.0)
     total          Float   @default(0.0)
-    taxRate        Float   @default(0.0) // Percentage (e.g., 14.0 for VAT)
+    taxRate        Float   @default(0.0)
     discountAmount Float   @default(0.0)
     isBillable     Boolean @default(true)
 
@@ -2034,7 +1967,7 @@ model ClientInvoiceItem {
 }
 
 model Payment {
-    id              String        @id @default(cuid()) @map("_id")
+    id              String        @id @default(cuid())
     paymentNo       String?
     amount          Float
     unappliedAmount Float         @default(0.0)
@@ -2066,7 +1999,7 @@ model Payment {
 }
 
 model PaymentAllocation {
-    id          String                  @id @default(cuid()) @map("_id")
+    id          String                  @id @default(cuid())
     amount      Float
     currency    String                  @default("EGP")
     status      PaymentAllocationStatus @default(APPLIED)
@@ -2091,7 +2024,7 @@ model PaymentAllocation {
 }
 
 model ClientStatement {
-    id               String                @id @default(cuid()) @map("_id")
+    id               String                @id @default(cuid())
     statementNo      String
     status           ClientStatementStatus @default(DRAFT)
     periodStart      DateTime
@@ -2123,7 +2056,7 @@ model ClientStatement {
 }
 
 model ClientStatementLine {
-    id          String            @id @default(cuid()) @map("_id")
+    id          String            @id @default(cuid())
     lineDate    DateTime
     type        StatementLineType
     description String
@@ -2146,9 +2079,8 @@ model ClientStatementLine {
     @@index([paymentId])
 }
 
-// ---- NEW model: refunds / write-offs / goodwill credits against invoices (added) ----
 model CreditNote {
-    id           String           @id @default(cuid()) @map("_id")
+    id           String           @id @default(cuid())
     creditNoteNo String
     amount       Float
     currency     String           @default("EGP")
@@ -2172,9 +2104,8 @@ model CreditNote {
     @@index([invoiceId])
 }
 
-// ---- NEW model: automatic generation schedule for retainer/recurring invoices (added) ----
 model RecurringInvoiceSchedule {
-    id          String                    @id @default(cuid()) @map("_id")
+    id          String                    @id @default(cuid())
     name        String
     amount      Float
     currency    String                    @default("EGP")
@@ -2200,10 +2131,8 @@ model RecurringInvoiceSchedule {
     @@index([clientId])
 }
 
-// ---- NEW model: multi-currency support (agency default is EGP, but
-// invoices/payments/expenses can be in other currencies) (added) ----
 model ExchangeRate {
-    id            String   @id @default(cuid()) @map("_id")
+    id            String   @id @default(cuid())
     baseCurrency  String
     quoteCurrency String
     rate          Float
@@ -2220,7 +2149,7 @@ model ExchangeRate {
 }
 
 model Vendor {
-    id                 String                    @id @default(cuid()) @map("_id")
+    id                 String                    @id @default(cuid())
     vendorNo           String?
     name               String
     email              String?
@@ -2230,7 +2159,7 @@ model Vendor {
     address            Address?
     taxNumber          String?
     notes              String?
-    paymentTerms       String                    @default("COD") // e.g., "COD", "NET-30"
+    paymentTerms       String                    @default("COD")
     agencyId           String
     agency             Agency                    @relation(fields: [agencyId], references: [id])
     plannedExpenses    TaskPlannedExpense[]
@@ -2245,11 +2174,8 @@ model Vendor {
     @@index([agencyId, name])
 }
 
-// ---- NEW models: Department 8 — Procurement. Requesting/comparing vendor
-// quotations, then raising a Purchase Order once one is selected, linked
-// through to Finance via TaskExpense/Payment. (added) ----
 model Quotation {
-    id          String          @id @default(cuid()) @map("_id")
+    id          String          @id @default(cuid())
     quotationNo String?
     description String?
     amount      Float
@@ -2278,7 +2204,7 @@ model Quotation {
 }
 
 model PurchaseOrder {
-    id                   String              @id @default(cuid()) @map("_id")
+    id                   String              @id @default(cuid())
     poNo                 String?
     status               PurchaseOrderStatus @default(DRAFT)
     totalAmount          Float               @default(0.0)
@@ -2307,7 +2233,7 @@ model PurchaseOrder {
 }
 
 model PurchaseOrderItem {
-    id          String @id @default(cuid()) @map("_id")
+    id          String @id @default(cuid())
     description String
     quantity    Float  @default(1.0)
     unitCost    Float  @default(0.0)
@@ -2319,12 +2245,9 @@ model PurchaseOrderItem {
     createdAt DateTime @default(now())
 }
 
-// ---- NEW model: Department 18 — Knowledge Base entry recording vendor
-// track record (delivery quality, reliability) so procurement can weigh
-// future quotations. (added) ----
 model VendorPerformanceReview {
-    id             String  @id @default(cuid()) @map("_id")
-    rating         Int // 1-5
+    id             String  @id @default(cuid())
+    rating         Int
     onTimeDelivery Boolean @default(true)
     comment        String?
 
@@ -2341,7 +2264,7 @@ model VendorPerformanceReview {
 }
 
 model Asset {
-    id                 String      @id @default(cuid()) @map("_id")
+    id                 String      @id @default(cuid())
     assetNo            String?
     assetName          String
     category           String
@@ -2353,9 +2276,8 @@ model Asset {
     maintenanceDueAt   DateTime?
 
     agencyId String
-    agency   Agency   @relation(fields: [agencyId], references: [id])
-    taskIds  String[]
-    tasks    Task[]   @relation("TaskAssets", fields: [taskIds], references: [id])
+    agency   Agency @relation(fields: [agencyId], references: [id])
+    tasks    Task[] @relation("TaskAssets")
 
     createdAt DateTime  @default(now())
     updatedAt DateTime  @updatedAt
@@ -2366,7 +2288,7 @@ model Asset {
 }
 
 model Expense {
-    id           String        @id @default(cuid()) @map("_id")
+    id           String        @id @default(cuid())
     expenseNo    String?
     resourceName String
     category     String
@@ -2378,7 +2300,7 @@ model Expense {
 
     agencyId String
     agency   Agency  @relation(fields: [agencyId], references: [id])
-    userId   String? @map("userId")
+    userId   String?
     user     User?   @relation(fields: [userId], references: [id])
 
     createdAt DateTime @default(now())
@@ -2393,7 +2315,7 @@ model Expense {
 // --------------------------------------
 
 model Notification {
-    id        String           @id @default(cuid()) @map("_id")
+    id        String           @id @default(cuid())
     title     String
     message   String
     type      NotificationType @default(SYSTEM)
@@ -2412,7 +2334,7 @@ model Notification {
 }
 
 model Attachment {
-    id          String  @id @default(cuid()) @map("_id")
+    id          String  @id @default(cuid())
     fileName    String
     fileUrl     String
     mimeType    String?
@@ -2436,7 +2358,7 @@ model Attachment {
 }
 
 model AuditLog {
-    id         String      @id @default(cuid()) @map("_id")
+    id         String      @id @default(cuid())
     action     AuditAction
     entityType String
     entityId   String
@@ -2457,11 +2379,11 @@ model AuditLog {
 }
 
 model Webhook {
-    id       String   @id @default(cuid()) @map("_id")
+    id       String   @id @default(cuid())
     name     String
     url      String
-    events   String[] // e.g., ["task.completed", "invoice.paid"]
-    secret   String? // For payload signing/security
+    events   String[]
+    secret   String?
     isActive Boolean  @default(true)
 
     agencyId String
@@ -2473,9 +2395,8 @@ model Webhook {
     @@index([agencyId, isActive])
 }
 
-// ---- NEW model: internal company-wide / department-wide announcements (added) ----
 model Announcement {
-    id        String               @id @default(cuid()) @map("_id")
+    id        String               @id @default(cuid())
     title     String
     body      String
     audience  AnnouncementAudience @default(ALL_STAFF)
@@ -2493,10 +2414,8 @@ model Announcement {
     @@index([agencyId, publishAt])
 }
 
-// ---- NEW model: generic approval workflow, used for expenses, invoices,
-// payouts, leave requests, etc. so approvals aren't hardcoded per-entity (added) ----
 model ApprovalRequest {
-    id         String             @id @default(cuid()) @map("_id")
+    id         String             @id @default(cuid())
     entityType ApprovalEntityType
     entityId   String
     status     ApprovalStatus     @default(PENDING)
@@ -2517,9 +2436,8 @@ model ApprovalRequest {
     @@index([status])
 }
 
-// ---- NEW model: outbound email/notification delivery tracking (added) ----
 model EmailLog {
-    id           String      @id @default(cuid()) @map("_id")
+    id           String      @id @default(cuid())
     toEmail      String
     subject      String
     template     String?
@@ -2536,10 +2454,9 @@ model EmailLog {
     @@index([toEmail])
 }
 
-// ---- NEW model: client satisfaction ratings on completed projects (added) ----
 model ClientFeedback {
-    id      String  @id @default(cuid()) @map("_id")
-    rating  Int // 1-5
+    id      String  @id @default(cuid())
+    rating  Int
     comment String?
 
     agencyId  String

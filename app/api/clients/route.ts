@@ -3,8 +3,6 @@ import { getServerSession } from "next-auth/next";
 import prisma from "@/lib/prisma";
 import { authOptions } from "@/lib/authOptions";
 
-const DEFAULT_AGENCY_ID = "cmqv7pkzo0000xmkk0u7229sf";
-
 type CreateClientBody = {
   agencyId?: string;
   clientName?: string;
@@ -45,29 +43,17 @@ const money = (value: unknown) => {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
 };
 
-async function getAgencyId(req: Request) {
-  const session = await getServerSession(authOptions).catch(() => null);
-  const sessionAgencyId = session?.user?.agencyId;
-
-  if (sessionAgencyId) return sessionAgencyId;
-
-  const headerAgencyId = clean(req.headers.get("x-agency-id"));
-  if (headerAgencyId) return headerAgencyId;
-
-  const url = new URL(req.url);
-  return clean(url.searchParams.get("agencyId")) ?? DEFAULT_AGENCY_ID;
-}
-
 const nextClientNo = async (agencyId: string) => {
   const clientCount = await prisma.client.count({ where: { agencyId } });
   return `CLI-${String(clientCount + 1).padStart(5, "0")}`;
 };
 
-export async function GET(req: Request) {
-  const agencyId = await getAgencyId(req);
+export async function GET() {
+  const session = await getServerSession(authOptions).catch(() => null);
+  const agencyId = session?.user?.agencyId;
 
   if (!agencyId) {
-    return NextResponse.json({ error: "Unauthorized: No agency context" }, { status: 401 });
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   try {
@@ -220,14 +206,15 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const body = (await req.json()) as CreateClientBody;
-  const agencyId = (await getAgencyId(req)) ?? clean(body.agencyId);
+  const session = await getServerSession(authOptions).catch(() => null);
+  const agencyId = session?.user?.agencyId;
 
   if (!agencyId) {
-    return NextResponse.json({ error: "Unauthorized: No agency context" }, { status: 401 });
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   try {
+    const body = (await req.json()) as CreateClientBody;
     const clientName = clean(body.clientName);
     const accountType = clean(body.accountType);
     const currency = clean(body.currency) ?? "EGP";
