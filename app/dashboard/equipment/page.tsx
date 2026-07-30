@@ -18,12 +18,12 @@ interface NestedTask {
 
 interface Asset {
   id: string;
-  assetNo: string;
+  assetNo?: string;
   assetName: string;
   category: string;
   purchaseDate: string;
   currentValue: number;
-  availabilityStatus: "Available" | "On Set" | "Maintenance";
+  availabilityStatus: "AVAILABLE" | "IN_USE" | "MAINTENANCE" | "RETIRED" | "LOST";
   tasks?: NestedTask[];
 }
 
@@ -265,11 +265,11 @@ const filteredInventory = useMemo(() => {
         <td className="p-6">
           <div className="flex items-center gap-2">
             <span className={`w-2 h-2 rounded-full ${
-              item.availabilityStatus === 'Available' ? 'bg-emerald-500' : 
-              item.availabilityStatus === 'On Set' ? 'bg-blue-500' : 'bg-rose-500'
+              item.availabilityStatus === 'AVAILABLE' ? 'bg-emerald-500' : 
+              item.availabilityStatus === 'IN_USE' ? 'bg-blue-500' : 'bg-rose-500'
             }`} />
             <p className="text-[10px] font-black uppercase tracking-widest text-foreground">
-              {item.availabilityStatus}
+              {item.availabilityStatus?.replace('_', ' ')}
             </p>
           </div>
         </td>

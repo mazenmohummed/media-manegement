@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { db as prisma } from "@/lib/db";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/authOptions";
+import { AttendanceLogStatus } from "@prisma/client";
 
 export async function POST(req: Request) {
   try {
@@ -62,7 +63,7 @@ export async function POST(req: Request) {
           checkOutTime: null, // 👈 force the field to exist on creation
           totalHours: null,   // 👈 same treatment for the other optional field
           isLate,
-          status: isLate ? "LATE" : "PRESENT",
+          status: AttendanceLogStatus.LATE_CHECKIN,
           type: "OFFICE",
           userId,
           agencyId,

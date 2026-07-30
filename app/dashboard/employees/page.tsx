@@ -1,14 +1,15 @@
 "use client";
 
-import React, { useEffect, useState, useMemo } from "react";
+import React, { useEffect, useState, useMemo, useCallback } from "react";
 import Link from "next/link";
 import {
-  UserPlus, Search, Loader2, Users, Clock, Zap, 
-  DollarSign, Wallet, SlidersHorizontal, TrendingUp, CheckSquare, 
+  UserPlus, Search, Loader2, Users, Clock, Zap,
+  DollarSign, Wallet, SlidersHorizontal, TrendingUp, CheckSquare,
   UserCheck
 } from "lucide-react";
 import { useSession } from "next-auth/react";
 import PerformanceTable from "@/components/main/employees/PerformanceTable";
+import AddEmployeeModal from "@/components/main/employees/AddEmployeeModal";
 
 // ─── Interfaces ───────────────────────────────────────────────────────────────
 interface Employee {
@@ -26,6 +27,7 @@ interface Employee {
   profitContribution: number;
   commissions: number;
   overtime: number;
+  deductions: number;
   totalWorkingHours: number;
   lateCount: number;
   totalPayouts: number;
@@ -34,6 +36,7 @@ interface Employee {
   completedTasksCount: number;
   activeTasksCount: number;
   attendanceLogs?: Array<{ type: string }>;
+  leaves?: Array<{ status?: string }>;
 }
 
 interface Metrics {
@@ -65,14 +68,14 @@ const USER_TYPE_COLOR: Record<string, string> = {
   INTERN: "bg-slate-500/10 text-slate-400",
 };
 
-
-
 export default function EmployeesPage() {
   const { data: session, status } = useSession();
 
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
 
   // Filter States
   const [search, setSearch] = useState("");
@@ -80,20 +83,26 @@ export default function EmployeesPage() {
   const [roleFilter, setRoleFilter] = useState("ALL");
   const [sortBy, setSortBy] = useState("name");
 
+  const fetchEmployees = useCallback(async ({ silent }: { silent?: boolean } = {}) => {
+    if (silent) setRefreshing(true);
+    else setLoading(true);
+    try {
+      const res = await fetch("/api/employees");
+      const data = await res.json();
+      setEmployees(data.employees ?? []);
+      setMetrics(data.metrics ?? null);
+    } catch (err) {
+      console.error("Failed to fetch workforce arrays:", err);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (status !== "authenticated") return;
-    (async () => {
-      try {
-        const res = await fetch("/api/employees");
-        const data = await res.json();
-        setEmployees(data.employees ?? []);
-      } catch (err) {
-        console.error("Failed to fetch workforce arrays:", err);
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, [status]);
+    fetchEmployees();
+  }, [status, fetchEmployees]);
 
   const filteredAndSorted = useMemo(() => {
     let result = employees.filter((e) => {
@@ -106,8 +115,6 @@ export default function EmployeesPage() {
       const matchType = typeFilter === "ALL" || e.userType === typeFilter;
       const matchRole = roleFilter === "ALL" || e.role.toUpperCase() === roleFilter;
 
-      
-
       return matchSearch && matchType && matchRole;
     });
 
@@ -119,8 +126,6 @@ export default function EmployeesPage() {
       return 0;
     });
   }, [employees, search, typeFilter, roleFilter, sortBy]);
-
-  
 
   if (status === "loading" || loading) {
     return (
@@ -143,6 +148,13 @@ export default function EmployeesPage() {
             Staff Registry
           </h1>
         </div>
+        <button
+          onClick={() => setIsAddModalOpen(true)}
+          className="flex items-center gap-2 bg-primary text-background text-[10px] font-black uppercase tracking-widest px-6 py-4 rounded-2xl hover:opacity-90 transition-opacity shrink-0"
+        >
+          <UserPlus size={15} />
+          New Employee
+        </button>
       </header>
 
       {/* METRICS DASHBOARD */}
@@ -161,9 +173,16 @@ export default function EmployeesPage() {
 
       {/* FILTERS */}
       <div className="bg-card border border-border p-6 rounded-[2rem] space-y-4">
-        <div className="flex items-center gap-2 text-muted-foreground">
-          <SlidersHorizontal size={12} />
-          <span className="text-[9px] font-black uppercase tracking-wider">Registry Filters</span>
+        <div className="flex items-center justify-between text-muted-foreground">
+          <div className="flex items-center gap-2">
+            <SlidersHorizontal size={12} />
+            <span className="text-[9px] font-black uppercase tracking-wider">Registry Filters</span>
+          </div>
+          {refreshing && (
+            <span className="flex items-center gap-1.5 text-[8px] font-black uppercase tracking-wider opacity-50">
+              <Loader2 size={10} className="animate-spin" /> Refreshing
+            </span>
+          )}
         </div>
         <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
           <div className="relative md:col-span-4">
@@ -189,6 +208,8 @@ export default function EmployeesPage() {
               <option value="ALL">All Roles</option>
               <option value="CREATIVE">Creative</option>
               <option value="OPERATOR">Operator</option>
+              <option value="TEAMLEADER">Team Leader</option>
+              <option value="FINANCE">Finance</option>
               <option value="ADMIN">Admin</option>
             </select>
           </div>
@@ -203,32 +224,31 @@ export default function EmployeesPage() {
         </div>
       </div>
 
-   
       {/* PERFORMANCE TERMINAL SYSTEM TABLE */}
-      <PerformanceTable 
-        performanceData={filteredAndSorted.map((emp: any) => ({
+      <PerformanceTable
+        performanceData={filteredAndSorted.map((emp) => ({
           name: emp.name,
           skills: emp.verifiedSkills || [],
           tasksCompleted: emp.completedTasksCount || 0,
           tasksCount: emp.tasksCount || 0,
-          revenueGenerated: emp.totalRevenue || 0, 
+          revenueGenerated: emp.totalRevenue || 0,
           workingHours: emp.totalWorkingHours || 0,
           lateDays: emp.lateCount || 0,
-          baseSalary: emp.baseSalary || 0, 
-          commissions: emp.commissions || 0, 
+          baseSalary: emp.baseSalary || 0,
+          commissions: emp.commissions || 0,
           overtime: emp.overtime || 0,
-          deductions: emp.deductions || 0, 
+          deductions: emp.deductions || 0,
           extraPayouts: emp.totalPayouts || 0,
           expenses: emp.ledgerTotal || 0,
           efficiency: emp.efficiencyRate || 0,
-          // ✅ Fixed: Changed to check the embedded leaves array for approved statuses
-          activeLeaves: emp.leaves?.filter((leave: any) => {
+          activeLeaves: emp.leaves?.filter((leave) => {
             return leave.status?.trim().toUpperCase() === "APPROVED";
           }).length || 0,
           walletBalance: emp.walletBalance || 0,
-        }))} 
+        }))}
       />
-            {/* CARDS REGISTRY */}
+
+      {/* CARDS REGISTRY */}
       {filteredAndSorted.length === 0 ? (
         <div className="text-center py-24 opacity-30">
           <Users size={40} className="mx-auto mb-4" />
@@ -241,6 +261,13 @@ export default function EmployeesPage() {
           ))}
         </div>
       )}
+
+      {/* ADD EMPLOYEE MODAL */}
+      <AddEmployeeModal
+        open={isAddModalOpen}
+        onClose={() => setIsAddModalOpen(false)}
+        onCreated={() => fetchEmployees({ silent: true })}
+      />
     </div>
   );
 }

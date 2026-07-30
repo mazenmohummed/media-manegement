@@ -368,6 +368,173 @@ enum ApprovalStatus {
     CANCELLED
 }
 
+enum LeadStatus {
+    NEW
+    CONTACTED
+    QUALIFIED
+    DISQUALIFIED
+    CONVERTED
+}
+
+enum LeadSource {
+    REFERRAL
+    WEBSITE
+    SOCIAL_MEDIA
+    COLD_OUTREACH
+    EVENT
+    PARTNER
+    OTHER
+}
+
+enum InteractionType {
+    MEETING
+    CALL
+    EMAIL
+    WHATSAPP
+    PRESENTATION
+    PROPOSAL_SENT
+    NOTE
+}
+
+enum OpportunityStage {
+    DISCOVERY
+    STRATEGY
+    PROPOSAL
+    NEGOTIATION
+    WON
+    LOST
+}
+
+enum ProposalStatus {
+    DRAFT
+    SENT
+    UNDER_REVIEW
+    ACCEPTED
+    REJECTED
+    EXPIRED
+}
+
+// ---- NEW ENUMS (gap-fill pass: Project Planning/WBS, Procurement,
+// Creative Development, Production, Digital Marketing, Campaign
+// Management, Reporting, Knowledge Base, Resource Management) (added) ----
+
+enum RiskLevel {
+    LOW
+    MEDIUM
+    HIGH
+}
+
+enum MilestoneApprovalStage {
+    NOT_SUBMITTED
+    SUBMITTED
+    CLIENT_REVIEW
+    APPROVED
+    REJECTED
+}
+
+enum MilestoneStatus {
+    PENDING
+    IN_PROGRESS
+    COMPLETED
+    DELAYED
+    CANCELLED
+}
+
+enum TemplateType {
+    PROJECT
+    TASK
+}
+
+enum QuotationStatus {
+    REQUESTED
+    RECEIVED
+    COMPARED
+    SELECTED
+    REJECTED
+    EXPIRED
+}
+
+enum PurchaseOrderStatus {
+    DRAFT
+    SENT
+    CONFIRMED
+    DELIVERED
+    CANCELLED
+    INVOICED
+}
+
+enum ConceptStatus {
+    DRAFT
+    IN_REVIEW
+    APPROVED
+    REJECTED
+    ARCHIVED
+}
+
+enum CreativeAssetType {
+    MOODBOARD
+    STORYBOARD
+    SCRIPT
+    COPY
+    MOCKUP
+    VIDEO
+    IMAGE
+    AUDIO
+    DOCUMENT
+    OTHER
+}
+
+enum CreativeAssetVersionStatus {
+    DRAFT
+    CLIENT_REVIEW
+    INTERNAL_REVIEW
+    APPROVED
+    REJECTED
+}
+
+enum AdPlatform {
+    FACEBOOK
+    INSTAGRAM
+    TIKTOK
+    GOOGLE
+    YOUTUBE
+    SNAPCHAT
+    X
+    LINKEDIN
+    OTHER
+}
+
+enum DigitalCampaignStatus {
+    DRAFT
+    ACTIVE
+    PAUSED
+    COMPLETED
+}
+
+enum KnowledgeArticleType {
+    BEST_PRACTICE
+    TEMPLATE
+    LESSON_LEARNED
+    BRAND_GUIDELINE
+    CASE_STUDY
+    OTHER
+}
+
+enum ReportType {
+    MARKETING
+    FINANCIAL
+    PROJECT
+    CLIENT_SATISFACTION
+    EMPLOYEE_PERFORMANCE
+    ROI
+}
+
+enum ReportFormat {
+    PDF
+    PPTX
+    DASHBOARD
+}
+
 type WorkingDay {
     day       String
     openTime  String
@@ -396,9 +563,177 @@ type Address {
     country    String?
 }
 
+type DiscoveryPersona {
+    name           String
+    demographics   String?
+    psychographics String?
+    buyingBehavior String?
+    goals          String?
+    frustrations   String?
+}
+
+type DiscoveryCompetitor {
+    name        String
+    strengths   String?
+    weaknesses  String?
+    pricingNote String?
+    marketShare String?
+}
+
+type DiscoveryProduct {
+    name       String
+    sku        String?
+    price      Float?
+    usp        String?
+    painPoints String?
+}
+
 // --------------------------------------
 // 2. Identity & SaaS Multi-Tenancy
 // --------------------------------------
+// --------------------------------------
+// 0. NEW ENUMS — CRM / Pre-Sales
+// --------------------------------------
+
+// --------------------------------------
+// 1. Department 1 — Business Development
+// --------------------------------------
+
+model Lead {
+    id                String     @id @default(cuid()) @map("_id")
+    leadNo            String?
+    companyName       String
+    contactName       String?
+    contactEmail      String?
+    contactPhone      String?
+    industry          String?
+    estimatedBudget   Float?
+    currency          String     @default("EGP")
+    expectedCloseDate DateTime?
+    source            LeadSource @default(OTHER)
+    status            LeadStatus @default(NEW)
+    notes             String?
+
+    agencyId String
+    agency   Agency  @relation(fields: [agencyId], references: [id])
+    ownerId  String?
+    owner    User?   @relation("LeadOwner", fields: [ownerId], references: [id])
+
+    interactions LeadInteraction[]
+    opportunity  Opportunity?
+
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
+
+    @@index([agencyId, status])
+    @@index([agencyId, leadNo])
+}
+
+model LeadInteraction {
+    id         String          @id @default(cuid()) @map("_id")
+    type       InteractionType
+    summary    String
+    occurredAt DateTime        @default(now())
+
+    leadId      String
+    lead        Lead    @relation(fields: [leadId], references: [id])
+    agencyId    String
+    agency      Agency  @relation(fields: [agencyId], references: [id])
+    createdById String?
+    createdBy   User?   @relation("InteractionCreator", fields: [createdById], references: [id])
+
+    createdAt DateTime @default(now())
+
+    @@index([leadId, occurredAt])
+}
+
+// --------------------------------------
+// 2 & 3. Departments 2-3 — Discovery + Strategy
+// (both live under Opportunity, since a qualified Lead becomes one)
+// --------------------------------------
+
+model Opportunity {
+    id       String           @id @default(cuid()) @map("_id")
+    name     String
+    stage    OpportunityStage @default(DISCOVERY)
+    budget   Float?
+    currency String           @default("EGP")
+
+    // Discovery
+    companyMission      String?
+    brandValues         String?
+    personas            DiscoveryPersona[]
+    competitors         DiscoveryCompetitor[]
+    products            DiscoveryProduct[]
+    marketResearchNotes String?
+
+    // Strategy
+    marketingStrategy     String?
+    communicationStrategy String?
+    mediaStrategy         String?
+    creativeStrategy      String?
+    launchStrategy        String?
+    kpis                  String[]
+
+    leadId   String @unique
+    lead     Lead   @relation(fields: [leadId], references: [id])
+    agencyId String
+    agency   Agency @relation(fields: [agencyId], references: [id])
+
+    proposals Proposal[]
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@index([agencyId, stage])
+}
+
+// --------------------------------------
+// 4. Department 4 — Proposal
+// --------------------------------------
+
+model Proposal {
+    id              String         @id @default(cuid()) @map("_id")
+    proposalNo      String?
+    status          ProposalStatus @default(DRAFT)
+    totalAmount     Float          @default(0.0)
+    currency        String         @default("EGP")
+    validUntil      DateTime?
+    scope           String?
+    risks           String?
+    assumptions     String?
+    paymentSchedule String?
+
+    opportunityId String
+    opportunity   Opportunity @relation(fields: [opportunityId], references: [id])
+    agencyId      String
+    agency        Agency      @relation(fields: [agencyId], references: [id])
+
+    lineItems ProposalLineItem[]
+
+    // set once accepted + converted
+    contractId String?   @unique
+    contract   Contract? @relation(fields: [contractId], references: [id])
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@index([agencyId, status])
+}
+
+model ProposalLineItem {
+    id          String @id @default(cuid()) @map("_id")
+    description String
+    quantity    Float  @default(1.0)
+    unitPrice   Float  @default(0.0)
+    total       Float  @default(0.0)
+
+    proposalId String
+    proposal   Proposal @relation(fields: [proposalId], references: [id])
+
+    createdAt DateTime @default(now())
+}
 
 model Agency {
     id              String   @id @default(cuid()) @map("_id")
@@ -473,6 +808,25 @@ model Agency {
     clientFeedback            ClientFeedback[]
     approvalRequests          ApprovalRequest[]
     coupons                   Coupon[]
+    leads                     Lead[]
+    leadInteractions          LeadInteraction[]
+    opportunities             Opportunity[]
+    proposals                 Proposal[]
+
+    // ---- NEW relations: gap-fill pass (added) ----
+    milestones               Milestone[]
+    projectTemplates         ProjectTemplate[]
+    quotations               Quotation[]
+    purchaseOrders           PurchaseOrder[]
+    vendorPerformanceReviews VendorPerformanceReview[]
+    concepts                 Concept[]
+    creativeAssets           CreativeAsset[]
+    creativeAssetVersions    CreativeAssetVersion[]
+    digitalAdCampaigns       DigitalAdCampaign[]
+    adMetricSnapshots        AdMetricSnapshot[]
+    knowledgeArticles        KnowledgeArticle[]
+    reports                  Report[]
+    resourceAllocations      ResourceAllocation[]
 
     @@index([agencyName])
 }
@@ -687,11 +1041,16 @@ model User {
     // ---- NEW relations (added) ----
     refreshTokens         RefreshToken[]
     passwordResetTokens   PasswordResetToken[]
-    reviewsReceived       PerformanceReview[]  @relation("ReviewedUser")
-    reviewsGiven          PerformanceReview[]  @relation("ReviewerUser")
+    reviewsReceived       PerformanceReview[]    @relation("ReviewedUser")
+    reviewsGiven          PerformanceReview[]    @relation("ReviewerUser")
     announcementsAuthored Announcement[]
-    approvalRequestsMade  ApprovalRequest[]    @relation("ApprovalRequester")
-    approvalDecisionsMade ApprovalRequest[]    @relation("ApprovalDecider")
+    approvalRequestsMade  ApprovalRequest[]      @relation("ApprovalRequester")
+    approvalDecisionsMade ApprovalRequest[]      @relation("ApprovalDecider")
+    leads                 Lead[]                 @relation("LeadOwner")
+    leadInteractions      LeadInteraction[]      @relation("InteractionCreator")
+    milestonesOwned       Milestone[]            @relation("MilestoneOwner")
+    creativeAssetReviews  CreativeAssetVersion[] @relation("CreativeAssetReviewer")
+    resourceAllocations   ResourceAllocation[]
 
     @@index([agencyId, role])
     @@index([agencyId, isActive])
@@ -883,6 +1242,7 @@ model Client {
     creditNotes               CreditNote[]
     recurringInvoiceSchedules RecurringInvoiceSchedule[]
     feedback                  ClientFeedback[]
+    reports                   Report[]
 
     @@index([agencyId, clientNo])
     @@index([agencyId, clientName])
@@ -970,8 +1330,9 @@ model Contract {
     // ---- NEW relation (added) ----
     recurringInvoiceSchedules RecurringInvoiceSchedule[]
 
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    proposal  Proposal?
 
     @@index([agencyId, contractNo])
     @@index([clientId, status])
@@ -1007,11 +1368,12 @@ model Campaign {
     startDate  DateTime
     endDate    DateTime?
 
-    agencyId String
-    agency   Agency    @relation(fields: [agencyId], references: [id])
-    clientId String
-    client   Client    @relation(fields: [clientId], references: [id])
-    projects Project[]
+    agencyId           String
+    agency             Agency              @relation(fields: [agencyId], references: [id])
+    clientId           String
+    client             Client              @relation(fields: [clientId], references: [id])
+    projects           Project[]
+    digitalAdCampaigns DigitalAdCampaign[]
 
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
@@ -1043,6 +1405,7 @@ model Project {
     contract   Contract? @relation(fields: [contractId], references: [id])
 
     brief           CreativeBrief?
+    milestones      Milestone[]
     tasks           Task[]
     taskExpenses    TaskExpense[]
     plannedExpenses TaskPlannedExpense[]
@@ -1054,6 +1417,16 @@ model Project {
     tagIds   String[]
     tags     Tag[]            @relation("ProjectTags", fields: [tagIds], references: [id])
     feedback ClientFeedback[]
+
+    // ---- NEW relations: gap-fill pass (added) ----
+    quotations               Quotation[]
+    purchaseOrders           PurchaseOrder[]
+    vendorPerformanceReviews VendorPerformanceReview[]
+    concepts                 Concept[]
+    digitalAdCampaigns       DigitalAdCampaign[]
+    knowledgeArticles        KnowledgeArticle[]
+    reports                  Report[]
+    resourceAllocations      ResourceAllocation[]
 
     createdAt DateTime  @default(now())
     updatedAt DateTime  @updatedAt
@@ -1080,22 +1453,103 @@ model CreativeBrief {
     updatedAt    DateTime    @updatedAt
 }
 
+// ---- NEW model: Work Breakdown Structure milestone (Dept 6 — Project
+// Planning). A Project is broken into Milestones (Discovery, Strategy,
+// Creative, Production, Social, Ads, PR, Reporting...), each with an owner,
+// deadline, budget, risk level, approval stage and dependencies; Tasks then
+// roll up under a Milestone. (added) ----
+model Milestone {
+    id            String                 @id @default(cuid()) @map("_id")
+    name          String
+    description   String?
+    order         Int                    @default(0)
+    deadline      DateTime?
+    budget        Float                  @default(0.0)
+    currency      String                 @default("EGP")
+    riskLevel     RiskLevel              @default(LOW)
+    approvalStage MilestoneApprovalStage @default(NOT_SUBMITTED)
+    status        MilestoneStatus        @default(PENDING)
+    completedAt   DateTime?
+
+    projectId String
+    project   Project @relation(fields: [projectId], references: [id])
+    agencyId  String
+    agency    Agency  @relation(fields: [agencyId], references: [id])
+    ownerId   String?
+    owner     User?   @relation("MilestoneOwner", fields: [ownerId], references: [id])
+
+    // Self-relation for milestone-level dependencies (e.g. Production depends on Creative)
+    dependsOnIds String[]    @map("dependsOnIds")
+    dependsOn    Milestone[] @relation("MilestoneDependencies", fields: [dependsOnIds], references: [id])
+    dependentIds String[]    @map("dependentIds")
+    dependents   Milestone[] @relation("MilestoneDependencies", fields: [dependentIds], references: [id])
+
+    tasks Task[]
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@index([projectId, order])
+    @@index([agencyId, status])
+}
+
+// ---- NEW models: reusable Project/Task templates so a signed Contract can
+// auto-generate a Project -> Milestones -> Tasks WBS instead of starting
+// from a blank page ("Department 5/6" automation + "Project Templates"
+// module). (added) ----
+model ProjectTemplate {
+    id          String       @id @default(cuid()) @map("_id")
+    name        String
+    description String?
+    serviceType String? // e.g. "Product Launch", "Always-On Social"
+    type        TemplateType @default(PROJECT)
+
+    agencyId String
+    agency   Agency                @relation(fields: [agencyId], references: [id])
+    items    ProjectTemplateItem[]
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@unique([agencyId, name])
+}
+
+model ProjectTemplateItem {
+    id             String        @id @default(cuid()) @map("_id")
+    milestoneName  String // groups tasks under a milestone name at instantiation time
+    taskTitle      String
+    taskType       String
+    description    String?
+    estimatedHours Float         @default(0.0)
+    order          Int           @default(0)
+    categoryId     String?
+    category       TaskCategory? @relation(fields: [categoryId], references: [id])
+
+    templateId String
+    template   ProjectTemplate @relation(fields: [templateId], references: [id])
+
+    createdAt DateTime @default(now())
+
+    @@index([templateId, order])
+}
+
 // --------------------------------------
 // 5. Production, Tasks & Expenses
 // --------------------------------------
 
 model TaskCategory {
-    id           String                    @id @default(cuid()) @map("_id")
-    name         String
-    description  String?
-    agencyId     String
-    agency       Agency                    @relation(fields: [agencyId], references: [id])
-    tasks        Task[]
-    definitions  RecurringTaskDefinition[]
-    departmentId String?
-    department   Department?               @relation(fields: [departmentId], references: [id])
-    createdAt    DateTime                  @default(now())
-    updatedAt    DateTime                  @updatedAt
+    id            String                    @id @default(cuid()) @map("_id")
+    name          String
+    description   String?
+    agencyId      String
+    agency        Agency                    @relation(fields: [agencyId], references: [id])
+    tasks         Task[]
+    definitions   RecurringTaskDefinition[]
+    templateItems ProjectTemplateItem[]
+    departmentId  String?
+    department    Department?               @relation(fields: [departmentId], references: [id])
+    createdAt     DateTime                  @default(now())
+    updatedAt     DateTime                  @updatedAt
 
     @@unique([agencyId, name])
 }
@@ -1148,14 +1602,16 @@ model Task {
     dependentIds String[] @map("dependentIds")
     dependents   Task[]   @relation("TaskDependencies", fields: [dependentIds], references: [id])
 
-    projectId  String
-    project    Project       @relation(fields: [projectId], references: [id])
-    agencyId   String
-    agency     Agency        @relation(fields: [agencyId], references: [id])
-    categoryId String?
-    category   TaskCategory? @relation(fields: [categoryId], references: [id])
-    contractId String?
-    contract   Contract?     @relation(fields: [contractId], references: [id])
+    projectId   String
+    project     Project       @relation(fields: [projectId], references: [id])
+    agencyId    String
+    agency      Agency        @relation(fields: [agencyId], references: [id])
+    categoryId  String?
+    category    TaskCategory? @relation(fields: [categoryId], references: [id])
+    contractId  String?
+    contract    Contract?     @relation(fields: [contractId], references: [id])
+    milestoneId String?
+    milestone   Milestone?    @relation(fields: [milestoneId], references: [id])
 
     assigneeIds String[] @map("assigneeIds")
     assignees   User[]   @relation("TaskAssignees", fields: [assigneeIds], references: [id])
@@ -1164,6 +1620,7 @@ model Task {
 
     plannedExpenses       TaskPlannedExpense[]
     taskExpenses          TaskExpense[]
+    quotations            Quotation[]
     comments              Comment[]
     attendanceLogs        AttendanceLog[]
     todos                 Todo[]
@@ -1171,6 +1628,7 @@ model Task {
     taskSessions          TaskSession[]
     attachments           Attachment[]
     invoiceItems          ClientInvoiceItem[]
+    resourceAllocations   ResourceAllocation[]
 
     // ---- NEW relation (added) ----
     tagIds String[]
@@ -1308,6 +1766,206 @@ model Tag {
     createdAt DateTime @default(now())
 
     @@unique([agencyId, name])
+}
+
+// ---- NEW models: Department 9 — Creative Development (Concept A/B/C, each
+// with moodboards/storyboards/scripts/mockups) and Department 10 —
+// Production (versioned assets going V1 -> Client Review -> V2 -> Internal
+// Review -> V3 -> Approved). Nothing moves to Production before a Concept
+// is approved. (added) ----
+model Concept {
+    id          String        @id @default(cuid()) @map("_id")
+    name        String // e.g. "Concept A"
+    description String?
+    status      ConceptStatus @default(DRAFT)
+
+    projectId String
+    project   Project @relation(fields: [projectId], references: [id])
+    agencyId  String
+    agency    Agency  @relation(fields: [agencyId], references: [id])
+
+    assets CreativeAsset[]
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@index([projectId, status])
+}
+
+model CreativeAsset {
+    id   String            @id @default(cuid()) @map("_id")
+    name String
+    type CreativeAssetType @default(OTHER)
+
+    conceptId String
+    concept   Concept @relation(fields: [conceptId], references: [id])
+    agencyId  String
+    agency    Agency  @relation(fields: [agencyId], references: [id])
+
+    versions CreativeAssetVersion[]
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@index([conceptId])
+}
+
+model CreativeAssetVersion {
+    id        String                     @id @default(cuid()) @map("_id")
+    versionNo Int                        @default(1)
+    fileUrl   String?
+    status    CreativeAssetVersionStatus @default(DRAFT)
+    feedback  String?
+
+    creativeAssetId String
+    creativeAsset   CreativeAsset @relation(fields: [creativeAssetId], references: [id])
+    reviewedById    String?
+    reviewedBy      User?         @relation("CreativeAssetReviewer", fields: [reviewedById], references: [id])
+    agencyId        String
+    agency          Agency        @relation(fields: [agencyId], references: [id])
+
+    createdAt DateTime @default(now())
+
+    @@index([creativeAssetId, versionNo])
+}
+
+// ---- NEW models: Department 11 — Digital Marketing setup (ad campaigns
+// with UTM/pixel tracking) and Department 13 — Campaign Management (daily
+// performance snapshots: reach, CTR, CPC, CPM, ROAS...). A drop in CTR can
+// drive an auto-generated optimization Task assigned to a Media Buyer. (added) ----
+model DigitalAdCampaign {
+    id              String                @id @default(cuid()) @map("_id")
+    name            String
+    platform        AdPlatform            @default(FACEBOOK)
+    status          DigitalCampaignStatus @default(DRAFT)
+    budget          Float                 @default(0.0)
+    currency        String                @default("EGP")
+    landingPageUrl  String?
+    utmSource       String?
+    utmMedium       String?
+    utmCampaign     String?
+    pixelId         String?
+    audienceSegment String?
+    startDate       DateTime?
+    endDate         DateTime?
+
+    projectId  String
+    project    Project   @relation(fields: [projectId], references: [id])
+    campaignId String?
+    campaign   Campaign? @relation(fields: [campaignId], references: [id])
+    agencyId   String
+    agency     Agency    @relation(fields: [agencyId], references: [id])
+
+    metrics AdMetricSnapshot[]
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@index([projectId])
+    @@index([agencyId, status])
+}
+
+model AdMetricSnapshot {
+    id          String   @id @default(cuid()) @map("_id")
+    date        DateTime
+    reach       Int      @default(0)
+    impressions Int      @default(0)
+    clicks      Int      @default(0)
+    ctr         Float    @default(0.0)
+    cpc         Float    @default(0.0)
+    cpm         Float    @default(0.0)
+    spend       Float    @default(0.0)
+    conversions Int      @default(0)
+    revenue     Float    @default(0.0)
+    roas        Float    @default(0.0)
+    leads       Int      @default(0)
+    engagement  Int      @default(0)
+
+    adCampaignId String
+    adCampaign   DigitalAdCampaign @relation(fields: [adCampaignId], references: [id])
+    agencyId     String
+    agency       Agency            @relation(fields: [agencyId], references: [id])
+
+    createdAt DateTime @default(now())
+
+    @@unique([adCampaignId, date])
+    @@index([agencyId, date])
+}
+
+// ---- NEW model: Department 18 — Knowledge Base. Reusable institutional
+// knowledge (best-performing ads, approved proposal templates, brand
+// guidelines, lessons learned) so the next project starts with accumulated
+// experience instead of a blank page. (added) ----
+model KnowledgeArticle {
+    id      String               @id @default(cuid()) @map("_id")
+    title   String
+    type    KnowledgeArticleType @default(OTHER)
+    content String
+    tags    String[]
+
+    agencyId  String
+    agency    Agency   @relation(fields: [agencyId], references: [id])
+    projectId String?
+    project   Project? @relation(fields: [projectId], references: [id])
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@index([agencyId, type])
+}
+
+// ---- NEW model: Department 17 — Reporting. Generated end-of-campaign
+// deliverables (marketing/financial/project/ROI reports) as PDF, PPTX or
+// dashboard exports. (added) ----
+model Report {
+    id          String       @id @default(cuid()) @map("_id")
+    name        String
+    type        ReportType   @default(PROJECT)
+    format      ReportFormat @default(PDF)
+    fileUrl     String?
+    periodStart DateTime?
+    periodEnd   DateTime?
+    summary     String?
+
+    agencyId  String
+    agency    Agency   @relation(fields: [agencyId], references: [id])
+    projectId String?
+    project   Project? @relation(fields: [projectId], references: [id])
+    clientId  String?
+    client    Client?  @relation(fields: [clientId], references: [id])
+
+    createdAt DateTime @default(now())
+
+    @@index([agencyId, type])
+    @@index([projectId])
+    @@index([clientId])
+}
+
+// ---- NEW model: Department 7 — Resource Management. Tracks how much of a
+// person's time/workload is allocated to a Project (and optionally a
+// specific Task) over a date range, plus the cost rate for that
+// allocation, so a PM can see who's overloaded before assigning more work. (added) ----
+model ResourceAllocation {
+    id                String    @id @default(cuid()) @map("_id")
+    allocationPercent Float     @default(100.0) // % of the person's capacity committed
+    hourlyCost        Float?
+    startDate         DateTime
+    endDate           DateTime?
+
+    userId    String
+    user      User    @relation(fields: [userId], references: [id])
+    projectId String
+    project   Project @relation(fields: [projectId], references: [id])
+    taskId    String?
+    task      Task?   @relation(fields: [taskId], references: [id])
+    agencyId  String
+    agency    Agency  @relation(fields: [agencyId], references: [id])
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@index([userId, startDate])
+    @@index([projectId])
 }
 
 // --------------------------------------
@@ -1562,26 +2220,124 @@ model ExchangeRate {
 }
 
 model Vendor {
-    id              String               @id @default(cuid()) @map("_id")
-    vendorNo        String?
-    name            String
-    email           String?
-    phoneNumber     String?
-    status          VendorStatus         @default(ACTIVE)
-    category        String?
-    address         Address?
-    taxNumber       String?
-    notes           String?
-    paymentTerms    String               @default("COD") // e.g., "COD", "NET-30"
-    agencyId        String
-    agency          Agency               @relation(fields: [agencyId], references: [id])
-    plannedExpenses TaskPlannedExpense[]
-    expenses        TaskExpense[]
-    createdAt       DateTime             @default(now())
-    updatedAt       DateTime             @updatedAt
+    id                 String                    @id @default(cuid()) @map("_id")
+    vendorNo           String?
+    name               String
+    email              String?
+    phoneNumber        String?
+    status             VendorStatus              @default(ACTIVE)
+    category           String?
+    address            Address?
+    taxNumber          String?
+    notes              String?
+    paymentTerms       String                    @default("COD") // e.g., "COD", "NET-30"
+    agencyId           String
+    agency             Agency                    @relation(fields: [agencyId], references: [id])
+    plannedExpenses    TaskPlannedExpense[]
+    expenses           TaskExpense[]
+    quotations         Quotation[]
+    purchaseOrders     PurchaseOrder[]
+    performanceReviews VendorPerformanceReview[]
+    createdAt          DateTime                  @default(now())
+    updatedAt          DateTime                  @updatedAt
 
     @@index([agencyId, vendorNo])
     @@index([agencyId, name])
+}
+
+// ---- NEW models: Department 8 — Procurement. Requesting/comparing vendor
+// quotations, then raising a Purchase Order once one is selected, linked
+// through to Finance via TaskExpense/Payment. (added) ----
+model Quotation {
+    id          String          @id @default(cuid()) @map("_id")
+    quotationNo String?
+    description String?
+    amount      Float
+    currency    String          @default("EGP")
+    status      QuotationStatus @default(REQUESTED)
+    validUntil  DateTime?
+    notes       String?
+
+    vendorId  String
+    vendor    Vendor   @relation(fields: [vendorId], references: [id])
+    projectId String?
+    project   Project? @relation(fields: [projectId], references: [id])
+    taskId    String?
+    task      Task?    @relation(fields: [taskId], references: [id])
+    agencyId  String
+    agency    Agency   @relation(fields: [agencyId], references: [id])
+
+    purchaseOrder PurchaseOrder?
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@index([agencyId, status])
+    @@index([vendorId])
+    @@index([projectId])
+}
+
+model PurchaseOrder {
+    id                   String              @id @default(cuid()) @map("_id")
+    poNo                 String?
+    status               PurchaseOrderStatus @default(DRAFT)
+    totalAmount          Float               @default(0.0)
+    currency             String              @default("EGP")
+    expectedDeliveryDate DateTime?
+    deliveredAt          DateTime?
+    notes                String?
+
+    vendorId    String
+    vendor      Vendor     @relation(fields: [vendorId], references: [id])
+    quotationId String?    @unique
+    quotation   Quotation? @relation(fields: [quotationId], references: [id])
+    projectId   String?
+    project     Project?   @relation(fields: [projectId], references: [id])
+    agencyId    String
+    agency      Agency     @relation(fields: [agencyId], references: [id])
+
+    items PurchaseOrderItem[]
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@unique([agencyId, poNo])
+    @@index([vendorId, status])
+    @@index([projectId])
+}
+
+model PurchaseOrderItem {
+    id          String @id @default(cuid()) @map("_id")
+    description String
+    quantity    Float  @default(1.0)
+    unitCost    Float  @default(0.0)
+    total       Float  @default(0.0)
+
+    purchaseOrderId String
+    purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id])
+
+    createdAt DateTime @default(now())
+}
+
+// ---- NEW model: Department 18 — Knowledge Base entry recording vendor
+// track record (delivery quality, reliability) so procurement can weigh
+// future quotations. (added) ----
+model VendorPerformanceReview {
+    id             String  @id @default(cuid()) @map("_id")
+    rating         Int // 1-5
+    onTimeDelivery Boolean @default(true)
+    comment        String?
+
+    vendorId  String
+    vendor    Vendor   @relation(fields: [vendorId], references: [id])
+    projectId String?
+    project   Project? @relation(fields: [projectId], references: [id])
+    agencyId  String
+    agency    Agency   @relation(fields: [agencyId], references: [id])
+
+    createdAt DateTime @default(now())
+
+    @@index([vendorId])
 }
 
 model Asset {

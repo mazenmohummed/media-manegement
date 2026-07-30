@@ -20,7 +20,7 @@ function round2(n: number): number {
  * compensation:  Total of (Day Rate + Commission Amount + Overtime Flat Rate + Bonus) ($)
  * 
  * === COMPENSATION BREAKDOWN ===
- * Day Rate ($)               → Recorded as COMMISSION (individual per employee)
+ * Day Rate ($)              → Recorded as COMMISSION (individual per employee)
  * Commission Amount ($)      → Recorded as COMMISSION (split across assignees)
  * Overtime Flat Rate ($)     → Recorded as OVERTIME (split across assignees)
  * Bonus ($)                  → Recorded as BONUS (split across assignees)
@@ -320,6 +320,12 @@ export async function POST(req: Request) {
         .map((a: any) => (typeof a === "string" ? a : a.id))
         .filter(Boolean);
 
+      // Normalize Asset IDs (Extract string IDs from either string array or object array)
+      const rawAssets = task.assetIds || task.assets || [];
+      const assetIds: string[] = rawAssets
+        .map((a: any) => (typeof a === "string" ? a : a.id))
+        .filter(Boolean);
+
       const assigneeUsers = assigneeIds
         .map((id) => preFetchedUsers.find((u) => u.id === id))
         .filter(Boolean) as any[];
@@ -362,6 +368,7 @@ export async function POST(req: Request) {
         ...task,
         id: generatedTaskId,
         assigneeIds,
+        assetIds, // <--- Added normalized asset ID array
         assigneeUsers,
         ...financials,
         normalizedRentals: task.rentals || task.normalizedRentals || [],
@@ -441,7 +448,9 @@ export async function POST(req: Request) {
                     ? { connect: t.assigneeIds.map((id: string) => ({ id })) }
                     : undefined,
                 assets:
-                  t.assetIds?.length > 0 ? { connect: t.assetIds.map((id: string) => ({ id })) } : undefined,
+                  t.assetIds?.length > 0
+                    ? { connect: t.assetIds.map((id: string) => ({ id })) }
+                    : undefined,
                 todos:
                   t.normalizedTodos?.length > 0
                     ? {
@@ -514,6 +523,7 @@ export async function POST(req: Request) {
               include: {
                 taskExpenses: true,
                 assignees: true,
+                assets: true,
                 todos: true,
                 financialTransactions: true,
               },

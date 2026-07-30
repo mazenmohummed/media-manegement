@@ -4,7 +4,6 @@ import CredentialsProvider from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
 import { UserRole } from "@prisma/client";
 
-// --- TYPESCRIPT AUGMENTATION ---
 declare module "next-auth" {
   interface Session {
     user: {
@@ -26,12 +25,11 @@ declare module "next-auth/jwt" {
   interface JWT {
     id: string;
     agencyId: string;
-    agencyName: string | null; // This now matches Session perfectly
+    agencyName: string | null;
     role: UserRole | "SUPERADMIN";
   }
 }
 
-// --- CONFIGURATION ---
 export const authOptions: NextAuthOptions = {
   session: { strategy: "jwt" },
   secret: process.env.NEXTAUTH_SECRET,
@@ -71,12 +69,10 @@ export const authOptions: NextAuthOptions = {
   ],
   callbacks: {
     async jwt({ token, user, trigger, session }) {
-      // 1. Initial Sign-in logic
       if (user) {
         token.id = user.id;
         token.agencyId = user.agencyId;
         
-        // Superadmin check for Mazen
         if (user.email === "mazn39998@gmail.com") {
           token.role = "SUPERADMIN";
         } else {
@@ -84,22 +80,18 @@ export const authOptions: NextAuthOptions = {
         }
       }
 
-      // 2. Handle Client Updates
       if (trigger === "update" && session) {
         if (session.agencyId) token.agencyId = session.agencyId;
         if (session.agencyName) token.agencyName = session.agencyName;
         if (session.role) token.role = session.role;
       }
 
-      // 3. Agency Name lookup logic (Database fetch)
       if (token.agencyId && !token.agencyName) {
         const agency = await db.agency.findUnique({
           where: { id: token.agencyId },
           select: { agencyName: true }
         });
         
-        // Ensure we provide a string or null, never 'undefined' 
-        // to avoid triggering type modifier conflicts
         token.agencyName = agency?.agencyName ?? null;
       } else if (token.role === "SUPERADMIN" && !token.agencyName) {
         token.agencyName = "Global Command";
