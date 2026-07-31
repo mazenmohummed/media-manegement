@@ -1,6 +1,3 @@
-// app/dashboard/layout.tsx
-
-
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/authOptions";
 import Sidebar from "@/components/main/Sidebar";
@@ -8,10 +5,10 @@ import { AttendanceProvider } from "@/components/main/attendance/Attendanceconte
 import { redirect } from "next/navigation";
 import prisma from "@/lib/prisma";
 
-export default async function DashboardLayout({ 
-  children 
-}: { 
-  children: React.ReactNode 
+export default async function DashboardLayout({
+  children,
+}: {
+  children: React.ReactNode;
 }) {
   const session = await getServerSession(authOptions);
 
@@ -28,15 +25,12 @@ export default async function DashboardLayout({
   today.setHours(0, 0, 0, 0);
 
   const activeAttendance = await prisma.attendanceLog.findFirst({
-    where: { 
+    where: {
       userId: session.user.id,
       agencyId: session.user.agencyId,
       type: "OFFICE",
       date: today,
-      OR: [
-        { checkOutTime: null },
-        { checkOutTime: { isSet: false } }, // catches legacy docs missing the key
-      ],
+      checkOutTime: null,
     },
     orderBy: {
       checkInTime: "desc",
@@ -54,7 +48,7 @@ export default async function DashboardLayout({
           <main className="flex-1 overflow-y-auto bg-background relative custom-scrollbar">
             {/* Subtle Top Glow */}
             <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-blue-500/20 to-transparent" />
-            
+
             <div className="max-w-[1600px] mx-auto p-6 lg:p-10 animate-in fade-in duration-500">
               {children}
             </div>

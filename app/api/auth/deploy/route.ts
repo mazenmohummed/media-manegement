@@ -1,4 +1,3 @@
-// app/api/auth/deploy/route.ts
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import bcrypt from "bcryptjs";
@@ -6,41 +5,84 @@ import bcrypt from "bcryptjs";
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { agencyName, agencyEmail, name, email, password } = body;
+    const {
+      agencyName,
+      agencyEmail,
+      phoneNumber,
+      field,
+      timezone,
+      defaultCurrency,
+      address,
+      plan = "FREE",
+      operatorName,
+      operatorEmail,
+      password,
+    } = body;
 
-    const hashedPassword = await bcrypt.hash(password, 10);
+    // Validate minimum required fields
+    if (!agencyName || !agencyEmail || !operatorEmail || !password) {
+      return NextResponse.json(
+        { details: "Missing required deployment fields." },
+        { status: 400 }
+      );
+    }
 
-    // 1. Create Agency
-    const agency = await prisma.agency.create({
+    // Check if email already exists
+    const existingUser = await prisma.user.findUnique({
+      where: { email: operatorEmail },
+    });
+
+    if (existingUser) {
+      return NextResponse.json(
+        { details: "An account with this email already exists." },
+        { status: 409 }
+      );
+    }
+
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 12);
+
+    // Single Atomic Transaction using Prisma Nested Writes
+    const newAgency = await prisma.agency.create({
       data: {
         agencyName,
         email: agencyEmail,
-        operatorName: name,
+        // If your schema includes optional metadata fields:
+        ...(phoneNumber && { phoneNumber }),
+        ...(field && { field }),
+        ...(timezone && { timezone }),
+        ...(defaultCurrency && { defaultCurrency }),
+        ...(address && { address }),
+        users: {
+          create: {
+            name: operatorName,
+            email: operatorEmail,
+            password: hashedPassword,
+            role: "ADMIN",
+          },
+        },
+        subscription: {
+          create: {
+            plan: plan as any, // FREE | PRO | UNLIMITED
+            status: "TRIALING",
+          },
+        },
+      },
+      include: {
+        users: { select: { id: true, email: true, role: true } },
+        subscription: true,
       },
     });
 
-    // 2. Create Subscription
-    await prisma.subscription.create({
-      data: {
-        agencyId: agency.id,
-        plan: "FREE",
-      },
-    });
-
-    // 3. Create User
-    const user = await prisma.user.create({
-      data: {
-        name,
-        email,
-        password: hashedPassword,
-        role: "ADMIN",
-        agencyId: agency.id,
-      },
-    });
-
-    return NextResponse.json({ message: "Success" }, { status: 201 });
+    return NextResponse.json(
+      { message: "Success", agencyId: newAgency.id },
+      { status: 201 }
+    );
   } catch (error: any) {
-     console.error("DEPLOYMENT_ERROR:", error);
-     return NextResponse.json({ message: "Deployment Failed" }, { status: 500 });
+    console.error("DEPLOYMENT_ERROR:", error);
+    return NextResponse.json(
+      { details: error?.message || "Deployment Failed" },
+      { status: 500 }
+    );
   }
 }

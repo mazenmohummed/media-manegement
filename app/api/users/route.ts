@@ -1,18 +1,16 @@
 import { NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
-import { getServerSession } from "next-auth/next";
-import { authOptions } from "@/lib/authOptions";
+import { withAuthGuard } from "@/lib/auth/guard";
+import { checkQuotaGuard } from "@/lib/auth/subscriptionGuard";
+import { getScopedPrisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
 
-// ─── GET /api/employees ───────────────────────────────────────────────────────
-export async function GET() {
+// ─── GET /api/users ───────────────────────────────────────────────────────
+export const GET = withAuthGuard("user:read", async (req, { agencyId }) => {
   try {
-    const session = await getServerSession(authOptions);
-    const agencyId = (session as any)?.user?.agencyId;
-    if (!agencyId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // Instantiate tenant-scoped database client (auto-applies `where: { agencyId }`)
+    const db = getScopedPrisma(agencyId);
 
-    const users = await prisma.user.findMany({
-      where: { agencyId },
+    const users = await db.user.findMany({
       include: {
         tasks: {
           select: {
@@ -61,14 +59,17 @@ export async function GET() {
 
       // Revenue and Profit Aggregations
       const totalRevenue = completedTasks.reduce(
-        (s, t) => s + (t.totalInvoice ?? t.internalCost ?? 0), 0
+        (s, t) => s + (t.totalInvoice ?? t.internalCost ?? 0),
+        0
       );
       const profitContribution = completedTasks.reduce(
-        (s, t) => s + (t.marginAmount ?? 0), 0
+        (s, t) => s + (t.marginAmount ?? 0),
+        0
       );
 
       const totalWorkingHours = u.attendanceLogs.reduce(
-        (s, l) => s + (l.totalHours ?? 0), 0
+        (s, l) => s + (l.totalHours ?? 0),
+        0
       );
       const lateCount = u.attendanceLogs.filter((l) => l.isLate).length;
       const totalPayouts = u.payouts.reduce((s, p) => s + p.amount, 0);
@@ -83,8 +84,7 @@ export async function GET() {
         .filter((t) => t.type === "OVERTIME" && t.status !== "CANCELLED")
         .reduce((s, t) => s + t.amount, 0);
 
-      // ── NEW: Extract Deductions safely from the Ledger ──
-      // This maps directly to your schema rule: "negative for deductions"
+      // Extract Deductions safely from the Ledger
       const deductions = u.financialLedger
         .filter((t) => t.amount < 0 && t.status !== "CANCELLED")
         .reduce((s, t) => s + t.amount, 0);
@@ -94,7 +94,11 @@ export async function GET() {
         const taskStatus = t.status?.trim().toUpperCase();
         const payStatus = t.paymentStatus?.trim().toUpperCase();
 
-        if (taskStatus !== "COMPLETED" || payStatus === "PENDING" || payStatus === "PARTIAL") {
+        if (
+          taskStatus !== "COMPLETED" ||
+          payStatus === "PENDING" ||
+          payStatus === "PARTIAL"
+        ) {
           const value = t.totalInvoice ?? t.internalCost ?? 0;
           if (payStatus === "PARTIAL") {
             upcomingPartial += value;
@@ -119,7 +123,7 @@ export async function GET() {
         walletBalance,
         commissions: parseFloat(commissions.toFixed(2)),
         overtime: parseFloat(overtime.toFixed(2)),
-        deductions: parseFloat(Math.abs(deductions).toFixed(2)), // Converted to absolute value for cleaner frontend presentation
+        deductions: parseFloat(Math.abs(deductions).toFixed(2)),
         totalRevenue: parseFloat(totalRevenue.toFixed(2)),
         profitContribution: parseFloat(profitContribution.toFixed(2)),
         totalWorkingHours: parseFloat(totalWorkingHours.toFixed(1)),
@@ -141,9 +145,11 @@ export async function GET() {
     const totalProfitSum = employees.reduce((s, e) => s + e.profitContribution, 0);
     const totalPayrollSum = employees.reduce((s, e) => s + (e.baseSalary ?? 0), 0);
     const totalWalletSum = employees.reduce((s, e) => s + (e.walletBalance ?? 0), 0);
-    const avgEfficiency = employees.length > 0
-      ? employees.reduce((s, e) => s + (e.efficiencyRate ?? 1), 0) / employees.length
-      : 1;
+    const avgEfficiency =
+      employees.length > 0
+        ? employees.reduce((s, e) => s + (e.efficiencyRate ?? 1), 0) /
+          employees.length
+        : 1;
 
     return NextResponse.json({
       employees,
@@ -155,7 +161,9 @@ export async function GET() {
         totalWallet: parseFloat(totalWalletSum.toFixed(2)),
         avgEfficiency: parseFloat(avgEfficiency.toFixed(2)),
         checkedInToday: employees.filter((e) => e.isCheckedInToday).length,
-        upcomingRevenue: parseFloat((upcomingPending + upcomingPartial).toFixed(2)),
+        upcomingRevenue: parseFloat(
+          (upcomingPending + upcomingPartial).toFixed(2)
+        ),
         upcomingRevenueBreakdown: {
           pending: parseFloat(upcomingPending.toFixed(2)),
           partiallyPaid: parseFloat(upcomingPartial.toFixed(2)),
@@ -164,46 +172,54 @@ export async function GET() {
     });
   } catch (err) {
     console.error("[EMPLOYEES_GET]", err);
-    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Internal Server Error" },
+      { status: 500 }
+    );
   }
-}
+});
+
 // ─── POST /api/employees ──────────────────────────────────────────────────────
-export async function POST(req: Request) {
+export const POST = withAuthGuard("user:create", async (req, { agencyId }) => {
   try {
-    const session = await getServerSession(authOptions);
-    const agencyId = (session as any)?.user?.agencyId;
-    if (!agencyId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // 1. Enforce Subscription Seat Limits via Central Guard
+    const quotaCheck = await checkQuotaGuard(agencyId, "users");
+    if (!quotaCheck.allowed) {
+      return NextResponse.json({ error: quotaCheck.error }, { status: 403 });
+    }
 
     const body = await req.json();
-    const { name, email, password, role, userType, baseSalary, verifiedSkills } = body;
+    const { name, email, password, role, userType, baseSalary, verifiedSkills } =
+      body;
 
     if (!name || !email || !password) {
-      return NextResponse.json({ error: "Name, email and password are required" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Name, email and password are required" },
+        { status: 400 }
+      );
     }
 
-    const agency = await prisma.agency.findUnique({
-      where: { id: agencyId },
-      include: { subscription: true, _count: { select: { users: true } } },
-    });
+    const db = getScopedPrisma(agencyId);
 
-    const maxUsers = agency?.subscription?.maxUsers ?? 5;
-    if ((agency?._count?.users ?? 0) >= maxUsers) {
-      return NextResponse.json({ error: `Seat limit reached. Your plan allows ${maxUsers} users.` }, { status: 403 });
+    // 2. Check duplicate email across system
+    const exists = await db.user.findFirst({ where: { email } });
+    if (exists) {
+      return NextResponse.json(
+        { error: "Email already in use" },
+        { status: 400 }
+      );
     }
-
-    const exists = await prisma.user.findUnique({ where: { email } });
-    if (exists) return NextResponse.json({ error: "Email already in use" }, { status: 400 });
 
     const hashed = await bcrypt.hash(password, 10);
 
-    const created = await prisma.user.create({
+    // 3. Create User within Tenant Scope (agencyId injected automatically)
+    const created = await db.user.create({
       data: {
         name,
         email,
         password: hashed,
         role: role ?? "CREATIVE",
         userType: userType ?? "FULL_TIME",
-        agencyId,
         baseSalary: parseFloat(String(baseSalary ?? 0)) || 0,
         walletBalance: 0,
         efficiencyRate: 1.0,
@@ -215,6 +231,9 @@ export async function POST(req: Request) {
     return NextResponse.json(safe, { status: 201 });
   } catch (err: any) {
     console.error("[EMPLOYEES_POST]", err);
-    return NextResponse.json({ error: "Failed to create employee" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Failed to create employee" },
+      { status: 500 }
+    );
   }
-}
+});

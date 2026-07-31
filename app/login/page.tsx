@@ -1,19 +1,11 @@
+// app/login/page.tsx
 "use client";
 
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { signIn } from "next-auth/react";
 import { Eye, EyeOff, Loader2, ShieldCheck } from "lucide-react";
-
-type LoginUser = {
-  id: string;
-  name: string;
-  email: string;
-  role: string;
-  agencyId: string;
-  agencyName: string;
-  departmentName: string | null;
-};
 
 export default function LoginPage() {
   const router = useRouter();
@@ -27,28 +19,35 @@ export default function LoginPage() {
     setError("");
 
     const formData = new FormData(event.currentTarget);
-    const email = String(formData.get("email") ?? "");
+    const email = String(formData.get("email") ?? "").trim();
     const password = String(formData.get("password") ?? "");
 
     try {
-      const response = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+      // 1. Authenticate session via NextAuth Credentials Provider
+      const result = await signIn("credentials", {
+        email,
+        password,
+        redirect: false,
       });
 
-      const data = await response.json();
-
-      if (!response.ok || !data.success) {
-        setError(data.message ?? "Invalid credentials. Access denied.");
+      if (result?.error || !result?.ok) {
+        setError("Invalid Access Credentials. Access Denied.");
+        setLoading(false);
         return;
       }
 
-      const user = data.user as LoginUser;
-      sessionStorage.setItem("agency_user", JSON.stringify(user));
+      // 2. Fetch session details to determine role-based routing
+      const sessionRes = await fetch("/api/auth/session");
+      const sessionData = await sessionRes.json();
 
-      if (user.role === "SUPERADMIN") {
+      const userRole = sessionData?.user?.role;
+      const agencyId = sessionData?.user?.agencyId;
+
+      // 3. Role-based routing
+      if (userRole === "SUPERADMIN") {
         router.push("/superadmin");
+      } else if (!agencyId) {
+        router.push("/onboarding");
       } else {
         router.push("/dashboard");
       }
@@ -93,36 +92,49 @@ export default function LoginPage() {
               required
               type="email"
               autoComplete="email"
-              className="h-11 w-full rounded-md border border-[#d8deea] bg-white px-3 text-sm outline-none transition focus:border-[#2f6fed] focus:ring-2 focus:ring-[#dbe7ff]"
+              disabled={loading}
+              className="h-11 w-full rounded-md border border-[#d8deea] bg-white px-3 text-sm outline-none transition focus:border-[#2f6fed] focus:ring-2 focus:ring-[#dbe7ff] disabled:opacity-50"
               placeholder="ops@agency.com"
             />
           </label>
 
-          <label className="block space-y-2">
-            <span className="text-xs font-bold uppercase tracking-[0.14em] text-[#5e6a7f]">
-              Access password
-            </span>
-            <span className="relative block">
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold uppercase tracking-[0.14em] text-[#5e6a7f]">
+                Access password
+              </span>
+              <Link
+                href="/forgot-password"
+                className="text-xs font-bold text-[#2f6fed] transition hover:text-[#245fd2]"
+              >
+                Forgot password?
+              </Link>
+            </div>
+
+            <div className="relative">
               <input
                 name="password"
                 required
                 type={showPassword ? "text" : "password"}
                 autoComplete="current-password"
-                className="h-11 w-full rounded-md border border-[#d8deea] bg-white px-3 pr-11 text-sm outline-none transition focus:border-[#2f6fed] focus:ring-2 focus:ring-[#dbe7ff]"
+                disabled={loading}
+                className="h-11 w-full rounded-md border border-[#d8deea] bg-white px-3 pr-11 text-sm outline-none transition focus:border-[#2f6fed] focus:ring-2 focus:ring-[#dbe7ff] disabled:opacity-50"
                 placeholder="Enter password"
               />
               <button
                 type="button"
                 onClick={() => setShowPassword((value) => !value)}
-                className="absolute right-2 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-md text-[#5e6a7f] transition hover:bg-[#f0f4fb] hover:text-[#2f6fed]"
+                disabled={loading}
+                className="absolute right-2 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-md text-[#5e6a7f] transition hover:bg-[#f0f4fb] hover:text-[#2f6fed] disabled:opacity-50"
                 aria-label={showPassword ? "Hide password" : "Show password"}
               >
                 {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </button>
-            </span>
-          </label>
+            </div>
+          </div>
 
           <button
+            type="submit"
             disabled={loading}
             className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-md bg-[#2f6fed] text-sm font-bold text-white transition hover:bg-[#245fd2] disabled:opacity-70"
           >

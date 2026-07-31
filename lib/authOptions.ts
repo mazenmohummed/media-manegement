@@ -1,32 +1,35 @@
+// lib/authOptions.ts
+
 import { NextAuthOptions, DefaultSession } from "next-auth";
 import { db } from "@/lib/db"; 
 import CredentialsProvider from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
 import { UserRole } from "@prisma/client";
 
+// Module Augmentation using pure UserRole from Prisma
 declare module "next-auth" {
   interface Session {
     user: {
       id: string;
-      agencyId: string;
+      agencyId?: string | null;
       agencyName?: string | null;
-      role: UserRole | "SUPERADMIN";
-    } & DefaultSession["user"]
+      role?: UserRole; // 🟢 Directly uses your Prisma enum
+    } & DefaultSession["user"];
   }
 
   interface User {
     id: string;
-    agencyId: string;
-    role: UserRole;
+    agencyId?: string | null;
+    role?: UserRole;
   }
 }
 
 declare module "next-auth/jwt" {
   interface JWT {
     id: string;
-    agencyId: string;
-    agencyName: string | null;
-    role: UserRole | "SUPERADMIN";
+    agencyId?: string | null;
+    agencyName?: string | null;
+    role?: UserRole; // 🟢 Optional modifier matches NextAuth's internal JWT type
   }
 }
 
@@ -45,9 +48,11 @@ export const authOptions: NextAuthOptions = {
       },
       async authorize(credentials) {
         if (!credentials?.email || !credentials?.password) return null;
-        
+
+        const normalizedEmail = credentials.email.toLowerCase().trim();
+
         const user = await db.user.findUnique({
-          where: { email: credentials.email }
+          where: { email: normalizedEmail }
         });
 
         if (!user || !user.password) return null;
@@ -59,8 +64,8 @@ export const authOptions: NextAuthOptions = {
             id: user.id,
             name: user.name,
             email: user.email,
-            agencyId: user.agencyId,
-            role: user.role,
+            agencyId: user.agencyId ?? null,
+            role: user.role, // Pure UserRole enum value from DB
           };
         }
         return null;
@@ -71,18 +76,19 @@ export const authOptions: NextAuthOptions = {
     async jwt({ token, user, trigger, session }) {
       if (user) {
         token.id = user.id;
-        token.agencyId = user.agencyId;
+        token.agencyId = user.agencyId ?? null;
         
-        if (user.email === "mazn39998@gmail.com") {
-          token.role = "SUPERADMIN";
+        // Dynamic SUPERADMIN override for master account
+        if (user.email?.toLowerCase().trim() === "mazn39998@gmail.com") {
+          token.role = UserRole.SUPERADMIN;
         } else {
-          token.role = user.role as UserRole;
+          token.role = user.role;
         }
       }
 
       if (trigger === "update" && session) {
-        if (session.agencyId) token.agencyId = session.agencyId;
-        if (session.agencyName) token.agencyName = session.agencyName;
+        if (session.agencyId !== undefined) token.agencyId = session.agencyId;
+        if (session.agencyName !== undefined) token.agencyName = session.agencyName;
         if (session.role) token.role = session.role;
       }
 
@@ -93,7 +99,7 @@ export const authOptions: NextAuthOptions = {
         });
         
         token.agencyName = agency?.agencyName ?? null;
-      } else if (token.role === "SUPERADMIN" && !token.agencyName) {
+      } else if (token.role === UserRole.SUPERADMIN && !token.agencyName) {
         token.agencyName = "Global Command";
       }
 
@@ -102,9 +108,9 @@ export const authOptions: NextAuthOptions = {
 
     async session({ session, token }) {
       if (token && session.user) {
-        session.user.id = token.id;
-        session.user.agencyId = token.agencyId;
-        session.user.agencyName = token.agencyName;
+        session.user.id = token.id as string;
+        session.user.agencyId = token.agencyId ?? null;
+        session.user.agencyName = token.agencyName ?? null;
         session.user.role = token.role;
       }
       return session;

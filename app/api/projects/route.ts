@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
-import { getServerSession } from "next-auth/next";
-import { authOptions } from "@/lib/authOptions";
 import crypto from "crypto";
+import { z } from "zod";
+import { withAuthGuard } from "@/lib/auth/guard";
+import { checkQuotaGuard } from "@/lib/auth/subscriptionGuard";
+import { getScopedPrisma, default as prisma } from "@/lib/prisma";
 
 // ─── UTILITY FUNCTIONS ────────────────────────────────────────────────────────
 
@@ -10,49 +11,19 @@ function round2(n: number): number {
   return Math.round((n + Number.EPSILON) * 100) / 100;
 }
 
-/**
- * FINANCIAL CALCULATION REFERENCE:
- * 
- * === INPUTS ===
- * internalCost:  Gross Revenue from UI ($)
- * marginPercent: Target Margin from UI (%)
- * expensesSum:   Sum of all rentals/expenses ($)
- * compensation:  Total of (Day Rate + Commission Amount + Overtime Flat Rate + Bonus) ($)
- * 
- * === COMPENSATION BREAKDOWN ===
- * Day Rate ($)              → Recorded as COMMISSION (individual per employee)
- * Commission Amount ($)      → Recorded as COMMISSION (split across assignees)
- * Overtime Flat Rate ($)     → Recorded as OVERTIME (split across assignees)
- * Bonus ($)                  → Recorded as BONUS (split across assignees)
- * Total compensation = Day Rate + Commission + Overtime + Bonus
- * 
- * === CALCULATIONS (UNIFIED FOR ALL USER TYPES) ===
- * 1. marginAmount = ((internalCost + expensesSum + compensation) * marginPercent) / 100
- * 2. totalValue = internalCost + expensesSum + marginAmount + compensation
- * 3. taskNetProfit = marginAmount (SAME FOR ALL: FREELANCER, FULL_TIME, PART_TIME)
- * 4. realCost = expensesSum + compensation (SAME FOR ALL)
- * 
- * === TRANSACTIONS RECORDED ===
- * 1. Negotiated Day Rate (individual) → COMMISSION (all user types)
- * 2. Commission Pool (split across assignees) → COMMISSION
- * 3. Overtime Pool (split across assignees) → OVERTIME
- * 4. Bonus Pool (split across assignees) → BONUS
- * 5. Salary Deduction (FULL_TIME/PART_TIME only) → DEDUCTION_ABSENT
- */
-
 interface FinancialBreakdown {
   internalCost: number;
   expensesSum: number;
   marginPercent: number;
-  dayRateTotal: number;        // Sum of all individual day rates
-  commissionAmount: number;     // Commission pool to split
-  overtimeAmount: number;       // Overtime pool to split
-  bonusAmount: number;          // Bonus pool to split
-  compensation: number;         // Total of all compensation
+  dayRateTotal: number;
+  commissionAmount: number;
+  overtimeAmount: number;
+  bonusAmount: number;
+  compensation: number;
   marginAmount: number;
   totalValue: number;
-  taskNetProfit: number;        // Same for all user types
-  realCost: number;             // Same for all user types
+  taskNetProfit: number;
+  realCost: number;
 }
 
 interface TransactionRecord {
@@ -245,16 +216,23 @@ function generateTaskTransactions(
   return txns;
 }
 
+// ─── VALIDATION SCHEMAS ───────────────────────────────────────────────────────
+
+const createProjectSchema = z.object({
+  projectName: z.string().min(2, "Project name is required"),
+  clientId: z.string().min(1, "Client ID is required"),
+  projectStory: z.string().optional(),
+  cloudLink: z.string().optional(),
+  targetDeadline: z.string().optional(),
+  tasks: z.array(z.any()).optional().default([]),
+});
+
 // ─── GET ──────────────────────────────────────────────────────────────────────
 
-export async function GET() {
+export const GET = withAuthGuard("project:read", async (req, { agencyId }) => {
   try {
-    const session = await getServerSession(authOptions);
-    const agencyId = (session as any)?.user?.agencyId;
-    if (!agencyId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-    const projects = await prisma.project.findMany({
-      where: { agencyId },
+    const scopedDb = getScopedPrisma(agencyId);
+    const projects = await scopedDb.project.findMany({
       include: {
         client: { select: { clientName: true } },
         tasks: {
@@ -279,23 +257,44 @@ export async function GET() {
       { status: 500 }
     );
   }
-}
+});
 
 // ─── POST ─────────────────────────────────────────────────────────────────────
 
-export async function POST(req: Request) {
+export const POST = withAuthGuard("project:create", async (req, { agencyId }) => {
   try {
-    const session = await getServerSession(authOptions);
-    const agencyId = (session as any)?.user?.agencyId;
-    if (!agencyId) return new NextResponse("Unauthorized", { status: 401 });
+    // 1. Quota Guard Check
+    const quotaCheck = await checkQuotaGuard(agencyId, "projects");
+    if (!quotaCheck.allowed) {
+      return NextResponse.json(
+        {
+          error: quotaCheck.error,
+          code: "PLAN_LIMIT_REACHED",
+          meta: {
+            resource: "projects",
+            currentPlan: quotaCheck.plan,
+            limit: quotaCheck.limit,
+            currentCount: quotaCheck.currentCount,
+          },
+        },
+        { status: 403 }
+      );
+    }
 
-    const body = await req.json();
-    const { projectName, clientId, projectStory, cloudLink, tasks = [] } = body;
+    // 2. Validate Request Input
+    const rawBody = await req.json();
+    const validation = createProjectSchema.safeParse(rawBody);
 
-    if (!clientId) return NextResponse.json({ error: "clientId is required" }, { status: 400 });
-    if (!projectName) return NextResponse.json({ error: "projectName is required" }, { status: 400 });
+    if (!validation.success) {
+      return NextResponse.json(
+        { error: "Validation failed", details: validation.error.flatten().fieldErrors },
+        { status: 400 }
+      );
+    }
 
-    // Pre-fetch all users
+    const { projectName, clientId, projectStory, cloudLink, tasks } = validation.data;
+
+    // Pre-fetch assigned users across all payload tasks
     const flatUserIds = tasks.flatMap((t: any) => {
       const employees = t.employeeIds || t.assigneeIds || t.assignees || [];
       return employees.map((a: any) => (typeof a === "string" ? a : a.id));
@@ -304,12 +303,12 @@ export async function POST(req: Request) {
 
     const preFetchedUsers = uniqueIds.length > 0
       ? await prisma.user.findMany({
-          where: { id: { in: uniqueIds } },
+          where: { id: { in: uniqueIds }, agencyId },
           select: { id: true, userType: true, baseSalary: true, walletBalance: true },
         })
       : [];
 
-    // Process each task: calculate financials + prepare transaction records
+    // Process tasks, calculations, and financial transactions
     const taskCalculations: any[] = [];
     const allTransactions: TransactionRecord[] = [];
 
@@ -320,7 +319,6 @@ export async function POST(req: Request) {
         .map((a: any) => (typeof a === "string" ? a : a.id))
         .filter(Boolean);
 
-      // Normalize Asset IDs (Extract string IDs from either string array or object array)
       const rawAssets = task.assetIds || task.assets || [];
       const assetIds: string[] = rawAssets
         .map((a: any) => (typeof a === "string" ? a : a.id))
@@ -330,7 +328,6 @@ export async function POST(req: Request) {
         .map((id) => preFetchedUsers.find((u) => u.id === id))
         .filter(Boolean) as any[];
 
-      // Extract negotiated day rates (individual per employee)
       const employeePayUpdates: { id: string; amount: number }[] = [];
       employeeObjs.forEach((assigneeObj: any) => {
         const id = typeof assigneeObj === "string" ? assigneeObj : assigneeObj.id;
@@ -340,7 +337,6 @@ export async function POST(req: Request) {
         }
       });
 
-      // Calculate financials (UNIFIED for all user types)
       const financials = calculateTaskFinancials(
         task,
         assigneeIds,
@@ -348,7 +344,6 @@ export async function POST(req: Request) {
         employeePayUpdates
       );
 
-      // Generate transactions
       const taskTxns = generateTaskTransactions(
         generatedTaskId,
         task.taskType || "GENERAL",
@@ -368,48 +363,35 @@ export async function POST(req: Request) {
         ...task,
         id: generatedTaskId,
         assigneeIds,
-        assetIds, // <--- Added normalized asset ID array
+        assetIds,
         assigneeUsers,
         ...financials,
         normalizedRentals: task.rentals || task.normalizedRentals || [],
         normalizedTodos: task.todos || [],
       });
-
-      console.log("[TASK_CREATED]", {
-        taskNo: `${task.taskType}-${generatedTaskId.substring(0, 8)}`,
-        internalCost: financials.internalCost,
-        expensesSum: financials.expensesSum,
-        compensation: financials.compensation,
-        marginPercent: financials.marginPercent,
-        marginAmount: financials.marginAmount,
-        totalValue: financials.totalValue,
-        taskNetProfit: financials.taskNetProfit,
-        realCost: financials.realCost,
-      });
     }
 
-    // Project totals
     const projectTotalInvoice = taskCalculations.reduce(
       (acc: number, t: any) => acc + t.totalValue,
       0
     );
 
-    const targetDeadline =
-      tasks.length > 0
-        ? new Date(
-            Math.max(
-              ...tasks.map((t: any) => new Date(t.endDate || t.targetDeadline || Date.now()).getTime())
-            )
+    const targetDeadline = validation.data.targetDeadline
+      ? new Date(validation.data.targetDeadline)
+      : tasks.length > 0
+      ? new Date(
+          Math.max(
+            ...tasks.map((t: any) => new Date(t.endDate || t.targetDeadline || Date.now()).getTime())
           )
-        : new Date();
+        )
+      : new Date();
 
-    // Execute transaction
+    // Perform database transaction
     const result = await prisma.$transaction(
       async (tx) => {
         const projectCount = await tx.project.count({ where: { agencyId } });
         const projectNo = `PRJ-${(projectCount + 1).toString().padStart(3, "0")}`;
 
-        // Create project with tasks
         const project = await tx.project.create({
           data: {
             projectNo,
@@ -439,9 +421,9 @@ export async function POST(req: Request) {
                 latitude: t.latitude ?? null,
                 longitude: t.longitude ?? null,
                 locationName: t.locationName || null,
-                isOutOfWorkingHours: t.isOutOfWorkingHours,
-                compensationStrategy: t.compensationStrategy,
-                deductionStrategy: t.deductionStrategy,
+                isOutOfWorkingHours: t.isOutOfWorkingHours ?? false,
+                compensationStrategy: t.compensationStrategy ?? "NONE",
+                deductionStrategy: t.deductionStrategy ?? "NONE",
                 agency: { connect: { id: agencyId } },
                 assignees:
                   t.assigneeIds?.length > 0
@@ -470,7 +452,7 @@ export async function POST(req: Request) {
           },
         });
 
-        // Create task expenses
+        // Insert task expenses
         const expensesPayload = taskCalculations.flatMap((t: any) => {
           if (!t.normalizedRentals?.length) return [];
           return t.normalizedRentals.map((r: any) => ({
@@ -488,7 +470,7 @@ export async function POST(req: Request) {
           await tx.taskExpense.createMany({ data: expensesPayload });
         }
 
-        // Update wallets for all transactions
+        // Apply wallet increments for internal assignees
         const walletUpdates = new Map<string, number>();
         for (const txn of allTransactions) {
           const current = walletUpdates.get(txn.userId) || 0;
@@ -502,7 +484,7 @@ export async function POST(req: Request) {
           });
         }
 
-        // Bulk create transactions
+        // Store ledger transaction history
         if (allTransactions.length > 0) {
           await tx.financialTransaction.createMany({
             data: allTransactions.map((t) => ({
@@ -539,4 +521,4 @@ export async function POST(req: Request) {
     console.error("POST_ERROR:", error);
     return NextResponse.json({ error: error?.message || String(error) }, { status: 500 });
   }
-}
+});

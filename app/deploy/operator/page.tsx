@@ -77,7 +77,8 @@ export default function OperatorSignup() {
     };
 
     try {
-      const res = await fetch("/api/deploy", {
+      // ✅ Updated to call /api/auth/deploy
+      const res = await fetch("/api/auth/deploy", {
         method: "POST",
         body: JSON.stringify(finalPayload),
         headers: { "Content-Type": "application/json" },

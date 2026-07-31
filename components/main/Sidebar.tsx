@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useSession, signOut } from "next-auth/react";
 import { motion } from "framer-motion";
 import nextDynamic from "next/dynamic";
@@ -20,12 +20,12 @@ import {
   Menu,
   Calendar,
   LayoutDashboard,
-  Clock
+  Clock,
+  Bell
 } from "lucide-react";
-import { Bell } from "lucide-react";
 import { NotificationDrawer } from "./EmployeeDashboard";
 
-// Safe dynamic import to permanently silence the Radix UI hydration mismatches
+// Safe dynamic import to permanently silence Radix UI hydration mismatches
 const ModeToggle = nextDynamic(() => import("../ModeToggle").then((mod) => mod.ModeToggle), {
   ssr: false,
   loading: () => <div className="w-9 h-9 rounded-xl bg-muted animate-pulse" />
@@ -34,13 +34,14 @@ const ModeToggle = nextDynamic(() => import("../ModeToggle").then((mod) => mod.M
 export default function Sidebar() {
   const { data: session } = useSession();
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
   const pathname = usePathname();
+  const router = useRouter();
   const [unreadCount, setUnreadCount] = useState(0);
-  const [notifOpen, setNotifOpen]     = useState(false);
+  const [notifOpen, setNotifOpen] = useState(false);
   const [notifications, setNotifications] = useState<any[]>([]);
 
-  // Shared attendance state — same context AttendanceControl reads/writes,
-  // so a click in either place updates both instantly.
+  // Shared attendance state
   const { attendance, loading, error, performAction } = useAttendance();
 
   const isCheckedIn = !!attendance && !attendance.checkOutTime;
@@ -58,20 +59,42 @@ export default function Sidebar() {
   ];
 
   useEffect(() => {
-  const fetchNotifs = async () => {
+    const fetchNotifs = async () => {
+      try {
+        const res = await fetch("/api/notifications");
+        if (res.ok) {
+          const data = await res.json();
+          setNotifications(data.notifications ?? []);
+          setUnreadCount(data.unreadCount ?? 0);
+        }
+      } catch {}
+    };
+    fetchNotifs();
+    const interval = setInterval(fetchNotifs, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  /**
+   * Unified Logout Handler
+   * Revokes refresh token in database, clears HTTP-Only cookies,
+   * and terminates the NextAuth session.
+   */
+  const handlePurgeSession = async () => {
     try {
-      const res = await fetch("/api/notifications");
-      if (res.ok) {
-        const data = await res.json();
-        setNotifications(data.notifications ?? []);
-        setUnreadCount(data.unreadCount ?? 0);
-      }
-    } catch {}
+      setIsLoggingOut(true);
+
+      // 1. Call backend logout endpoint to revoke refresh token & clear HTTP-Only cookie
+      await fetch("/api/auth/logout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+    } catch (err) {
+      console.error("Error revoking session tokens on server:", err);
+    } finally {
+      // 2. Clear NextAuth session and redirect user to login
+      await signOut({ callbackUrl: "/login" });
+    }
   };
-  fetchNotifs();
-  const interval = setInterval(fetchNotifs, 30000);
-  return () => clearInterval(interval);
-}, []);
 
   return (
     <nav 
@@ -104,28 +127,29 @@ export default function Sidebar() {
         </Link>
       </div>
 
+      {/* NOTIFICATIONS TRIGGER */}
       <button
-      onClick={() => setNotifOpen(true)}
-      className={`relative flex items-center gap-3 w-full px-3 py-3 text-xs font-black uppercase tracking-widest text-foreground hover:bg-muted border border-transparent hover:border-border/50 rounded-xl transition-all ${
-        isCollapsed ? "justify-center" : ""
-      }`}
-    >
-      <Bell size={18} className="shrink-0" />
-      {!isCollapsed && <span>Notifications</span>}
-      {unreadCount > 0 && (
-        <span className="absolute top-2 left-7 w-4 h-4 bg-blue-600 text-white text-[8px] font-black rounded-full flex items-center justify-center">
-          {unreadCount > 9 ? "9+" : unreadCount}
-        </span>
-      )}
-    </button>
+        onClick={() => setNotifOpen(true)}
+        className={`relative flex items-center gap-3 w-full px-3 py-3 text-xs font-black uppercase tracking-widest text-foreground hover:bg-muted border border-transparent hover:border-border/50 rounded-xl transition-all ${
+          isCollapsed ? "justify-center" : ""
+        }`}
+      >
+        <Bell size={18} className="shrink-0" />
+        {!isCollapsed && <span>Notifications</span>}
+        {unreadCount > 0 && (
+          <span className="absolute top-2 left-7 w-4 h-4 bg-blue-600 text-white text-[8px] font-black rounded-full flex items-center justify-center">
+            {unreadCount > 9 ? "9+" : unreadCount}
+          </span>
+        )}
+      </button>
 
-    {/* Render the drawer — import NotificationDrawer or inline it */}
-    {notifOpen && (
-      <NotificationDrawer
-        notifications={notifications}
-        onClose={() => { setNotifOpen(false); /* re-fetch after close */ }}
-      />
-    )}
+      {/* NOTIFICATION DRAWER */}
+      {notifOpen && (
+        <NotificationDrawer
+          notifications={notifications}
+          onClose={() => setNotifOpen(false)}
+        />
+      )}
 
       {/* ATTENDANCE WIDGET */}
       <div className={`mt-auto p-4 transition-all duration-300 ${isCollapsed ? 'px-2' : 'px-6'}`}>
@@ -220,13 +244,16 @@ export default function Sidebar() {
 
         {session && (
           <button
-            onClick={() => signOut({ callbackUrl: "/" })}
-            className={`flex items-center gap-3 w-full px-3 py-3 text-xs font-black uppercase tracking-widest text-red-500 hover:bg-red-500/10 border border-transparent hover:border-red-500/20 rounded-xl transition-all ${
+            onClick={handlePurgeSession}
+            disabled={isLoggingOut}
+            className={`flex items-center gap-3 w-full px-3 py-3 text-xs font-black uppercase tracking-widest text-red-500 hover:bg-red-500/10 border border-transparent hover:border-red-500/20 rounded-xl transition-all disabled:opacity-50 ${
               isCollapsed ? "justify-center" : ""
             }`}
           >
-            <LogOut size={18} className="shrink-0" />
-            {!isCollapsed && <span>Purge Session</span>}
+            <LogOut size={18} className={`shrink-0 ${isLoggingOut ? "animate-spin" : ""}`} />
+            {!isCollapsed && (
+              <span>{isLoggingOut ? "Purging..." : "Purge Session"}</span>
+            )}
           </button>
         )}
       </div>

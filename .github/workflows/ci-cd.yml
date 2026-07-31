@@ -2,9 +2,9 @@ name: Postgres Migration & CI Pipeline
 
 on:
   push:
-    branches: [main, staging, dev]
+    branches: [master, staging, dev] # Changed main to master
   pull_request:
-    branches: [main, staging]
+    branches: [master, staging] # Changed main to master
 
 jobs:
   prisma-db-migrate:
@@ -28,7 +28,7 @@ jobs:
           STAGING_DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
           PROD_DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
         run: |
-          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+          if [ "${{ github.ref }}" = "refs/heads/master" ]; then   # Changed main to master
             echo "Applying migrations to PRODUCTION..."
             DATABASE_URL="$PROD_DATABASE_URL" npx prisma migrate deploy
           elif [ "${{ github.ref }}" = "refs/heads/staging" ]; then
