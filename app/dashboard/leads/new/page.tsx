@@ -3,11 +3,11 @@ import Link from "next/link";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
-import { LeadSource, LeadStatus } from "@prisma/client";
+import { LeadSource, LeadStatus, UserRole } from "@prisma/client";
 import {
   ArrowLeft,
   Building2,
-  UserCheck,
+  UserCog,
   Mail,
   Phone,
   DollarSign,
@@ -32,6 +32,13 @@ const INDUSTRY_OPTIONS = [
   "Manufacturing",
   "Professional Services",
   "Other",
+];
+
+const ELIGIBLE_EMPLOYEE_ROLES: UserRole[] = [
+  UserRole.ADMIN,
+  UserRole.OPERATOR,
+  UserRole.TEAMLEADER,
+  UserRole.CREATIVE,
 ];
 
 async function createLeadAction(formData: FormData) {
@@ -64,6 +71,22 @@ async function createLeadAction(formData: FormData) {
   const estimatedBudget = budgetRaw ? parseFloat(budgetRaw) : null;
   const expectedCloseDate = closeDateRaw ? new Date(closeDateRaw) : null;
 
+  // Validate assigned employee role if provided
+  if (ownerId && ownerId !== "UNASSIGNED") {
+    const user = await db.user.findFirst({
+      where: { id: ownerId, agencyId },
+      select: { id: true, role: true },
+    });
+    if (!user) {
+      throw new Error("Assigned employee not found or access denied.");
+    }
+    if (!ELIGIBLE_EMPLOYEE_ROLES.includes(user.role)) {
+      throw new Error(
+        `User role '${user.role}' is not eligible for lead assignment.`
+      );
+    }
+  }
+
   // Auto-generate lead serial number (e.g. LEAD-1001)
   const leadCount = await db.lead.count({ where: { agencyId } });
   const leadNo = `LEAD-${1000 + leadCount + 1}`;
@@ -76,7 +99,8 @@ async function createLeadAction(formData: FormData) {
       contactEmail: contactEmail || null,
       contactPhone: contactPhone || null,
       industry: industry && industry !== "" ? industry : null,
-      estimatedBudget: estimatedBudget && !isNaN(estimatedBudget) ? estimatedBudget : null,
+      estimatedBudget:
+        estimatedBudget && !isNaN(estimatedBudget) ? estimatedBudget : null,
       currency,
       expectedCloseDate,
       source,
@@ -102,9 +126,13 @@ export default async function NewLeadPage() {
     );
   }
 
-  // Fetch potential owners/account managers within the agency
-  const users = await db.user.findMany({
-    where: { agencyId, isActive: true },
+  // Fetch eligible employees only (ADMIN, OPERATOR, TEAMLEADER, CREATIVE)
+  const employees = await db.user.findMany({
+    where: {
+      agencyId,
+      isActive: true,
+      role: { in: ELIGIBLE_EMPLOYEE_ROLES },
+    },
     select: { id: true, name: true, role: true },
     orderBy: { name: "asc" },
   });
@@ -155,9 +183,11 @@ export default async function NewLeadPage() {
 
             {/* Contact Name */}
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-zinc-300">Contact Name</label>
+              <label className="text-xs font-medium text-zinc-300">
+                Contact Name
+              </label>
               <div className="relative">
-                <UserCheck className="absolute left-3 top-2.5 h-4 w-4 text-zinc-500" />
+                <UserCog className="absolute left-3 top-2.5 h-4 w-4 text-zinc-500" />
                 <input
                   type="text"
                   name="contactName"
@@ -169,7 +199,9 @@ export default async function NewLeadPage() {
 
             {/* Industry (Dropdown) */}
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-zinc-300">Industry</label>
+              <label className="text-xs font-medium text-zinc-300">
+                Industry
+              </label>
               <div className="relative">
                 <Briefcase className="absolute left-3 top-2.5 h-4 w-4 text-zinc-500 pointer-events-none" />
                 <select
@@ -191,7 +223,9 @@ export default async function NewLeadPage() {
 
             {/* Email */}
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-zinc-300">Contact Email</label>
+              <label className="text-xs font-medium text-zinc-300">
+                Contact Email
+              </label>
               <div className="relative">
                 <Mail className="absolute left-3 top-2.5 h-4 w-4 text-zinc-500" />
                 <input
@@ -205,7 +239,9 @@ export default async function NewLeadPage() {
 
             {/* Phone */}
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-zinc-300">Contact Phone</label>
+              <label className="text-xs font-medium text-zinc-300">
+                Contact Phone
+              </label>
               <div className="relative">
                 <Phone className="absolute left-3 top-2.5 h-4 w-4 text-zinc-500" />
                 <input
@@ -229,7 +265,9 @@ export default async function NewLeadPage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {/* Status */}
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-zinc-300">Lead Status</label>
+              <label className="text-xs font-medium text-zinc-300">
+                Lead Status
+              </label>
               <select
                 name="status"
                 defaultValue={LeadStatus.NEW}
@@ -245,7 +283,9 @@ export default async function NewLeadPage() {
 
             {/* Source */}
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-zinc-300">Lead Source</label>
+              <label className="text-xs font-medium text-zinc-300">
+                Lead Source
+              </label>
               <select
                 name="source"
                 defaultValue={LeadSource.OTHER}
@@ -261,7 +301,9 @@ export default async function NewLeadPage() {
 
             {/* Estimated Budget */}
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-zinc-300">Estimated Budget</label>
+              <label className="text-xs font-medium text-zinc-300">
+                Estimated Budget
+              </label>
               <div className="relative flex">
                 <span className="inline-flex items-center px-3 rounded-l-md border border-r-0 border-zinc-700 bg-zinc-900 text-xs text-zinc-400">
                   <DollarSign className="h-3.5 w-3.5" />
@@ -278,7 +320,9 @@ export default async function NewLeadPage() {
 
             {/* Currency */}
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-zinc-300">Currency</label>
+              <label className="text-xs font-medium text-zinc-300">
+                Currency
+              </label>
               <select
                 name="currency"
                 defaultValue="EGP"
@@ -294,7 +338,9 @@ export default async function NewLeadPage() {
 
             {/* Expected Close Date */}
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-zinc-300">Expected Close Date</label>
+              <label className="text-xs font-medium text-zinc-300">
+                Expected Close Date
+              </label>
               <div className="relative">
                 <Calendar className="absolute left-3 top-2.5 h-4 w-4 text-zinc-500" />
                 <input
@@ -305,18 +351,20 @@ export default async function NewLeadPage() {
               </div>
             </div>
 
-            {/* Lead Owner */}
+            {/* Assigned Employee */}
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-zinc-300">Assigned Owner</label>
+              <label className="text-xs font-medium text-zinc-300">
+                Assigned Employee
+              </label>
               <select
                 name="ownerId"
                 defaultValue="UNASSIGNED"
                 className="w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-zinc-500 focus:outline-none"
               >
                 <option value="UNASSIGNED">Unassigned</option>
-                {users.map((user) => (
-                  <option key={user.id} value={user.id}>
-                    {user.name} ({user.role})
+                {employees.map((emp) => (
+                  <option key={emp.id} value={emp.id}>
+                    {emp.name} ({emp.role})
                   </option>
                 ))}
               </select>

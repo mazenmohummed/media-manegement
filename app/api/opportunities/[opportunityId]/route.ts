@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/authOptions";
+import { opportunityPatchSchema } from "@/lib/validations/opportunity";
 
 interface RouteParams {
   params: Promise<{ opportunityId: string }>;
@@ -90,7 +91,10 @@ export async function PATCH(request: Request, { params }: RouteParams) {
     }
 
     const { opportunityId } = await params;
-    const body = await request.json();
+    const rawBody = await request.json();
+
+    // Validate and parse request body using Zod schema
+    const body = opportunityPatchSchema.parse(rawBody);
 
     const existingOpportunity = await db.opportunity.findFirst({
       where: {
@@ -113,8 +117,8 @@ export async function PATCH(request: Request, { params }: RouteParams) {
       budget,
       currency,
       expectedCloseDate,
-      userId,    // assigned employee (must be eligible role)
-      clientId,  // opportunity owner
+      userId,
+      clientId,
       companyMission,
       brandValues,
       marketResearchNotes,
@@ -188,6 +192,14 @@ export async function PATCH(request: Request, { params }: RouteParams) {
     return NextResponse.json(updatedOpportunity, { status: 200 });
   } catch (error: any) {
     console.error("[OPPORTUNITY_PATCH_ERROR]:", error);
+
+    if (error.name === "ZodError") {
+      return NextResponse.json(
+        { error: "Validation error", details: error.errors },
+        { status: 400 }
+      );
+    }
+
     return NextResponse.json(
       { error: error?.message || "Failed to update opportunity" },
       { status: 500 }

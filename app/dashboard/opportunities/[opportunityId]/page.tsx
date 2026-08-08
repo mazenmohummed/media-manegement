@@ -2,6 +2,7 @@
 import { db } from "@/lib/db";
 import { notFound } from "next/navigation";
 import Link from "next/link";
+import { UserRole } from "@prisma/client";
 import {
   ArrowLeft,
   Building,
@@ -22,6 +23,7 @@ import { ProductManager } from "@/components/opportunities/product-manager";
 import { OpportunityHeaderEditForm } from "@/components/opportunities/opportunity-header-edit-form";
 import { CreateProposalButton } from "@/components/opportunities/create-proposal-button";
 import { DeleteOpportunityButton } from "@/components/opportunities/delete-opportunity-button";
+import { CreateClientButton } from "@/components/opportunities/create-client-button";
 
 const STRATEGY_FIELDS: { key: keyof StrategyFields; label: string }[] = [
   { key: "companyMission", label: "Company Mission" },
@@ -45,6 +47,13 @@ interface StrategyFields {
   launchStrategy: string | null;
 }
 
+const ELIGIBLE_EMPLOYEE_ROLES: UserRole[] = [
+  UserRole.ADMIN,
+  UserRole.OPERATOR,
+  UserRole.TEAMLEADER,
+  UserRole.CREATIVE,
+];
+
 export default async function OpportunityDetailPage({
   params,
 }: {
@@ -55,7 +64,7 @@ export default async function OpportunityDetailPage({
   const opportunity = await db.opportunity.findUnique({
     where: { id: opportunityId },
     include: {
-      user: { select: { id: true, name: true, email: true, role: true } }, // assigned employee
+      user: { select: { id: true, name: true, email: true, role: true } },
       lead: {
         include: {
           owner: { select: { id: true, name: true, email: true } },
@@ -73,6 +82,8 @@ export default async function OpportunityDetailPage({
           totalAmount: true,
           currency: true,
           createdAt: true,
+          user: { select: { id: true, name: true, role: true } },
+          client: { select: { id: true, clientName: true } },
         },
         orderBy: { createdAt: "desc" },
       },
@@ -80,6 +91,22 @@ export default async function OpportunityDetailPage({
   });
 
   if (!opportunity) return notFound();
+
+  const clients = await db.client.findMany({
+    where: { agencyId: opportunity.agencyId },
+    select: { id: true, clientName: true, clientNo: true },
+    orderBy: { clientName: "asc" },
+  });
+
+  const employees = await db.user.findMany({
+    where: {
+      agencyId: opportunity.agencyId,
+      role: { in: ELIGIBLE_EMPLOYEE_ROLES },
+      isActive: true,
+    },
+    select: { id: true, name: true, role: true },
+    orderBy: { name: "asc" },
+  });
 
   return (
     <div className="max-w-5xl mx-auto p-6 space-y-6">
@@ -110,6 +137,10 @@ export default async function OpportunityDetailPage({
             )}
           </div>
           <div className="flex items-center gap-2">
+            <CreateClientButton
+              agencyId={opportunity.agencyId}
+              opportunityId={opportunity.id}
+            />
             <OpportunityHeaderEditForm
               opportunityId={opportunity.id}
               initialData={{
@@ -118,11 +149,13 @@ export default async function OpportunityDetailPage({
                 budget: opportunity.budget,
                 currency: opportunity.currency,
                 expectedCloseDate: opportunity.expectedCloseDate
-                  ? opportunity.expectedCloseDate.toISOString()
+                  ? opportunity.expectedCloseDate.toISOString().split("T")[0]
                   : null,
                 userId: opportunity.userId ?? null,
                 clientId: opportunity.clientId ?? null,
               }}
+              clients={clients}
+              employees={employees}
             />
             <DeleteOpportunityButton
               opportunityId={opportunity.id}
@@ -160,16 +193,16 @@ export default async function OpportunityDetailPage({
               <UserIcon className="w-3.5 h-3.5 text-blue-400" /> Opportunity Owner
             </span>
             <p className="text-base font-semibold text-zinc-200 mt-1 truncate">
-              {opportunity.client?.clientName || "Unassigned"}
+              {opportunity.user?.name || "Unassigned"}
             </p>
           </div>
 
           <div className="bg-zinc-950/60 rounded-lg p-3.5 border border-zinc-800/80">
             <span className="text-xs text-zinc-400 flex items-center gap-1">
-              <UserCog className="w-3.5 h-3.5 text-purple-400" /> Assigned Employee
+              <UserCog className="w-3.5 h-3.5 text-purple-400" /> Linked Client
             </span>
             <p className="text-base font-semibold text-zinc-200 mt-1 truncate">
-              {opportunity.user?.name || "Unassigned"}
+              {opportunity.client?.clientName || "No client linked"}
             </p>
           </div>
         </div>
@@ -228,20 +261,11 @@ export default async function OpportunityDetailPage({
         </div>
       </div>
 
-      {/* Discovery Insights (Interactive Managers) */}
+      {/* Discovery Insights */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <PersonaManager
-          opportunityId={opportunity.id}
-          initialPersonas={opportunity.personas}
-        />
-        <CompetitorManager
-          opportunityId={opportunity.id}
-          initialCompetitors={opportunity.competitors}
-        />
-        <ProductManager
-          opportunityId={opportunity.id}
-          initialProducts={opportunity.products}
-        />
+        <PersonaManager opportunityId={opportunity.id} initialPersonas={opportunity.personas} />
+        <CompetitorManager opportunityId={opportunity.id} initialCompetitors={opportunity.competitors} />
+        <ProductManager opportunityId={opportunity.id} initialProducts={opportunity.products} />
       </div>
 
       {/* Strategic Vision */}
@@ -272,16 +296,9 @@ export default async function OpportunityDetailPage({
             const value = opportunity[key];
             if (!value) return null;
             return (
-              <div
-                key={key}
-                className="bg-zinc-950/60 p-3.5 rounded-lg border border-zinc-800/80"
-              >
-                <span className="text-zinc-500 font-medium block mb-1">
-                  {label}
-                </span>
-                <p className="text-zinc-300 leading-relaxed whitespace-pre-wrap">
-                  {value}
-                </p>
+              <div key={key} className="bg-zinc-950/60 p-3.5 rounded-lg border border-zinc-800/80">
+                <span className="text-zinc-500 font-medium block mb-1">{label}</span>
+                <p className="text-zinc-300 leading-relaxed whitespace-pre-wrap">{value}</p>
               </div>
             );
           })}
@@ -289,8 +306,7 @@ export default async function OpportunityDetailPage({
 
         {STRATEGY_FIELDS.every(({ key }) => !opportunity[key]) && (
           <p className="text-xs text-zinc-500 italic">
-            No strategic direction captured yet. Click "Edit" to add mission,
-            values, research notes, and channel strategies.
+            No strategic direction captured yet. Click "Edit" to add mission, values, research notes, and channel strategies.
           </p>
         )}
 
@@ -299,11 +315,7 @@ export default async function OpportunityDetailPage({
             <span className="text-xs text-zinc-500 font-medium block mb-2">Target KPIs</span>
             <div className="flex flex-wrap gap-2">
               {opportunity.kpis.map((kpi, idx) => (
-                <Badge
-                  key={idx}
-                  variant="outline"
-                  className="bg-zinc-950 text-zinc-300 border-zinc-800 text-xs"
-                >
+                <Badge key={idx} variant="outline" className="bg-zinc-950 text-zinc-300 border-zinc-800 text-xs">
                   {kpi}
                 </Badge>
               ))}
@@ -312,7 +324,7 @@ export default async function OpportunityDetailPage({
         )}
       </div>
 
-      {/* Associated Proposals with Action Button */}
+      {/* Associated Proposals */}
       <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 space-y-4">
         <h3 className="text-sm font-semibold text-zinc-200 border-b border-zinc-800 pb-2 flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -335,21 +347,33 @@ export default async function OpportunityDetailPage({
                 href={`/dashboard/proposals/${prop.id}`}
                 className="py-3 first:pt-0 last:pb-0 flex items-center justify-between text-xs hover:bg-zinc-800/40 px-2 rounded-lg transition-colors block"
               >
-                <div>
+                <div className="min-w-0 flex-1">
                   <span className="font-semibold text-zinc-200 block">
                     {prop.proposalNo || `Proposal #${prop.id.slice(0, 8)}`}
                   </span>
                   <span className="text-zinc-500">
                     Created: {new Date(prop.createdAt).toLocaleDateString()}
                   </span>
+                  {(prop.user || prop.client) && (
+                    <div className="flex items-center gap-2 mt-1.5">
+                      {prop.user && (
+                        <span className="text-[10px] text-purple-400 bg-purple-500/10 px-1.5 py-0.5 rounded border border-purple-500/20">
+                          {prop.user.name}
+                        </span>
+                      )}
+                      {prop.client && (
+                        <span className="text-[10px] text-blue-400 bg-blue-500/10 px-1.5 py-0.5 rounded border border-blue-500/20">
+                          {prop.client.clientName}
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
-                <div className="flex items-center gap-4">
+                <div className="flex items-center gap-4 shrink-0 ml-4">
                   <span className="font-mono text-zinc-200">
                     {prop.currency} {prop.totalAmount.toLocaleString()}
                   </span>
-                  <Badge className="bg-zinc-800 text-zinc-300 border-zinc-700">
-                    {prop.status}
-                  </Badge>
+                  <Badge className="bg-zinc-800 text-zinc-300 border-zinc-700">{prop.status}</Badge>
                 </div>
               </Link>
             ))}

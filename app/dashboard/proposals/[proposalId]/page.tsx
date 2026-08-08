@@ -4,7 +4,17 @@ import { notFound } from "next/navigation";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/authOptions";
 import Link from "next/link";
-import { ArrowLeft, FileText, Calendar, DollarSign, Building, Download, CheckCircle2, Briefcase } from "lucide-react";
+import {
+  ArrowLeft,
+  FileText,
+  Calendar,
+  DollarSign,
+  Building,
+  Download,
+  CheckCircle2,
+  Briefcase,
+  UserCog,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { ProposalEditorForm } from "@/components/proposals/proposal-editor-form";
 import { SendProposalButton } from "@/components/proposals/send-proposal-button";
@@ -26,6 +36,8 @@ export default async function ProposalDetailPage({ params }: PageProps) {
     where: { id: proposalId },
     include: {
       lineItems: { orderBy: { createdAt: "asc" } },
+      client: { select: { id: true, clientName: true, email: true } },
+      user: { select: { id: true, name: true, email: true, role: true } },
       contract: {
         select: {
           id: true,
@@ -42,7 +54,8 @@ export default async function ProposalDetailPage({ params }: PageProps) {
           budget: true,
           currency: true,
           stage: true,
-          owner: { select: { id: true, name: true, email: true } },
+          client: { select: { id: true, clientName: true, email: true } },
+          user: { select: { id: true, name: true, email: true, role: true } },
           agency: { select: { agencyName: true, defaultCurrency: true } },
           lead: {
             select: {
@@ -62,6 +75,10 @@ export default async function ProposalDetailPage({ params }: PageProps) {
     return notFound();
   }
 
+  // Proposal-level assignment takes precedence; fall back to opportunity-level
+  const linkedClient = proposal.client || proposal.opportunity.client;
+  const assignedEmployee = proposal.user || proposal.opportunity.user;
+
   const isAccepted = proposal.status === "ACCEPTED";
   const linkedContract = proposal.contract;
   const linkedProject = linkedContract?.projects?.[0];
@@ -75,13 +92,11 @@ export default async function ProposalDetailPage({ params }: PageProps) {
         <ArrowLeft className="w-4 h-4" /> Back to Opportunity
       </Link>
 
-      
-
       {/* Proposal Header Metadata */}
       <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 shadow-sm space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-3 flex-wrap">
               <h1 className="text-3xl font-bold text-zinc-100">
                 {proposal.proposalNo || `Proposal #${proposal.id.slice(0, 8)}`}
               </h1>
@@ -92,13 +107,19 @@ export default async function ProposalDetailPage({ params }: PageProps) {
             <p className="text-sm text-zinc-400 mt-1 flex items-center gap-1.5">
               <Building className="w-4 h-4 text-zinc-500" />
               {proposal.opportunity.agency.agencyName}
-              {proposal.opportunity.lead?.companyName && (
-                <span> → {proposal.opportunity.lead.companyName}</span>
+              {linkedClient?.clientName && (
+                <span> → {linkedClient.clientName}</span>
               )}
             </p>
-            {proposal.opportunity.owner?.name && (
+            {linkedClient?.email && (
               <p className="text-xs text-zinc-500 mt-1">
-                Owner: {proposal.opportunity.owner.name}
+                Client: {linkedClient.email}
+              </p>
+            )}
+            {assignedEmployee && (
+              <p className="text-xs text-zinc-500 mt-1 flex items-center gap-1">
+                <UserCog className="w-3 h-3" />
+                Assigned: {assignedEmployee.name} ({assignedEmployee.role})
               </p>
             )}
           </div>
@@ -119,13 +140,11 @@ export default async function ProposalDetailPage({ params }: PageProps) {
               hasValidUntil={!!proposal.validUntil}
             />
 
-            {!isAccepted && (
-              <AcceptProposalButton proposalId={proposal.id} />
-            )}
+            {!isAccepted && <AcceptProposalButton proposalId={proposal.id} />}
           </div>
         </div>
 
-        {/* Contract & Project Conversion Banner if Accepted */}
+        {/* Contract & Project Conversion Banner */}
         {isAccepted && linkedContract && (
           <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-4 flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-2.5">
@@ -135,7 +154,8 @@ export default async function ProposalDetailPage({ params }: PageProps) {
                   Converted to Contract: {linkedContract.contractNo}
                 </p>
                 <p className="text-[11px] text-zinc-400">
-                  Carried over client scope, currency, and total value (${proposal.totalAmount.toLocaleString()}).
+                  Carried over client scope, currency, and total value (
+                  {proposal.currency} {proposal.totalAmount.toLocaleString()}).
                 </p>
               </div>
             </div>
@@ -145,7 +165,8 @@ export default async function ProposalDetailPage({ params }: PageProps) {
                 href={`/dashboard/projects/${linkedProject.id}`}
                 className="inline-flex items-center gap-1.5 text-xs font-medium bg-emerald-500 text-zinc-950 px-3 py-1.5 rounded-md hover:bg-emerald-400 transition-colors font-semibold"
               >
-                <Briefcase className="w-3.5 h-3.5" /> View Project ({linkedProject.name})
+                <Briefcase className="w-3.5 h-3.5" /> View Project (
+                {linkedProject.name})
               </Link>
             )}
           </div>
@@ -183,26 +204,42 @@ export default async function ProposalDetailPage({ params }: PageProps) {
           </div>
         </div>
 
-        {/* Contact snapshot */}
-        {proposal.opportunity.lead && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-4 border-t border-zinc-800 text-xs">
-            <div>
-              <span className="text-zinc-500 block mb-0.5">Contact</span>
-              <span className="text-zinc-200">
-                {proposal.opportunity.lead.contactName || "N/A"}
-              </span>
-            </div>
-            <div>
-              <span className="text-zinc-500 block mb-0.5">Email</span>
-              <span className="text-zinc-200">
-                {proposal.opportunity.lead.contactEmail || "N/A"}
-              </span>
-            </div>
+        {/* Opportunity Context Snapshot */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pt-4 border-t border-zinc-800 text-xs">
+          <div>
+            <span className="text-zinc-500 block mb-0.5">Opportunity</span>
+            <Link
+              href={`/dashboard/opportunities/${proposal.opportunity.id}`}
+              className="text-zinc-200 hover:text-purple-300 transition-colors font-medium"
+            >
+              {proposal.opportunity.name}
+            </Link>
           </div>
-        )}
+          <div>
+            <span className="text-zinc-500 block mb-0.5">Contact</span>
+            <span className="text-zinc-200">
+              {proposal.opportunity.lead?.contactName || "N/A"}
+            </span>
+          </div>
+          <div>
+            <span className="text-zinc-500 block mb-0.5">Email</span>
+            <span className="text-zinc-200">
+              {proposal.opportunity.lead?.contactEmail || "N/A"}
+            </span>
+          </div>
+          <div>
+            <span className="text-zinc-500 block mb-0.5">Assigned Employee</span>
+            <span className="text-zinc-200 flex items-center gap-1">
+              <UserCog className="w-3 h-3 text-zinc-600" />
+              {assignedEmployee
+                ? `${assignedEmployee.name} (${assignedEmployee.role})`
+                : "Unassigned"}
+            </span>
+          </div>
+        </div>
       </div>
 
-      {/* Main Interactive Form Component for Editing Sections & Line Items */}
+      {/* Main Interactive Editor */}
       <ProposalEditorForm initialProposal={proposal} />
     </div>
   );

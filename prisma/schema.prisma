@@ -738,6 +738,12 @@ model Proposal {
 
     lineItems ProposalLineItem[]
 
+    userId String?
+    user   User?   @relation("ProposalUser", fields: [userId], references: [id])
+
+    clientId String?
+    client   Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
+
     contractId String?   @unique
     contract   Contract? @relation(fields: [contractId], references: [id])
 
@@ -745,6 +751,7 @@ model Proposal {
     updatedAt DateTime @updatedAt
 
     @@index([agencyId, status])
+    @@index([clientId])
 }
 
 model ProposalLineItem {
@@ -1070,6 +1077,8 @@ model User {
     resourceAllocations   ResourceAllocation[]
 
     assignedOpportunities Opportunity[] @relation("UserOpportunities")
+    proposals             Proposal[]    @relation("ProposalUser")
+    contracts             Contract[]    @relation("ContractUser")
 
     @@index([agencyId, role])
     @@index([agencyId, isActive])
@@ -1252,6 +1261,7 @@ model Client {
     feedback                  ClientFeedback[]
     reports                   Report[]
     opportunities             Opportunity[]
+    proposals                 Proposal[]
 
     @@index([agencyId, clientNo])
     @@index([agencyId, clientName])
@@ -1327,6 +1337,9 @@ model Contract {
     monthlyValue Float?
     currency     String         @default("EGP")
     termsUrl     String?
+
+    userId String?
+    user   User?   @relation("ContractUser", fields: [userId], references: [id])
 
     clientId        String
     client          Client                    @relation(fields: [clientId], references: [id])

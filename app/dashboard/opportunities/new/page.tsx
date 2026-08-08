@@ -2,12 +2,27 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Briefcase, ArrowLeft, Loader2, Plus, Trash2, Users, Target, Package, UserPlus } from "lucide-react";
+import {
+  Briefcase,
+  ArrowLeft,
+  Loader2,
+  Plus,
+  Trash2,
+  Users,
+  Target,
+  Package,
+  UserPlus,
+} from "lucide-react";
 import Link from "next/link";
-import { User, Client, OpportunityStage } from "@prisma/client";
+import { Client, OpportunityStage } from "@prisma/client";
 import { useSession } from "next-auth/react";
 import CreateClientCard from "@/components/opportunities/CreateClientCard";
 
+interface AgencyUser {
+  id: string;
+  name: string;
+  role: string;
+}
 
 export interface DiscoveryPersonaItem {
   name: string;
@@ -37,20 +52,26 @@ export interface DiscoveryProductItem {
 interface OpportunityFormData {
   name: string;
   budget: string;
+  currency: string;
   stage: OpportunityStage;
   expectedCloseDate: string;
   companyMission: string;
   brandValues: string;
   marketResearchNotes: string;
   marketingStrategy: string;
+  communicationStrategy: string;
+  mediaStrategy: string;
   creativeStrategy: string;
+  launchStrategy: string;
   kpis: string;
-  personas: any[];
-  competitors: any[];
-  products: any[];
-  clientId: string;    // New Related Client Field
-  userId: string;      // Assigned Employee Field
+  personas: DiscoveryPersonaItem[];
+  competitors: DiscoveryCompetitorItem[];
+  products: DiscoveryProductItem[];
+  clientId: string;
+  userId: string;
 }
+
+const ELIGIBLE_EMPLOYEE_ROLES = ["ADMIN", "OPERATOR", "TEAMLEADER", "CREATIVE"];
 
 export default function NewOpportunityPage() {
   const router = useRouter();
@@ -58,21 +79,24 @@ export default function NewOpportunityPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // State to hold clients list and modal visibility
   const [clients, setClients] = useState<Client[]>([]);
-  const [agencyUsers, setAgencyUsers] = useState<User[]>([]);
+  const [agencyUsers, setAgencyUsers] = useState<AgencyUser[]>([]);
   const [isClientModalOpen, setIsClientModalOpen] = useState(false);
 
   const [formData, setFormData] = useState<OpportunityFormData>({
     name: "",
     budget: "",
+    currency: "EGP",
     stage: OpportunityStage.DISCOVERY,
     expectedCloseDate: "",
     companyMission: "",
     brandValues: "",
     marketResearchNotes: "",
     marketingStrategy: "",
+    communicationStrategy: "",
+    mediaStrategy: "",
     creativeStrategy: "",
+    launchStrategy: "",
     kpis: "",
     personas: [],
     competitors: [],
@@ -81,10 +105,8 @@ export default function NewOpportunityPage() {
     userId: "",
   });
 
-  // Fetch clients for the agency with response shape correction
-useEffect(() => {
+  useEffect(() => {
     if (session?.user?.agencyId) {
-      // Fetch Clients
       fetch(`/api/clients?agencyId=${session.user.agencyId}`)
         .then(async (res) => {
           const data = await res.json();
@@ -92,26 +114,36 @@ useEffect(() => {
         })
         .catch((err) => console.error("Failed to load clients", err));
 
-      // Fetch Agency Users (for Assigned Employee)
       fetch(`/api/users?agencyId=${session.user.agencyId}`)
         .then(async (res) => {
           const data = await res.json();
-          // Updated from data.users to data.employees to match your GET route return structure
-          if (res.ok && Array.isArray(data.employees)) {
-            setAgencyUsers(data.employees);
-          }
+          const rawUsers = Array.isArray(data.employees)
+            ? data.employees
+            : Array.isArray(data.users)
+            ? data.users
+            : [];
+          const eligible = rawUsers.filter((u: AgencyUser) =>
+            ELIGIBLE_EMPLOYEE_ROLES.includes(u.role)
+          );
+          setAgencyUsers(eligible);
         })
         .catch((err) => console.error("Failed to load agency users", err));
     }
   }, [session?.user?.agencyId]);
 
-  // Dynamic Persona Actions
   const addPersona = () => {
     setFormData((prev) => ({
       ...prev,
       personas: [
         ...prev.personas,
-        { name: "", demographics: "", psychographics: "", buyingBehavior: "", goals: "", frustrations: "" },
+        {
+          name: "",
+          demographics: "",
+          psychographics: "",
+          buyingBehavior: "",
+          goals: "",
+          frustrations: "",
+        },
       ],
     }));
   };
@@ -123,7 +155,11 @@ useEffect(() => {
     }));
   };
 
-  const updatePersona = (index: number, field: keyof DiscoveryPersonaItem, value: string) => {
+  const updatePersona = (
+    index: number,
+    field: keyof DiscoveryPersonaItem,
+    value: string
+  ) => {
     setFormData((prev) => {
       const updated = [...prev.personas];
       updated[index] = { ...updated[index], [field]: value };
@@ -131,13 +167,18 @@ useEffect(() => {
     });
   };
 
-  // Dynamic Competitor Actions
   const addCompetitor = () => {
     setFormData((prev) => ({
       ...prev,
       competitors: [
         ...prev.competitors,
-        { name: "", strengths: "", weaknesses: "", pricingNote: "", marketShare: "" },
+        {
+          name: "",
+          strengths: "",
+          weaknesses: "",
+          pricingNote: "",
+          marketShare: "",
+        },
       ],
     }));
   };
@@ -149,7 +190,11 @@ useEffect(() => {
     }));
   };
 
-  const updateCompetitor = (index: number, field: keyof DiscoveryCompetitorItem, value: string) => {
+  const updateCompetitor = (
+    index: number,
+    field: keyof DiscoveryCompetitorItem,
+    value: string
+  ) => {
     setFormData((prev) => {
       const updated = [...prev.competitors];
       updated[index] = { ...updated[index], [field]: value };
@@ -157,7 +202,6 @@ useEffect(() => {
     });
   };
 
-  // Dynamic Product Actions
   const addProduct = () => {
     setFormData((prev) => ({
       ...prev,
@@ -175,7 +219,11 @@ useEffect(() => {
     }));
   };
 
-  const updateProduct = (index: number, field: keyof DiscoveryProductItem, value: any) => {
+  const updateProduct = (
+    index: number,
+    field: keyof DiscoveryProductItem,
+    value: any
+  ) => {
     setFormData((prev) => {
       const updated = [...prev.products];
       updated[index] = { ...updated[index], [field]: value };
@@ -183,23 +231,49 @@ useEffect(() => {
     });
   };
 
- const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
 
     try {
       const payload = {
-        ...formData,
-        agencyId: session?.user?.agencyId,
+        name: formData.name.trim(),
         budget: formData.budget ? parseFloat(formData.budget) : null,
+        currency: formData.currency || "EGP",
+        stage: formData.stage,
+        expectedCloseDate: formData.expectedCloseDate || null,
+        companyMission: formData.companyMission || null,
+        brandValues: formData.brandValues || null,
+        marketResearchNotes: formData.marketResearchNotes || null,
+        marketingStrategy: formData.marketingStrategy || null,
+        communicationStrategy: formData.communicationStrategy || null,
+        mediaStrategy: formData.mediaStrategy || null,
+        creativeStrategy: formData.creativeStrategy || null,
+        launchStrategy: formData.launchStrategy || null,
         kpis: formData.kpis
           ? formData.kpis.split(",").map((k) => k.trim()).filter(Boolean)
           : [],
-        products: formData.products.map((p) => ({
-          ...p,
-          price: p.price !== "" ? Number(p.price) : null,
-        })),
+        personas: formData.personas
+          .filter((p) => p.name.trim() !== "")
+          .map((p) => ({
+            ...p,
+            name: p.name.trim(),
+          })),
+        competitors: formData.competitors
+          .filter((c) => c.name.trim() !== "")
+          .map((c) => ({
+            ...c,
+            name: c.name.trim(),
+          })),
+        products: formData.products
+          .filter((p) => p.name.trim() !== "")
+          .map((p) => ({
+            ...p,
+            price: p.price !== "" ? Number(p.price) : null,
+          })),
+        clientId: formData.clientId || null,
+        userId: formData.userId || null,
       };
 
       const res = await fetch("/api/opportunities", {
@@ -219,6 +293,7 @@ useEffect(() => {
       setLoading(false);
     }
   };
+
   return (
     <div className="max-w-4xl mx-auto p-6 space-y-6">
       <Link
@@ -228,7 +303,6 @@ useEffect(() => {
         <ArrowLeft className="w-4 h-4" /> Back to Opportunities
       </Link>
 
-      {/* Action Button & Modal Overlay for Client Creation */}
       {session?.user?.agencyId && (
         <div>
           <button
@@ -242,24 +316,25 @@ useEffect(() => {
 
           {isClientModalOpen && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-                <div className="bg-zinc-900 border border-zinc-800 rounded-xl max-w-lg w-full p-6 relative shadow-2xl space-y-4">
+              <div className="bg-zinc-900 border border-zinc-800 rounded-xl max-w-lg w-full p-6 relative shadow-2xl space-y-4">
                 <div className="flex justify-between items-center border-b border-zinc-800 pb-3">
-                    <h3 className="text-base font-semibold text-zinc-100">Add Client Details</h3>
-                    <button
+                  <h3 className="text-base font-semibold text-zinc-100">
+                    Add Client Details
+                  </h3>
+                  <button
                     type="button"
                     onClick={() => setIsClientModalOpen(false)}
                     className="text-zinc-400 hover:text-zinc-200 text-sm font-bold"
-                    >
+                  >
                     ✕
-                    </button>
+                  </button>
                 </div>
-                
-                <CreateClientCard 
-                    agencyId={session.user.agencyId} 
-                    onSuccess={() => setIsClientModalOpen(false)}
-                    onCancel={() => setIsClientModalOpen(false)} 
+                <CreateClientCard
+                  agencyId={session.user.agencyId}
+                  onSuccess={() => setIsClientModalOpen(false)}
+                  onCancel={() => setIsClientModalOpen(false)}
                 />
-                </div>
+              </div>
             </div>
           )}
         </div>
@@ -272,7 +347,8 @@ useEffect(() => {
             Create Opportunity Discovery Form
           </h1>
           <p className="text-sm text-zinc-400 mt-1">
-            Capture opportunity details, brand discovery specs, target personas, competitors, and product vectors.
+            Capture opportunity details, brand discovery specs, target personas,
+            competitors, and product vectors.
           </p>
         </div>
 
@@ -289,44 +365,49 @@ useEffect(() => {
               1. Basic Opportunity Context
             </h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              
-              {/* Client Selection Dropdown */}
+              {/* Client / Owner */}
               <div>
-              <label className="block text-xs font-medium text-zinc-300 mb-1.5">
-                Related Client *
-              </label>
-              <select
-                required
-                value={formData.clientId}
-                onChange={(e) => setFormData({ ...formData, clientId: e.target.value })}
-                className="w-full rounded-lg bg-zinc-800/80 border border-zinc-700 p-2.5 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-purple-500"
-              >
-                <option value="">Select a client from database...</option>
-                {clients.map((client) => (
-                  <option key={client.id} value={client.id}>
-                    {client.clientName} {client.clientNo ? `(${client.clientNo})` : ""}
-                  </option>
-                ))}
-              </select>
-            </div>
+                <label className="block text-xs font-medium text-zinc-300 mb-1.5">
+                  Opportunity Owner (Client) *
+                </label>
+                <select
+                  required
+                  value={formData.clientId}
+                  onChange={(e) =>
+                    setFormData({ ...formData, clientId: e.target.value })
+                  }
+                  className="w-full rounded-lg bg-zinc-800/80 border border-zinc-700 p-2.5 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                >
+                  <option value="">Select a client...</option>
+                  {clients.map((client) => (
+                    <option key={client.id} value={client.id}>
+                      {client.clientName}{" "}
+                      {client.clientNo ? `(${client.clientNo})` : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
+              {/* Assigned Employee */}
               <div>
-              <label className="block text-xs font-medium text-zinc-300 mb-1.5">
-                Assigned Employee
-              </label>
-              <select
-                value={formData.userId}
-                onChange={(e) => setFormData({ ...formData, userId: e.target.value })}
-                className="w-full rounded-lg bg-zinc-800/80 border border-zinc-700 p-2.5 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-purple-500"
-              >
-                <option value="">Select assigned employee...</option>
-                {agencyUsers.map((user) => (
-                  <option key={user.id} value={user.id}>
-                    {user.name} ({user.role})
-                  </option>
-                ))}
-              </select>
-            </div>
+                <label className="block text-xs font-medium text-zinc-300 mb-1.5">
+                  Assigned Employee
+                </label>
+                <select
+                  value={formData.userId}
+                  onChange={(e) =>
+                    setFormData({ ...formData, userId: e.target.value })
+                  }
+                  className="w-full rounded-lg bg-zinc-800/80 border border-zinc-700 p-2.5 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                >
+                  <option value="">Select assigned employee...</option>
+                  {agencyUsers.map((user) => (
+                    <option key={user.id} value={user.id}>
+                      {user.name} ({user.role})
+                    </option>
+                  ))}
+                </select>
+              </div>
 
               <div className="sm:col-span-2">
                 <label className="block text-xs font-medium text-zinc-300 mb-1.5">
@@ -337,21 +418,40 @@ useEffect(() => {
                   required
                   placeholder="e.g. Acme Corp Enterprise Redesign"
                   value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  onChange={(e) =>
+                    setFormData({ ...formData, name: e.target.value })
+                  }
                   className="w-full rounded-lg bg-zinc-800/80 border border-zinc-700 p-2.5 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-purple-500"
                 />
               </div>
 
               <div>
                 <label className="block text-xs font-medium text-zinc-300 mb-1.5">
-                  Estimated Deal Value ($)
+                  Estimated Deal Value
                 </label>
                 <input
                   type="number"
                   step="any"
                   placeholder="25000"
                   value={formData.budget}
-                  onChange={(e) => setFormData({ ...formData, budget: e.target.value })}
+                  onChange={(e) =>
+                    setFormData({ ...formData, budget: e.target.value })
+                  }
+                  className="w-full rounded-lg bg-zinc-800/80 border border-zinc-700 p-2.5 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-zinc-300 mb-1.5">
+                  Currency
+                </label>
+                <input
+                  type="text"
+                  placeholder="EGP"
+                  value={formData.currency}
+                  onChange={(e) =>
+                    setFormData({ ...formData, currency: e.target.value })
+                  }
                   className="w-full rounded-lg bg-zinc-800/80 border border-zinc-700 p-2.5 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-purple-500"
                 />
               </div>
@@ -378,7 +478,7 @@ useEffect(() => {
                 </select>
               </div>
 
-              <div className="sm:col-span-2">
+              <div>
                 <label className="block text-xs font-medium text-zinc-300 mb-1.5">
                   Target Close Date
                 </label>
@@ -386,7 +486,10 @@ useEffect(() => {
                   type="date"
                   value={formData.expectedCloseDate}
                   onChange={(e) =>
-                    setFormData({ ...formData, expectedCloseDate: e.target.value })
+                    setFormData({
+                      ...formData,
+                      expectedCloseDate: e.target.value,
+                    })
                   }
                   className="w-full rounded-lg bg-zinc-800/80 border border-zinc-700 p-2.5 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-purple-500"
                 />
@@ -408,7 +511,9 @@ useEffect(() => {
                   rows={3}
                   placeholder="Describe client mission..."
                   value={formData.companyMission}
-                  onChange={(e) => setFormData({ ...formData, companyMission: e.target.value })}
+                  onChange={(e) =>
+                    setFormData({ ...formData, companyMission: e.target.value })
+                  }
                   className="w-full rounded-lg bg-zinc-800/80 border border-zinc-700 p-2.5 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-purple-500 resize-none"
                 />
               </div>
@@ -421,7 +526,9 @@ useEffect(() => {
                   rows={3}
                   placeholder="Key brand values..."
                   value={formData.brandValues}
-                  onChange={(e) => setFormData({ ...formData, brandValues: e.target.value })}
+                  onChange={(e) =>
+                    setFormData({ ...formData, brandValues: e.target.value })
+                  }
                   className="w-full rounded-lg bg-zinc-800/80 border border-zinc-700 p-2.5 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-purple-500 resize-none"
                 />
               </div>
@@ -434,7 +541,45 @@ useEffect(() => {
                   rows={3}
                   placeholder="Outline marketing strategy..."
                   value={formData.marketingStrategy}
-                  onChange={(e) => setFormData({ ...formData, marketingStrategy: e.target.value })}
+                  onChange={(e) =>
+                    setFormData({
+                      ...formData,
+                      marketingStrategy: e.target.value,
+                    })
+                  }
+                  className="w-full rounded-lg bg-zinc-800/80 border border-zinc-700 p-2.5 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-purple-500 resize-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-zinc-300 mb-1.5">
+                  Communication Strategy
+                </label>
+                <textarea
+                  rows={3}
+                  placeholder="Outline communication strategy..."
+                  value={formData.communicationStrategy}
+                  onChange={(e) =>
+                    setFormData({
+                      ...formData,
+                      communicationStrategy: e.target.value,
+                    })
+                  }
+                  className="w-full rounded-lg bg-zinc-800/80 border border-zinc-700 p-2.5 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-purple-500 resize-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-zinc-300 mb-1.5">
+                  Media Strategy
+                </label>
+                <textarea
+                  rows={3}
+                  placeholder="Outline media strategy..."
+                  value={formData.mediaStrategy}
+                  onChange={(e) =>
+                    setFormData({ ...formData, mediaStrategy: e.target.value })
+                  }
                   className="w-full rounded-lg bg-zinc-800/80 border border-zinc-700 p-2.5 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-purple-500 resize-none"
                 />
               </div>
@@ -447,7 +592,27 @@ useEffect(() => {
                   rows={3}
                   placeholder="Outline creative strategy..."
                   value={formData.creativeStrategy}
-                  onChange={(e) => setFormData({ ...formData, creativeStrategy: e.target.value })}
+                  onChange={(e) =>
+                    setFormData({
+                      ...formData,
+                      creativeStrategy: e.target.value,
+                    })
+                  }
+                  className="w-full rounded-lg bg-zinc-800/80 border border-zinc-700 p-2.5 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-purple-500 resize-none"
+                />
+              </div>
+
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-medium text-zinc-300 mb-1.5">
+                  Launch Strategy
+                </label>
+                <textarea
+                  rows={3}
+                  placeholder="Outline launch strategy..."
+                  value={formData.launchStrategy}
+                  onChange={(e) =>
+                    setFormData({ ...formData, launchStrategy: e.target.value })
+                  }
                   className="w-full rounded-lg bg-zinc-800/80 border border-zinc-700 p-2.5 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-purple-500 resize-none"
                 />
               </div>
@@ -460,7 +625,9 @@ useEffect(() => {
                   type="text"
                   placeholder="e.g. ROI > 3x, CAC < $50, Brand Awareness, Lead Generation"
                   value={formData.kpis}
-                  onChange={(e) => setFormData({ ...formData, kpis: e.target.value })}
+                  onChange={(e) =>
+                    setFormData({ ...formData, kpis: e.target.value })
+                  }
                   className="w-full rounded-lg bg-zinc-800/80 border border-zinc-700 p-2.5 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-purple-500"
                 />
               </div>
@@ -473,7 +640,12 @@ useEffect(() => {
                   rows={3}
                   placeholder="Key discoveries, industry trends, macro research..."
                   value={formData.marketResearchNotes}
-                  onChange={(e) => setFormData({ ...formData, marketResearchNotes: e.target.value })}
+                  onChange={(e) =>
+                    setFormData({
+                      ...formData,
+                      marketResearchNotes: e.target.value,
+                    })
+                  }
                   className="w-full rounded-lg bg-zinc-800/80 border border-zinc-700 p-2.5 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-purple-500 resize-none"
                 />
               </div>
@@ -498,7 +670,8 @@ useEffect(() => {
 
             {formData.personas.length === 0 ? (
               <p className="text-xs text-zinc-500 italic py-2">
-                No target personas added yet. Click &quot;Add Persona&quot; to define customer personas.
+                No target personas added yet. Click &quot;Add Persona&quot; to
+                define customer personas.
               </p>
             ) : (
               <div className="space-y-4">
@@ -524,9 +697,11 @@ useEffect(() => {
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <input
                         type="text"
-                        placeholder="Persona Name (e.g., Tech-savvy Decision Maker)"
+                        placeholder="Persona Name"
                         value={persona.name}
-                        onChange={(e) => updatePersona(index, "name", e.target.value)}
+                        onChange={(e) =>
+                          updatePersona(index, "name", e.target.value)
+                        }
                         required
                         className="sm:col-span-2 w-full rounded-lg bg-zinc-900 border border-zinc-700/80 p-2 text-xs text-zinc-100 focus:outline-none focus:ring-1 focus:ring-purple-500"
                       />
@@ -534,28 +709,36 @@ useEffect(() => {
                         type="text"
                         placeholder="Demographics"
                         value={persona.demographics || ""}
-                        onChange={(e) => updatePersona(index, "demographics", e.target.value)}
+                        onChange={(e) =>
+                          updatePersona(index, "demographics", e.target.value)
+                        }
                         className="w-full rounded-lg bg-zinc-900 border border-zinc-700/80 p-2 text-xs text-zinc-100 focus:outline-none focus:ring-1 focus:ring-purple-500"
                       />
                       <input
                         type="text"
                         placeholder="Psychographics"
                         value={persona.psychographics || ""}
-                        onChange={(e) => updatePersona(index, "psychographics", e.target.value)}
+                        onChange={(e) =>
+                          updatePersona(index, "psychographics", e.target.value)
+                        }
                         className="w-full rounded-lg bg-zinc-900 border border-zinc-700/80 p-2 text-xs text-zinc-100 focus:outline-none focus:ring-1 focus:ring-purple-500"
                       />
                       <textarea
                         rows={2}
                         placeholder="Goals & Objectives"
                         value={persona.goals || ""}
-                        onChange={(e) => updatePersona(index, "goals", e.target.value)}
+                        onChange={(e) =>
+                          updatePersona(index, "goals", e.target.value)
+                        }
                         className="w-full rounded-lg bg-zinc-900 border border-zinc-700/80 p-2 text-xs text-zinc-100 focus:outline-none focus:ring-1 focus:ring-purple-500 resize-none"
                       />
                       <textarea
                         rows={2}
                         placeholder="Frustrations / Pain Points"
                         value={persona.frustrations || ""}
-                        onChange={(e) => updatePersona(index, "frustrations", e.target.value)}
+                        onChange={(e) =>
+                          updatePersona(index, "frustrations", e.target.value)
+                        }
                         className="w-full rounded-lg bg-zinc-900 border border-zinc-700/80 p-2 text-xs text-zinc-100 focus:outline-none focus:ring-1 focus:ring-purple-500 resize-none"
                       />
                     </div>
@@ -583,7 +766,8 @@ useEffect(() => {
 
             {formData.competitors.length === 0 ? (
               <p className="text-xs text-zinc-500 italic py-2">
-                No competitors added yet. Click &quot;Add Competitor&quot; to log competitor context.
+                No competitors added yet. Click &quot;Add Competitor&quot; to
+                log competitor context.
               </p>
             ) : (
               <div className="space-y-4">
@@ -611,29 +795,37 @@ useEffect(() => {
                         type="text"
                         placeholder="Competitor Name"
                         value={comp.name}
-                        onChange={(e) => updateCompetitor(index, "name", e.target.value)}
+                        onChange={(e) =>
+                          updateCompetitor(index, "name", e.target.value)
+                        }
                         required
                         className="w-full rounded-lg bg-zinc-900 border border-zinc-700/80 p-2 text-xs text-zinc-100 focus:outline-none focus:ring-1 focus:ring-purple-500"
                       />
                       <input
                         type="text"
-                        placeholder="Market Share (e.g. ~25% dominant share)"
+                        placeholder="Market Share"
                         value={comp.marketShare || ""}
-                        onChange={(e) => updateCompetitor(index, "marketShare", e.target.value)}
+                        onChange={(e) =>
+                          updateCompetitor(index, "marketShare", e.target.value)
+                        }
                         className="w-full rounded-lg bg-zinc-900 border border-zinc-700/80 p-2 text-xs text-zinc-100 focus:outline-none focus:ring-1 focus:ring-purple-500"
                       />
                       <textarea
                         rows={2}
                         placeholder="Strengths"
                         value={comp.strengths || ""}
-                        onChange={(e) => updateCompetitor(index, "strengths", e.target.value)}
+                        onChange={(e) =>
+                          updateCompetitor(index, "strengths", e.target.value)
+                        }
                         className="w-full rounded-lg bg-zinc-900 border border-zinc-700/80 p-2 text-xs text-zinc-100 focus:outline-none focus:ring-1 focus:ring-purple-500 resize-none"
                       />
                       <textarea
                         rows={2}
                         placeholder="Weaknesses"
                         value={comp.weaknesses || ""}
-                        onChange={(e) => updateCompetitor(index, "weaknesses", e.target.value)}
+                        onChange={(e) =>
+                          updateCompetitor(index, "weaknesses", e.target.value)
+                        }
                         className="w-full rounded-lg bg-zinc-900 border border-zinc-700/80 p-2 text-xs text-zinc-100 focus:outline-none focus:ring-1 focus:ring-purple-500 resize-none"
                       />
                     </div>
@@ -661,7 +853,8 @@ useEffect(() => {
 
             {formData.products.length === 0 ? (
               <p className="text-xs text-zinc-500 italic py-2">
-                No product items added yet. Click &quot;Add Product&quot; to log specific offerings.
+                No product items added yet. Click &quot;Add Product&quot; to
+                log specific offerings.
               </p>
             ) : (
               <div className="space-y-4">
@@ -689,7 +882,9 @@ useEffect(() => {
                         type="text"
                         placeholder="Product Name"
                         value={prod.name}
-                        onChange={(e) => updateProduct(index, "name", e.target.value)}
+                        onChange={(e) =>
+                          updateProduct(index, "name", e.target.value)
+                        }
                         required
                         className="w-full rounded-lg bg-zinc-900 border border-zinc-700/80 p-2 text-xs text-zinc-100 focus:outline-none focus:ring-1 focus:ring-purple-500"
                       />
@@ -697,22 +892,28 @@ useEffect(() => {
                         type="text"
                         placeholder="SKU"
                         value={prod.sku || ""}
-                        onChange={(e) => updateProduct(index, "sku", e.target.value)}
+                        onChange={(e) =>
+                          updateProduct(index, "sku", e.target.value)
+                        }
                         className="w-full rounded-lg bg-zinc-900 border border-zinc-700/80 p-2 text-xs text-zinc-100 focus:outline-none focus:ring-1 focus:ring-purple-500"
                       />
                       <input
                         type="number"
                         step="any"
-                        placeholder="Price ($)"
+                        placeholder="Price"
                         value={prod.price !== undefined ? prod.price : ""}
-                        onChange={(e) => updateProduct(index, "price", e.target.value)}
+                        onChange={(e) =>
+                          updateProduct(index, "price", e.target.value)
+                        }
                         className="w-full rounded-lg bg-zinc-900 border border-zinc-700/80 p-2 text-xs text-zinc-100 focus:outline-none focus:ring-1 focus:ring-purple-500"
                       />
                       <textarea
                         rows={2}
                         placeholder="Unique Selling Proposition (USP)"
                         value={prod.usp || ""}
-                        onChange={(e) => updateProduct(index, "usp", e.target.value)}
+                        onChange={(e) =>
+                          updateProduct(index, "usp", e.target.value)
+                        }
                         className="sm:col-span-3 w-full rounded-lg bg-zinc-900 border border-zinc-700/80 p-2 text-xs text-zinc-100 focus:outline-none focus:ring-1 focus:ring-purple-500 resize-none"
                       />
                     </div>

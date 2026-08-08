@@ -2,63 +2,61 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { LeadStatus, OpportunityStage } from "@prisma/client";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/authOptions";
 
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ leadId: string }> }
 ) {
   try {
+    const session = await getServerSession(authOptions);
+    const agencyId = session?.user?.agencyId;
     const { leadId } = await params;
-    const agencyId = req.headers.get("x-agency-id");
 
-    const body = await req.json().catch(() => ({}));
-    const { name, value, expectedCloseDate } = body;
+    if (!agencyId) {
+      return NextResponse.json(
+        { error: "Unauthorized agency context" },
+        { status: 401 }
+      );
+    }
 
     const result = await db.$transaction(async (tx) => {
-      // 1. Fetch Lead
+      // 1. Fetch Lead scoped to agency
       const lead = await tx.lead.findFirst({
         where: {
           id: leadId,
-          ...(agencyId ? { agencyId } : {}),
+          agencyId,
           deletedAt: null,
         },
       });
 
-      if (!lead) {
-        throw new Error("LEAD_NOT_FOUND");
-      }
+      if (!lead) throw new Error("LEAD_NOT_FOUND");
+      if (lead.status === LeadStatus.CONVERTED) throw new Error("ALREADY_CONVERTED");
+      if (lead.status === LeadStatus.DISQUALIFIED) throw new Error("CANNOT_CONVERT_DISQUALIFIED");
 
-      if (lead.status === LeadStatus.CONVERTED) {
-        throw new Error("ALREADY_CONVERTED");
-      }
-
-      if (lead.status === LeadStatus.DISQUALIFIED) {
-        throw new Error("CANNOT_CONVERT_DISQUALIFIED");
-      }
-
-      // 2. Prevent duplicate opportunity creation
+      // 2. Prevent duplicate opportunity
       const existingOpp = await tx.opportunity.findUnique({
         where: { leadId },
       });
+      if (existingOpp) throw new Error("OPPORTUNITY_ALREADY_EXISTS");
 
-      if (existingOpp) {
-        throw new Error("OPPORTUNITY_ALREADY_EXISTS");
-      }
-
-      // 3. Create Opportunity
+      // 3. Create Opportunity aligned with new schema
       const opportunity = await tx.opportunity.create({
         data: {
           leadId: lead.id,
           agencyId: lead.agencyId,
-          name: name || `${lead.companyName} - Deal`,
-          budget: value ?? lead.estimatedBudget ?? 0,
+          name: `${lead.companyName} - Opportunity`,
+          budget: lead.estimatedBudget,
           currency: lead.currency ?? "EGP",
           stage: OpportunityStage.QUALIFICATION,
-          marketingStrategy: lead.notes,
+          expectedCloseDate: lead.expectedCloseDate,
+          marketResearchNotes: lead.notes,
+          userId: lead.ownerId, // assigned employee carries over from lead
         },
       });
 
-      // 4. Update Lead status to CONVERTED
+      // 4. Update Lead status
       const updatedLead = await tx.lead.update({
         where: { id: leadId },
         data: {
@@ -90,6 +88,7 @@ export async function POST(
       );
     }
 
+    console.error("[LEAD_CONVERT_ERROR]:", error);
     return NextResponse.json(
       { error: "Internal Server Error" },
       { status: 500 }

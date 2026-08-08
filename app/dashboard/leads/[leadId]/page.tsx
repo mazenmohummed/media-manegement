@@ -1,5 +1,7 @@
+// app/dashboard/leads/[leadId]/page.tsx
 import { db } from "@/lib/db";
 import { notFound } from "next/navigation";
+import Link from "next/link";
 import { LeadInteractionsTimeline } from "@/components/leads/lead-interactions-timeline";
 import { LeadStatusBadge } from "@/components/leads/lead-status-badge";
 import { LeadStatusSelect } from "@/components/leads/lead-status-select";
@@ -11,8 +13,10 @@ import {
   Phone,
   Tag,
   Wallet,
-  User as UserIcon,
+  UserCog,
   AlertTriangle,
+  ArrowRight,
+  Briefcase,
 } from "lucide-react";
 
 export default async function LeadDetailPage({
@@ -26,10 +30,10 @@ export default async function LeadDetailPage({
     where: { id: leadId },
     include: {
       owner: {
-        select: { id: true, name: true, email: true },
+        select: { id: true, name: true, email: true, role: true },
       },
       opportunity: {
-        select: { id: true, name: true, stage: true, budget: true },
+        select: { id: true, name: true, stage: true, budget: true, currency: true },
       },
       interactions: {
         orderBy: { occurredAt: "desc" },
@@ -81,7 +85,7 @@ export default async function LeadDetailPage({
             <span>{lead.contactPhone || "No Phone"}</span>
           </div>
           <div className="flex items-center gap-2">
-            <UserIcon className="w-4 h-4 text-zinc-500 shrink-0" />
+            <UserCog className="w-4 h-4 text-zinc-500 shrink-0" />
             <span className="truncate">
               Contact: {lead.contactName || "N/A"}
             </span>
@@ -171,9 +175,9 @@ export default async function LeadDetailPage({
 
             <div className="space-y-3 text-sm">
               <div>
-                <span className="text-xs text-zinc-500 block">Lead Owner</span>
+                <span className="text-xs text-zinc-500 block">Assigned Employee</span>
                 <span className="text-zinc-200 font-medium">
-                  {lead.owner ? lead.owner.name : "Unassigned"}
+                  {lead.owner ? `${lead.owner.name} (${lead.owner.role})` : "Unassigned"}
                 </span>
                 {lead.owner?.email && (
                   <span className="text-xs text-zinc-400 block">
@@ -213,10 +217,19 @@ export default async function LeadDetailPage({
               Opportunity Info
             </h3>
             {lead.opportunity ? (
-              <div className="space-y-2">
-                <p className="text-sm font-medium text-zinc-100">
-                  {lead.opportunity.name}
-                </p>
+              <div className="space-y-3">
+                <Link
+                  href={`/dashboard/opportunities/${lead.opportunity.id}`}
+                  className="group block"
+                >
+                  <div className="flex items-center gap-2">
+                    <Briefcase className="w-4 h-4 text-purple-400" />
+                    <p className="text-sm font-medium text-zinc-100 group-hover:text-purple-300 transition-colors">
+                      {lead.opportunity.name}
+                    </p>
+                    <ArrowRight className="w-3.5 h-3.5 text-zinc-600 group-hover:text-purple-400 transition-colors" />
+                  </div>
+                </Link>
                 <div className="flex items-center justify-between text-xs text-zinc-400">
                   <span>
                     Stage:{" "}
@@ -226,14 +239,16 @@ export default async function LeadDetailPage({
                   </span>
                   {lead.opportunity.budget && (
                     <span>
-                      Budget: {lead.opportunity.budget.toLocaleString()}
+                      {lead.opportunity.currency}{" "}
+                      {lead.opportunity.budget.toLocaleString()}
                     </span>
                   )}
                 </div>
               </div>
             ) : (
               <p className="text-xs text-zinc-500 italic">
-                No active opportunity associated with this lead.
+                No active opportunity associated with this lead. Change status to
+                CONVERTED to create one.
               </p>
             )}
           </div>

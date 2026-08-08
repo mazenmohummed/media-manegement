@@ -1,7 +1,17 @@
-// app/opportunities/page.tsx
+// app/dashboard/opportunities/page.tsx
 import { db } from "@/lib/db";
 import Link from "next/link";
-import { Plus, Briefcase, DollarSign, Calendar, ArrowRight } from "lucide-react";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/authOptions";
+import {
+  Plus,
+  Briefcase,
+  DollarSign,
+  Calendar,
+  ArrowRight,
+  Building,
+  UserCog,
+} from "lucide-react";
 import { OpportunityStage } from "@prisma/client";
 
 const STAGES: { key: OpportunityStage; label: string; color: string }[] = [
@@ -15,16 +25,27 @@ const STAGES: { key: OpportunityStage; label: string; color: string }[] = [
 ];
 
 export default async function OpportunitiesPage() {
+  const session = await getServerSession(authOptions);
+  const agencyId = session?.user?.agencyId;
+
+  if (!agencyId) {
+    return (
+      <div className="max-w-7xl mx-auto p-6">
+        <p className="text-zinc-400">Unauthorized. Please sign in.</p>
+      </div>
+    );
+  }
+
   const opportunities = await db.opportunity.findMany({
+    where: { agencyId },
     orderBy: { createdAt: "desc" },
     include: {
+      client: { select: { id: true, clientName: true, clientNo: true } },
+      user: { select: { id: true, name: true, role: true } },
       lead: {
         select: {
           companyName: true,
           contactName: true,
-          currency: true,
-          expectedCloseDate: true,
-          owner: { select: { name: true } },
         },
       },
     },
@@ -45,9 +66,9 @@ export default async function OpportunitiesPage() {
             Opportunities Pipeline
           </h1>
           <p className="text-sm text-zinc-400 mt-1">
-            Total Active Value:{" "}
+            Total Pipeline Value:{" "}
             <span className="text-emerald-400 font-semibold">
-              ${totalPipelineValue.toLocaleString()}
+              EGP {totalPipelineValue.toLocaleString()}
             </span>
           </p>
         </div>
@@ -61,33 +82,40 @@ export default async function OpportunitiesPage() {
       </div>
 
       {/* Kanban Board Layout */}
-      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-7 gap-4 overflow-x-auto pb-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5 overflow-x-auto pb-6">
         {STAGES.map((stage) => {
           const stageDeals = opportunities.filter((o) => o.stage === stage.key);
-          const stageTotal = stageDeals.reduce((acc, o) => acc + (o.budget || 0), 0);
+          const stageTotal = stageDeals.reduce(
+            (acc, o) => acc + (o.budget || 0),
+            0
+          );
 
           return (
             <div
               key={stage.key}
-              className="bg-zinc-950 border border-zinc-800/80 rounded-xl p-3 flex flex-col min-w-[240px] space-y-3"
+              className="bg-zinc-950 border border-zinc-800/80 rounded-xl p-4 flex flex-col min-w-[260px] space-y-4"
             >
               {/* Stage Header */}
-              <div className="flex items-center justify-between pb-2 border-b border-zinc-800">
+              <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
                 <div className="flex items-center gap-2">
-                  <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${stage.color}`}>
+                  <span
+                    className={`text-xs px-2.5 py-0.5 rounded-full border font-medium ${stage.color}`}
+                  >
                     {stage.label}
                   </span>
-                  <span className="text-xs text-zinc-500">({stageDeals.length})</span>
+                  <span className="text-xs text-zinc-500">
+                    ({stageDeals.length})
+                  </span>
                 </div>
                 <span className="text-xs font-mono text-zinc-400">
-                  ${stageTotal.toLocaleString()}
+                  EGP {stageTotal.toLocaleString()}
                 </span>
               </div>
 
               {/* Deal Cards */}
-              <div className="space-y-3 flex-1 overflow-y-auto max-h-[70vh] pr-1">
+              <div className="space-y-4 flex-1 overflow-y-auto max-h-[70vh] pr-1">
                 {stageDeals.length === 0 ? (
-                  <div className="text-center py-8 text-xs text-zinc-600 italic border border-dashed border-zinc-900 rounded-lg">
+                  <div className="text-center py-10 text-xs text-zinc-600 italic border border-dashed border-zinc-900 rounded-lg">
                     No deals
                   </div>
                 ) : (
@@ -95,33 +123,52 @@ export default async function OpportunitiesPage() {
                     <Link
                       key={deal.id}
                       href={`/dashboard/opportunities/${deal.id}`}
-                      className="block bg-zinc-900 border border-zinc-800 hover:border-zinc-700 rounded-lg p-3.5 space-y-2.5 transition-all shadow-sm group"
+                      className="block bg-zinc-900 border border-zinc-800 hover:border-zinc-600 rounded-xl p-4 space-y-3 transition-all shadow-sm hover:shadow-md group"
                     >
-                      <div className="flex items-start justify-between">
-                        <h4 className="text-sm font-semibold text-zinc-200 group-hover:text-purple-300 transition-colors">
+                      <div className="flex items-start justify-between gap-2">
+                        <h4 className="text-sm font-semibold text-zinc-200 group-hover:text-purple-300 transition-colors line-clamp-2">
                           {deal.name}
                         </h4>
-                        <ArrowRight className="w-3.5 h-3.5 text-zinc-600 group-hover:text-purple-400 transition-colors" />
+                        <ArrowRight className="w-3.5 h-3.5 text-zinc-600 group-hover:text-purple-400 transition-colors shrink-0 mt-0.5" />
                       </div>
 
-                      {deal.lead && (
-                        <p className="text-xs text-zinc-400 truncate">
-                          {deal.lead.companyName || deal.lead.contactName}
-                        </p>
+                      {/* Client / Owner */}
+                      <div className="flex items-center gap-1.5 text-xs text-zinc-400">
+                        <Building className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
+                        <span className="truncate">
+                          {deal.client?.clientName ||
+                            deal.lead?.companyName ||
+                            "No client"}
+                        </span>
+                      </div>
+
+                      {/* Assigned Employee */}
+                      {deal.user && (
+                        <div className="flex items-center gap-1.5 text-[11px] text-zinc-500">
+                          <UserCog className="w-3.5 h-3.5 text-zinc-600 shrink-0" />
+                          <span className="truncate">
+                            {deal.user.name} ({deal.user.role})
+                          </span>
+                        </div>
                       )}
 
-                      <div className="flex items-center justify-between pt-2 border-t border-zinc-800/60 text-xs text-zinc-400">
+                      <div className="flex items-center justify-between pt-3 border-t border-zinc-800/60 text-xs text-zinc-400">
                         <span className="font-semibold text-emerald-400 flex items-center gap-0.5">
-                          <DollarSign className="w-3 h-3" />
-                          {deal.budget ? deal.budget.toLocaleString() : "N/A"}
+                          <DollarSign className="w-3.5 h-3.5" />
+                          {deal.budget
+                            ? `${deal.currency} ${deal.budget.toLocaleString()}`
+                            : "N/A"}
                         </span>
-                        {deal.lead?.expectedCloseDate && (
+                        {deal.expectedCloseDate && (
                           <span className="flex items-center gap-1 text-[11px] text-zinc-500">
-                            <Calendar className="w-3 h-3" />
-                            {new Date(deal.lead.expectedCloseDate).toLocaleDateString("en-US", {
-                              month: "short",
-                              day: "numeric",
-                            })}
+                            <Calendar className="w-3.5 h-3.5" />
+                            {new Date(deal.expectedCloseDate).toLocaleDateString(
+                              "en-US",
+                              {
+                                month: "short",
+                                day: "numeric",
+                              }
+                            )}
                           </span>
                         )}
                       </div>
