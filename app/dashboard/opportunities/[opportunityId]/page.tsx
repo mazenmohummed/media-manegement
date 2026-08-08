@@ -23,8 +23,6 @@ import { OpportunityHeaderEditForm } from "@/components/opportunities/opportunit
 import { CreateProposalButton } from "@/components/opportunities/create-proposal-button";
 import { DeleteOpportunityButton } from "@/components/opportunities/delete-opportunity-button";
 
-// Strategic fields rendered as read-only cards. Keeping this as a config array
-// means new schema fields only need one entry here + in OpportunityStrategyForm.
 const STRATEGY_FIELDS: { key: keyof StrategyFields; label: string }[] = [
   { key: "companyMission", label: "Company Mission" },
   { key: "brandValues", label: "Brand Values" },
@@ -57,7 +55,6 @@ export default async function OpportunityDetailPage({
   const opportunity = await db.opportunity.findUnique({
     where: { id: opportunityId },
     include: {
-      owner: { select: { id: true, name: true, email: true } }, // deal owner
       user: { select: { id: true, name: true, email: true, role: true } }, // assigned employee
       lead: {
         include: {
@@ -123,7 +120,6 @@ export default async function OpportunityDetailPage({
                 expectedCloseDate: opportunity.expectedCloseDate
                   ? opportunity.expectedCloseDate.toISOString()
                   : null,
-                ownerId: opportunity.ownerId ?? null,
                 userId: opportunity.userId ?? null,
                 clientId: opportunity.clientId ?? null,
               }}
@@ -161,10 +157,10 @@ export default async function OpportunityDetailPage({
 
           <div className="bg-zinc-950/60 rounded-lg p-3.5 border border-zinc-800/80">
             <span className="text-xs text-zinc-400 flex items-center gap-1">
-              <UserIcon className="w-3.5 h-3.5 text-blue-400" /> Deal Owner
+              <UserIcon className="w-3.5 h-3.5 text-blue-400" /> Opportunity Owner
             </span>
             <p className="text-base font-semibold text-zinc-200 mt-1 truncate">
-              {opportunity.owner?.name || "Unassigned"}
+              {opportunity.client?.clientName || "Unassigned"}
             </p>
           </div>
 
@@ -189,7 +185,7 @@ export default async function OpportunityDetailPage({
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm text-zinc-300">
           {opportunity.client && (
             <div>
-              <span className="text-xs text-zinc-500 block">Linked Client</span>
+              <span className="text-xs text-zinc-500 block">Linked Client (Owner)</span>
               <Link
                 href={`/dashboard/clients/${opportunity.client.id}`}
                 className="font-medium text-purple-400 hover:underline inline-flex items-center gap-1"

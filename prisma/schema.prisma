@@ -702,9 +702,6 @@ model Opportunity {
     leadId String? @unique
     lead   Lead?   @relation(fields: [leadId], references: [id])
 
-    ownerId String?
-    owner   User?   @relation("OpportunityOwner", fields: [ownerId], references: [id])
-
     agencyId String
     agency   Agency @relation(fields: [agencyId], references: [id])
 
@@ -1072,7 +1069,6 @@ model User {
     creativeAssetReviews  CreativeAssetVersion[] @relation("CreativeAssetReviewer")
     resourceAllocations   ResourceAllocation[]
 
-    opportunities         Opportunity[] @relation("OpportunityOwner")
     assignedOpportunities Opportunity[] @relation("UserOpportunities")
 
     @@index([agencyId, role])

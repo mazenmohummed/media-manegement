@@ -2,38 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { useForm } from "react-hook-form";
-import * as z from "zod";
-import { Pencil, Loader2 } from "lucide-react";
-import { toast } from "sonner";
-
-import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
-import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from "@/components/ui/form";
-import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { OPPORTUNITY_STAGES } from "@/lib/constants"; // or however you import your stages
+import { Pencil, X, Loader2 } from "lucide-react";
 
 interface OpportunityHeaderEditFormProps {
   opportunityId: string;
@@ -43,264 +12,227 @@ interface OpportunityHeaderEditFormProps {
     budget: number | null;
     currency: string;
     expectedCloseDate: string | null;
-    ownerId: string | null;
-    userId: string | null;        // ← added
-    clientId: string | null;
+    userId: string | null;    // assigned employee
+    clientId: string | null;  // opportunity owner
   };
 }
-
-const formSchema = z.object({
-  name: z.string().min(1, "Name is required"),
-  stage: z.string().min(1, "Stage is required"),
-  budget: z.coerce.number().nullable().optional(),
-  currency: z.string().optional(),
-  expectedCloseDate: z.string().nullable().optional(),
-  ownerId: z.string().nullable().optional(),
-  userId: z.string().nullable().optional(),          // ← added
-  clientId: z.string().nullable().optional(),
-});
 
 export function OpportunityHeaderEditForm({
   opportunityId,
   initialData,
 }: OpportunityHeaderEditFormProps) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
+  const [isOpen, setIsOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const form = useForm<z.infer<typeof formSchema>>({
-    resolver: zodResolver(formSchema),
-    defaultValues: {
-      name: initialData.name,
-      stage: initialData.stage,
-      budget: initialData.budget,
-      currency: initialData.currency ?? "EGP",
-      expectedCloseDate: initialData.expectedCloseDate,
-      ownerId: initialData.ownerId,
-      userId: initialData.userId,                      // ← added
-      clientId: initialData.clientId,
-    },
+  const [formData, setFormData] = useState({
+    name: initialData.name,
+    stage: initialData.stage,
+    budget: initialData.budget,
+    currency: initialData.currency,
+    expectedCloseDate: initialData.expectedCloseDate,
+    userId: initialData.userId,
+    clientId: initialData.clientId,
   });
 
-  async function onSubmit(values: z.infer<typeof formSchema>) {
+  const handleChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
+  ) => {
+    const { name, value } = e.target;
+
+    setFormData((prev) => {
+      if (name === "budget") {
+        return { ...prev, budget: value === "" ? null : parseFloat(value) };
+      }
+      if (["userId", "clientId", "expectedCloseDate"].includes(name)) {
+        return { ...prev, [name]: value === "" ? null : value };
+      }
+      return { ...prev, [name]: value };
+    });
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
     setIsSubmitting(true);
+    setError(null);
+
     try {
       const res = await fetch(`/api/opportunities/${opportunityId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(values),
+        body: JSON.stringify(formData),
       });
 
       if (!res.ok) {
-        const error = await res.json();
-        throw new Error(error.error || "Failed to update opportunity");
+        const data = await res.json();
+        throw new Error(data.error || "Failed to update opportunity");
       }
 
-      toast.success("Opportunity updated successfully");
-      setOpen(false);
+      setIsOpen(false);
       router.refresh();
-    } catch (error: any) {
-      toast.error(error.message || "Something went wrong");
+    } catch (err: any) {
+      setError(err.message || "Something went wrong");
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  if (!isOpen) {
+    return (
+      <button
+        type="button"
+        onClick={() => setIsOpen(true)}
+        className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-zinc-200 bg-zinc-800 border border-zinc-700 rounded-lg hover:bg-zinc-700 transition-colors"
+      >
+        <Pencil className="w-4 h-4" /> Edit
+      </button>
+    );
   }
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button variant="outline" size="sm" className="gap-2">
-          <Pencil className="w-4 h-4" /> Edit
-        </Button>
-      </DialogTrigger>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>Edit Opportunity</DialogTitle>
-          <DialogDescription>
-            Update the deal header, assignment, and linked client.
-          </DialogDescription>
-        </DialogHeader>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+      <div className="w-full max-w-lg bg-zinc-900 border border-zinc-800 rounded-xl shadow-xl">
+        <div className="flex items-center justify-between p-6 border-b border-zinc-800">
+          <h2 className="text-lg font-semibold text-zinc-100">Edit Opportunity</h2>
+          <button
+            type="button"
+            onClick={() => setIsOpen(false)}
+            className="text-zinc-400 hover:text-zinc-200 transition-colors"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
 
-        <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-            <FormField
-              control={form.control}
+        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          {error && (
+            <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
+              {error}
+            </div>
+          )}
+
+          <div>
+            <label className="block text-sm font-medium text-zinc-300 mb-1">
+              Opportunity Name
+            </label>
+            <input
               name="name"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Opportunity Name</FormLabel>
-                  <FormControl>
-                    <Input placeholder="e.g. Q4 Brand Campaign" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
+              required
+              value={formData.name}
+              onChange={handleChange}
+              className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg text-zinc-100 placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-purple-500/50 focus:border-purple-500"
             />
+          </div>
 
-            <FormField
-              control={form.control}
+          <div>
+            <label className="block text-sm font-medium text-zinc-300 mb-1">
+              Stage
+            </label>
+            <select
               name="stage"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Stage</FormLabel>
-                  <Select onValueChange={field.onChange} defaultValue={field.value}>
-                    <FormControl>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select stage" />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      {OPPORTUNITY_STAGES.map((stage) => (
-                        <SelectItem key={stage} value={stage}>
-                          {stage}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+              required
+              value={formData.stage}
+              onChange={handleChange}
+              className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg text-zinc-100 focus:outline-none focus:ring-2 focus:ring-purple-500/50 focus:border-purple-500"
+            >
+              <option value="QUALIFICATION">QUALIFICATION</option>
+              <option value="DISCOVERY">DISCOVERY</option>
+              <option value="STRATEGY">STRATEGY</option>
+              <option value="PROPOSAL">PROPOSAL</option>
+              <option value="NEGOTIATION">NEGOTIATION</option>
+              <option value="WON">WON</option>
+              <option value="LOST">LOST</option>
+            </select>
+          </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <FormField
-                control={form.control}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-zinc-300 mb-1">
+                Budget
+              </label>
+              <input
                 name="budget"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Budget</FormLabel>
-                    <FormControl>
-                      <Input
-                        type="number"
-                        placeholder="0.00"
-                        {...field}
-                        value={field.value ?? ""}
-                        onChange={(e) =>
-                          field.onChange(
-                            e.target.value === "" ? null : parseFloat(e.target.value)
-                          )
-                        }
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
+                type="number"
+                step="0.01"
+                value={formData.budget ?? ""}
+                onChange={handleChange}
+                className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg text-zinc-100 placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-purple-500/50 focus:border-purple-500"
               />
-
-              <FormField
-                control={form.control}
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-zinc-300 mb-1">
+                Currency
+              </label>
+              <input
                 name="currency"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Currency</FormLabel>
-                    <FormControl>
-                      <Input placeholder="EGP" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
+                value={formData.currency}
+                onChange={handleChange}
+                className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg text-zinc-100 placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-purple-500/50 focus:border-purple-500"
               />
             </div>
+          </div>
 
-            <FormField
-              control={form.control}
+          <div>
+            <label className="block text-sm font-medium text-zinc-300 mb-1">
+              Expected Close Date
+            </label>
+            <input
               name="expectedCloseDate"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Expected Close Date</FormLabel>
-                  <FormControl>
-                    <Input
-                      type="date"
-                      {...field}
-                      value={field.value ?? ""}
-                      onChange={(e) =>
-                        field.onChange(e.target.value || null)
-                      }
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
+              type="date"
+              value={formData.expectedCloseDate ?? ""}
+              onChange={handleChange}
+              className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg text-zinc-100 focus:outline-none focus:ring-2 focus:ring-purple-500/50 focus:border-purple-500"
             />
+          </div>
 
-            {/* If you have dropdowns for users, wire them here. 
-                Otherwise these text inputs will pass the IDs through. */}
-            <div className="grid grid-cols-2 gap-4">
-              <FormField
-                control={form.control}
-                name="ownerId"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Deal Owner ID</FormLabel>
-                    <FormControl>
-                      <Input
-                        placeholder="User ID"
-                        {...field}
-                        value={field.value ?? ""}
-                        onChange={(e) => field.onChange(e.target.value || null)}
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-zinc-300 mb-1">
+                Opportunity Owner (Client ID)
+              </label>
+              <input
+                name="clientId"
+                value={formData.clientId ?? ""}
+                onChange={handleChange}
+                placeholder="Client ID"
+                className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg text-zinc-100 placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-purple-500/50 focus:border-purple-500"
               />
+            </div>
 
-              <FormField
-                control={form.control}
+            <div>
+              <label className="block text-sm font-medium text-zinc-300 mb-1">
+                Assigned Employee ID
+              </label>
+              <input
                 name="userId"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Assigned Employee ID</FormLabel>
-                    <FormControl>
-                      <Input
-                        placeholder="User ID"
-                        {...field}
-                        value={field.value ?? ""}
-                        onChange={(e) => field.onChange(e.target.value || null)}
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
+                value={formData.userId ?? ""}
+                onChange={handleChange}
+                placeholder="User ID"
+                className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg text-zinc-100 placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-purple-500/50 focus:border-purple-500"
               />
             </div>
+          </div>
 
-            <FormField
-              control={form.control}
-              name="clientId"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Linked Client ID</FormLabel>
-                  <FormControl>
-                    <Input
-                      placeholder="Client ID"
-                      {...field}
-                      value={field.value ?? ""}
-                      onChange={(e) => field.onChange(e.target.value || null)}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <div className="flex justify-end gap-2 pt-2">
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={() => setOpen(false)}
-                disabled={isSubmitting}
-              >
-                Cancel
-              </Button>
-              <Button type="submit" disabled={isSubmitting}>
-                {isSubmitting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                Save Changes
-              </Button>
-            </div>
-          </form>
-        </Form>
-      </DialogContent>
-    </Dialog>
+          <div className="flex justify-end gap-3 pt-2">
+            <button
+              type="button"
+              onClick={() => setIsOpen(false)}
+              disabled={isSubmitting}
+              className="px-4 py-2 text-sm font-medium text-zinc-300 hover:text-zinc-100 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={isSubmitting}
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-purple-600 hover:bg-purple-500 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
+              Save Changes
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
   );
 }

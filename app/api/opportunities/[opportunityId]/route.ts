@@ -9,8 +9,7 @@ interface RouteParams {
 }
 
 const OPPORTUNITY_INCLUDE = {
-  owner: { select: { id: true, name: true, email: true } },
-  user: { select: { id: true, name: true, email: true, role: true } }, // Assigned Employee
+  user: { select: { id: true, name: true, email: true, role: true } },
   lead: {
     include: {
       owner: { select: { id: true, name: true, email: true } },
@@ -21,6 +20,8 @@ const OPPORTUNITY_INCLUDE = {
   competitors: true,
   products: true,
 } as const;
+
+const ELIGIBLE_EMPLOYEE_ROLES = ["ADMIN", "OPERATOR", "TEAMLEADER", "CREATIVE"];
 
 // GET: Fetch a single opportunity with nested discovery context and client relation
 export async function GET(request: Request, { params }: RouteParams) {
@@ -75,7 +76,7 @@ export async function GET(request: Request, { params }: RouteParams) {
   }
 }
 
-// PATCH: Update opportunity details & strategic fields including clientId, ownerId, userId
+// PATCH: Update opportunity details & strategic fields including clientId, userId
 export async function PATCH(request: Request, { params }: RouteParams) {
   try {
     const session = await getServerSession(authOptions);
@@ -91,7 +92,6 @@ export async function PATCH(request: Request, { params }: RouteParams) {
     const { opportunityId } = await params;
     const body = await request.json();
 
-    // 1. Verify the opportunity exists and belongs to the active agency tenant
     const existingOpportunity = await db.opportunity.findFirst({
       where: {
         id: opportunityId,
@@ -113,9 +113,8 @@ export async function PATCH(request: Request, { params }: RouteParams) {
       budget,
       currency,
       expectedCloseDate,
-      ownerId, // deal owner (OpportunityOwner relation)
-      userId, // assigned employee (UserOpportunities relation)
-      clientId, // linked client, nullable via Client? relation with onDelete: SetNull
+      userId,    // assigned employee (must be eligible role)
+      clientId,  // opportunity owner
       companyMission,
       brandValues,
       marketResearchNotes,
@@ -127,7 +126,7 @@ export async function PATCH(request: Request, { params }: RouteParams) {
       kpis,
     } = body;
 
-    // 2. If a clientId is being set, confirm it belongs to this agency tenant too
+    // 1. Validate clientId belongs to agency
     if (clientId) {
       const client = await db.client.findFirst({
         where: { id: clientId, agencyId },
@@ -141,25 +140,11 @@ export async function PATCH(request: Request, { params }: RouteParams) {
       }
     }
 
-    // 3. If an ownerId is being set, confirm it belongs to this agency tenant too
-    if (ownerId) {
-      const owner = await db.user.findFirst({
-        where: { id: ownerId, agencyId },
-        select: { id: true },
-      });
-      if (!owner) {
-        return NextResponse.json(
-          { error: "Owner not found or access denied" },
-          { status: 404 }
-        );
-      }
-    }
-
-    // 4. If a userId (assigned employee) is being set, confirm it belongs to this agency tenant too
+    // 2. Validate userId is an eligible employee within the agency
     if (userId) {
       const assignedUser = await db.user.findFirst({
         where: { id: userId, agencyId },
-        select: { id: true },
+        select: { id: true, role: true },
       });
       if (!assignedUser) {
         return NextResponse.json(
@@ -167,9 +152,14 @@ export async function PATCH(request: Request, { params }: RouteParams) {
           { status: 404 }
         );
       }
+      if (!ELIGIBLE_EMPLOYEE_ROLES.includes(assignedUser.role)) {
+        return NextResponse.json(
+          { error: `User role '${assignedUser.role}' is not eligible for opportunity assignment` },
+          { status: 403 }
+        );
+      }
     }
 
-    // 5. Update Opportunity table fields directly, including client/owner/assignee binding
     const updatedOpportunity = await db.opportunity.update({
       where: { id: opportunityId },
       data: {
@@ -177,7 +167,6 @@ export async function PATCH(request: Request, { params }: RouteParams) {
         ...(stage !== undefined && { stage }),
         ...(budget !== undefined && { budget }),
         ...(currency !== undefined && { currency }),
-        ...(ownerId !== undefined && { ownerId }),
         ...(userId !== undefined && { userId }),
         ...(clientId !== undefined && { clientId }),
         ...(expectedCloseDate !== undefined && {
@@ -238,10 +227,6 @@ export async function DELETE(request: Request, { params }: RouteParams) {
       );
     }
 
-    // Guard rail: opportunities with existing proposals shouldn't be silently
-    // deleted, since Proposal.opportunityId has no default-null path and the
-    // relation cascades. Block the delete and point the caller at the proposals
-    // that need to be handled first.
     if (existingOpportunity.proposals.length > 0) {
       return NextResponse.json(
         {
@@ -253,7 +238,6 @@ export async function DELETE(request: Request, { params }: RouteParams) {
       );
     }
 
-    // personas, competitors, and products cascade automatically via onDelete: Cascade
     await db.opportunity.delete({
       where: { id: opportunityId },
     });
