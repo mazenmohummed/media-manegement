@@ -56,7 +56,7 @@ export default function EmployeeProfile() {
   // --- DATA FETCHING ---
   const fetchDetails = async () => {
     try {
-      const res = await fetch(`/api/employees/${id}`);
+      const res = await fetch(`/api/users/${id}`);
       const data = await res.json();
       setEmployee(data);
 
@@ -86,7 +86,7 @@ export default function EmployeeProfile() {
     if (isSaving) return;
     setIsSaving(true);
     try {
-      const res = await fetch(`/api/employees/${id}`, {
+      const res = await fetch(`/api/users/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(editForm),
@@ -114,7 +114,7 @@ export default function EmployeeProfile() {
 
     setIsTerminating(true);
     try {
-      const res = await fetch(`/api/employees/${id}`, { method: "DELETE" });
+      const res = await fetch(`/api/users/${id}`, { method: "DELETE" });
       if (res.ok) {
         router.push("/dashboard/employees");
       } else {
@@ -137,7 +137,7 @@ export default function EmployeeProfile() {
 
     setIsSubmittingLeave(true);
     try {
-      const res = await fetch(`/api/employees/${id}/leaves`, {
+      const res = await fetch(`/api/users/${id}/leaves`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(leaveForm),
@@ -160,7 +160,7 @@ export default function EmployeeProfile() {
   const handleUpdateLeave = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const res = await fetch(`/api/employees/${id}/leaves`, {
+      const res = await fetch(`/api/users/${id}/leaves`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(editLeaveForm)
@@ -189,7 +189,7 @@ export default function EmployeeProfile() {
     };
 
     try {
-      const res = await fetch(`/api/employees/${id}/leaves`, {
+      const res = await fetch(`/api/users/${id}/leaves`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)

@@ -21,7 +21,8 @@ import {
   Calendar,
   LayoutDashboard,
   Clock,
-  Bell
+  Bell,
+  LucideDatabase,
 } from "lucide-react";
 import { NotificationDrawer } from "./EmployeeDashboard";
 
@@ -48,6 +49,9 @@ export default function Sidebar() {
 
   const navLinks = [
     { name: "Dashboard", href: "/dashboard", icon: <LayoutDashboard size={20} /> },
+    { name: "Leads", href: "/dashboard/leads", icon: <LucideDatabase size={20} /> },
+    { name: "opportunities", href: "/dashboard/opportunities", icon: <LucideDatabase size={20} /> },
+    { name: "proposals", href: "/dashboard/proposals", icon: <LucideDatabase size={20} /> },
     { name: "Clients", href: "/dashboard/clients", icon: <Users size={20} /> },
     { name: "Campaigns", href: "/dashboard/campaigns", icon: <Workflow size={20} /> },
     { name: "Projects", href: "/dashboard/projects", icon: <Briefcase size={20} /> },

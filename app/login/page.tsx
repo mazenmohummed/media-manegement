@@ -1,10 +1,9 @@
-// app/login/page.tsx
 "use client";
 
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { signIn } from "next-auth/react";
+import { signIn, getSession } from "next-auth/react";
 import { Eye, EyeOff, Loader2, ShieldCheck } from "lucide-react";
 
 export default function LoginPage() {
@@ -36,15 +35,15 @@ export default function LoginPage() {
         return;
       }
 
-      // 2. Fetch session details to determine role-based routing
-      const sessionRes = await fetch("/api/auth/session");
-      const sessionData = await sessionRes.json();
+      // 2. Obtain refreshed session via getSession()
+      const session = await getSession();
+      const userRole = session?.user?.role;
+      const agencyId = session?.user?.agencyId;
 
-      const userRole = sessionData?.user?.role;
-      const agencyId = sessionData?.user?.agencyId;
-
-      // 3. Role-based routing
-      if (userRole === "SUPERADMIN") {
+      // 3. Role-based routing logic
+      if (userRole === "CLIENT") {
+        router.push("/portal");
+      } else if (userRole === "SUPERADMIN") {
         router.push("/superadmin");
       } else if (!agencyId) {
         router.push("/onboarding");
@@ -72,7 +71,7 @@ export default function LoginPage() {
           </p>
           <h1 className="mt-3 text-3xl font-black tracking-tight">Access Terminal</h1>
           <p className="mt-2 text-sm text-[#5e6a7f]">
-            Sign in with an active operator account connected to your agency.
+            Sign in with your user or operator account to continue.
           </p>
         </header>
 
@@ -85,7 +84,7 @@ export default function LoginPage() {
         <form onSubmit={handleSubmit} className="space-y-5">
           <label className="block space-y-2">
             <span className="text-xs font-bold uppercase tracking-[0.14em] text-[#5e6a7f]">
-              Operator email
+              Email address
             </span>
             <input
               name="email"
@@ -94,7 +93,7 @@ export default function LoginPage() {
               autoComplete="email"
               disabled={loading}
               className="h-11 w-full rounded-md border border-[#d8deea] bg-white px-3 text-sm outline-none transition focus:border-[#2f6fed] focus:ring-2 focus:ring-[#dbe7ff] disabled:opacity-50"
-              placeholder="ops@agency.com"
+              placeholder="user@domain.com"
             />
           </label>
 

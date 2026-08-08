@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Action, hasPermission, UserRole } from "@/lib/auth/permissions";
+import { auditContextStore } from "@/lib/context/async-store";
 
 export interface AuthContext {
   userId: string;
@@ -7,21 +8,24 @@ export interface AuthContext {
   role: UserRole;
 }
 
-type GuardedHandler = (
+export type GuardedHandler<T = any> = (
   req: NextRequest,
   context: AuthContext,
-  routeProps?: any
+  routeProps: T
 ) => Promise<NextResponse>;
 
-/**
- * Higher-Order Function that wraps route handlers to enforce RBAC centralized checks.
- */
-export function withAuthGuard(action: Action, handler: GuardedHandler) {
-  return async (req: NextRequest, routeProps?: any) => {
-    // Extract headers set by middleware
+export function withAuthGuard<T = any>(action: Action, handler: GuardedHandler<T>) {
+  return async (req: NextRequest, routeProps: T) => {
     const userId = req.headers.get("x-user-id");
     const agencyId = req.headers.get("x-agency-id");
     const role = req.headers.get("x-user-role") as UserRole;
+
+    const ipAddress =
+      req.headers.get("x-forwarded-for")?.split(",")[0].trim() ||
+      req.headers.get("x-real-ip") ||
+      undefined;
+
+    const userAgent = req.headers.get("user-agent") || undefined;
 
     if (!userId || !agencyId || !role) {
       return NextResponse.json(
@@ -30,7 +34,6 @@ export function withAuthGuard(action: Action, handler: GuardedHandler) {
       );
     }
 
-    // Enforce Centralized Action Permission
     if (!hasPermission(role, action)) {
       return NextResponse.json(
         { error: `Forbidden: Role '${role}' lacks '${action}' permissions` },
@@ -38,7 +41,12 @@ export function withAuthGuard(action: Action, handler: GuardedHandler) {
       );
     }
 
-    // Execute the actual handler with pre-validated auth context
-    return handler(req, { userId, agencyId, role }, routeProps);
+    // Wrap the request context in AsyncLocalStorage for the Prisma Extension to pick up
+    return auditContextStore.run(
+      { actorId: userId, agencyId, ipAddress, userAgent },
+      async () => {
+        return handler(req, { userId, agencyId, role }, routeProps);
+      }
+    );
   };
 }

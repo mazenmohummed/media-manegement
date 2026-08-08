@@ -1,9 +1,9 @@
 import { getServerSession } from "next-auth/next";
-import { authOptions } from "@/lib/authOptions";
+import { redirect } from "next/navigation";
+import { authOptions } from "@/lib/authOptions"; // Adjust path if using @/lib/auth
+import prisma from "@/lib/prisma";
 import Sidebar from "@/components/main/Sidebar";
 import { AttendanceProvider } from "@/components/main/attendance/Attendancecontext";
-import { redirect } from "next/navigation";
-import prisma from "@/lib/prisma";
 
 export default async function DashboardLayout({
   children,
@@ -13,14 +13,24 @@ export default async function DashboardLayout({
   const session = await getServerSession(authOptions);
 
   /**
-   * SAFETY CHECK (Server-Side)
-   * Even though middleware handles redirects, we keep a "Hard Wall" 
-   * here to prevent any undefined session errors in child components.
+   * SAFETY & ACCESS GUARDS (Server-Side)
    */
-  if (!session) redirect("/login");
-  if (!session.user?.agencyId) redirect("/onboarding");
+  // 1. Unauthenticated users -> Redirect to Login
+  if (!session || !session.user) {
+    redirect("/login");
+  }
 
-  // Fetch only the active log for today
+  // 2. Client role -> Hard-redirect to Client Portal (Blocks access to Agency Dashboard)
+  if (session.user.role === "CLIENT") {
+    redirect("/portal");
+  }
+
+  // 3. Operator/Admin without an Agency -> Redirect to Onboarding
+  if (!session.user.agencyId) {
+    redirect("/onboarding");
+  }
+
+  // Fetch active attendance log for today
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
@@ -40,7 +50,7 @@ export default async function DashboardLayout({
   return (
     <AttendanceProvider initialAttendance={activeAttendance}>
       <div className="flex h-screen bg-background overflow-hidden font-sans">
-        {/* SIDEBAR — reads attendance state from context, no prop needed */}
+        {/* SIDEBAR — reads attendance state from context */}
         <Sidebar />
 
         <div className="flex flex-col flex-1 min-w-0 overflow-hidden">

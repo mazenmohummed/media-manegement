@@ -46,7 +46,7 @@ export async function POST(req: Request) {
     const newAgency = await prisma.agency.create({
       data: {
         agencyName,
-        email: agencyEmail,
+        email: agencyEmail.toLowerCase().trim(),
         // If your schema includes optional metadata fields:
         ...(phoneNumber && { phoneNumber }),
         ...(field && { field }),
@@ -56,7 +56,7 @@ export async function POST(req: Request) {
         users: {
           create: {
             name: operatorName,
-            email: operatorEmail,
+            email: operatorEmail.toLowerCase().trim(),
             password: hashedPassword,
             role: "ADMIN",
           },

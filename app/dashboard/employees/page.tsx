@@ -87,7 +87,7 @@ export default function EmployeesPage() {
     if (silent) setRefreshing(true);
     else setLoading(true);
     try {
-      const res = await fetch("/api/employees");
+      const res = await fetch("/api/users");
       const data = await res.json();
       setEmployees(data.employees ?? []);
       setMetrics(data.metrics ?? null);
@@ -148,6 +148,26 @@ export default function EmployeesPage() {
             Staff Registry
           </h1>
         </div>
+        <div className="inline-flex gap-2">
+        <Link
+            href="/dashboard/employees/invitations" // Adjust base route if needed (e.g., "/employees/invitations")
+            className="inline-flex items-end  gap-1 bg-foreground text-background px-6 py-4 rounded-2xl text-[9px] font-black uppercase tracking-widest hover:scale-[0.98] transition-all shadow-sm hover:shadow-md"
+          >
+            <svg
+              className="w-3.5 h-3.5"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth="2.5"
+                d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+              />
+            </svg>
+            <span>View Invitations</span>
+          </Link>
         <button
           onClick={() => setIsAddModalOpen(true)}
           className="flex items-center gap-2 bg-primary text-background text-[10px] font-black uppercase tracking-widest px-6 py-4 rounded-2xl hover:opacity-90 transition-opacity shrink-0"
@@ -155,6 +175,7 @@ export default function EmployeesPage() {
           <UserPlus size={15} />
           New Employee
         </button>
+        </div>
       </header>
 
       {/* METRICS DASHBOARD */}

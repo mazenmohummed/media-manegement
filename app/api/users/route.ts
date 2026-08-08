@@ -1,3 +1,4 @@
+// app/api/users/route.ts
 import { NextResponse } from "next/server";
 import { withAuthGuard } from "@/lib/auth/guard";
 import { checkQuotaGuard } from "@/lib/auth/subscriptionGuard";
@@ -179,13 +180,25 @@ export const GET = withAuthGuard("user:read", async (req, { agencyId }) => {
   }
 });
 
-// ─── POST /api/employees ──────────────────────────────────────────────────────
+// ─── POST /api/users ──────────────────────────────────────────────────────
 export const POST = withAuthGuard("user:create", async (req, { agencyId }) => {
   try {
     // 1. Enforce Subscription Seat Limits via Central Guard
     const quotaCheck = await checkQuotaGuard(agencyId, "users");
     if (!quotaCheck.allowed) {
-      return NextResponse.json({ error: quotaCheck.error }, { status: 403 });
+      return NextResponse.json(
+        {
+          error: quotaCheck.error,
+          code: "PLAN_LIMIT_REACHED",
+          meta: {
+            resource: "users",
+            currentPlan: quotaCheck.plan,
+            limit: quotaCheck.limit,
+            currentCount: quotaCheck.currentCount,
+          },
+        },
+        { status: 403 }
+      );
     }
 
     const body = await req.json();
@@ -212,9 +225,10 @@ export const POST = withAuthGuard("user:create", async (req, { agencyId }) => {
 
     const hashed = await bcrypt.hash(password, 10);
 
-    // 3. Create User within Tenant Scope (agencyId injected automatically)
+    // 3. Create User within Tenant Scope
     const created = await db.user.create({
       data: {
+        agencyId,
         name,
         email,
         password: hashed,

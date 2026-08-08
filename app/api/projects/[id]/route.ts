@@ -1,3 +1,4 @@
+// app/api/projects/[id]/route.ts
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getServerSession } from "next-auth/next";
@@ -10,6 +11,7 @@ export async function GET(
   try {
     const session = await getServerSession(authOptions);
     const agencyId = (session as any)?.user?.agencyId;
+    const clientId = (session as any)?.user?.clientId;
 
     if (!agencyId) {
       return NextResponse.json(
@@ -20,11 +22,14 @@ export async function GET(
 
     const { id } = await params;
 
-    const project = await prisma.project.findUnique({
-      where: {
-        id: id,
-        agencyId: agencyId,
-      },
+    // 🔒 Build isolation clause: agencyId + optional clientId restriction
+    const whereClause: any = { id, agencyId };
+    if (clientId) {
+      whereClause.clientId = clientId;
+    }
+
+    const project = await prisma.project.findFirst({
+      where: whereClause,
       include: {
         agency: true,
         client: true,
@@ -54,7 +59,7 @@ export async function GET(
       );
     }
 
-    // Calculate project totals from task financial fields (already computed in DB)
+    // Calculate project totals from task financial fields
     const projectTotals = project.tasks.reduce(
       (acc, t) => ({
         totalProjectInvoice: acc.totalProjectInvoice + (t.totalInvoice || 0),
@@ -84,6 +89,7 @@ export async function DELETE(
   try {
     const session = await getServerSession(authOptions);
     const agencyId = (session as any)?.user?.agencyId;
+    const clientId = (session as any)?.user?.clientId;
 
     if (!agencyId) {
       return NextResponse.json(
@@ -94,10 +100,10 @@ export async function DELETE(
 
     const { id } = await params;
 
-    // Security check: ensure project exists and belongs to agency
+    // Security check: ensure project exists and belongs to agency & client
     const existingProject = await prisma.project.findUnique({
       where: { id: id },
-      select: { agencyId: true },
+      select: { agencyId: true, clientId: true },
     });
 
     if (!existingProject) {
@@ -107,7 +113,10 @@ export async function DELETE(
       );
     }
 
-    if (existingProject.agencyId !== agencyId) {
+    if (
+      existingProject.agencyId !== agencyId ||
+      (clientId && existingProject.clientId !== clientId)
+    ) {
       return NextResponse.json(
         { error: "Forbidden: You do not have permission to delete this project" },
         { status: 403 }
@@ -115,94 +124,86 @@ export async function DELETE(
     }
 
     // Cascade cleanup + wallet reversal in transaction
-    await prisma.$transaction(async (tx) => {
-      // Fetch all tasks with their assignees and financial transactions
-      const tasks = await tx.task.findMany({
-        where: { projectId: id },
-        include: {
-          assignees: {
-            select: { id: true, userType: true, walletBalance: true },
-          },
-        },
-      });
-
-      const taskIds = tasks.map((t) => t.id);
-
-      // ── Step 1: Reverse wallet balances for all users (FREELANCER, FULL_TIME, PART_TIME)
-      for (const task of tasks) {
-        for (const user of task.assignees) {
-          const currentBalance = user.walletBalance || 0;
-
-          // Fetch all financial transactions for this user+task
-          const txns = await tx.financialTransaction.findMany({
-            where: {
-              userId: user.id,
-              taskId: task.id,
+    await prisma.$transaction(
+      async (tx) => {
+        // Fetch all tasks with their assignees and financial transactions
+        const tasks = await tx.task.findMany({
+          where: { projectId: id },
+          include: {
+            assignees: {
+              select: { id: true, userType: true, walletBalance: true },
             },
-            select: { amount: true },
+          },
+        });
+
+        const taskIds = tasks.map((t) => t.id);
+
+        // ── Step 1: Reverse wallet balances for all users
+        for (const task of tasks) {
+          for (const user of task.assignees) {
+            const currentBalance = user.walletBalance || 0;
+
+            const txns = await tx.financialTransaction.findMany({
+              where: {
+                userId: user.id,
+                taskId: task.id,
+              },
+              select: { amount: true },
+            });
+
+            const totalToReverse = txns.reduce(
+              (sum, t) => sum + (t.amount || 0),
+              0
+            );
+            const newBalance = Math.max(0, currentBalance - totalToReverse);
+
+            await tx.user.update({
+              where: { id: user.id },
+              data: { walletBalance: newBalance },
+            });
+          }
+        }
+
+        // ── Step 2: Delete all related task records
+        if (taskIds.length > 0) {
+          await tx.comment.deleteMany({
+            where: { taskId: { in: taskIds } },
           });
 
-          // Sum all transaction amounts to reverse
-          const totalToReverse = txns.reduce((sum, t) => sum + (t.amount || 0), 0);
-          const newBalance = Math.max(0, currentBalance - totalToReverse);
+          await tx.attendanceLog.deleteMany({
+            where: { taskId: { in: taskIds } },
+          });
 
-          console.log(
-            `[DELETE_PROJECT] Reversing wallet for user ${user.id}: ${currentBalance} - ${totalToReverse} = ${newBalance}`
-          );
+          await tx.taskExpense.deleteMany({
+            where: { taskId: { in: taskIds } },
+          });
 
-          await tx.user.update({
-            where: { id: user.id },
-            data: { walletBalance: newBalance },
+          await tx.todo.deleteMany({
+            where: { taskId: { in: taskIds } },
+          });
+
+          await tx.financialTransaction.deleteMany({
+            where: { taskId: { in: taskIds } },
+          });
+
+          await tx.task.deleteMany({
+            where: { projectId: id },
           });
         }
+
+        // ── Step 3: Delete project
+        await tx.project.delete({
+          where: { id: id },
+        });
+      },
+      {
+        maxWait: 10000,
+        timeout: 30000,
       }
-
-      // ── Step 2: Delete all related task records
-      if (taskIds.length > 0) {
-        // Delete comments linked to tasks
-        await tx.comment.deleteMany({
-          where: { taskId: { in: taskIds } },
-        });
-
-        // Delete attendance logs linked to tasks
-        await tx.attendanceLog.deleteMany({
-          where: { taskId: { in: taskIds } },
-        });
-
-        // Delete task expenses
-        await tx.taskExpense.deleteMany({
-          where: { taskId: { in: taskIds } },
-        });
-
-        // Delete todos (should cascade, but explicit is safer)
-        await tx.todo.deleteMany({
-          where: { taskId: { in: taskIds } },
-        });
-
-        // Delete financial transactions
-        await tx.financialTransaction.deleteMany({
-          where: { taskId: { in: taskIds } },
-        });
-
-        // Delete tasks themselves
-        await tx.task.deleteMany({
-          where: { projectId: id },
-        });
-      }
-
-      // ── Step 3: Delete project
-      await tx.project.delete({
-        where: { id: id },
-      });
-
-      console.log(`[DELETE_PROJECT] Project ${id} deleted successfully`);
-    }, {
-      maxWait: 10000,
-      timeout: 30000,
-    });
+    );
 
     return NextResponse.json(
-      { 
+      {
         message: "Project and all related data deleted successfully",
         projectId: id,
       },
@@ -211,7 +212,10 @@ export async function DELETE(
   } catch (error: any) {
     console.error("PROJECT_DELETE_ERROR:", error);
     return NextResponse.json(
-      { error: "An internal server error occurred", details: error?.message ?? String(error) },
+      {
+        error: "An internal server error occurred",
+        details: error?.message ?? String(error),
+      },
       { status: 500 }
     );
   }

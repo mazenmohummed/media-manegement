@@ -283,8 +283,12 @@ enum NotificationType {
     COMMENT
     APPROVAL
     INVOICE
+    INFO
     PAYMENT
+    SUCCESS
     SYSTEM
+    WARNING
+    ALERT
 }
 
 enum AuditAction {
@@ -297,6 +301,8 @@ enum AuditAction {
     EXPORT
     PASSWORD_CHANGE
     PAYOUT_TRIGGERED
+    WARNING
+    ALERT
 }
 
 enum CreditNoteReason {
@@ -367,8 +373,9 @@ enum LeadStatus {
     NEW
     CONTACTED
     QUALIFIED
-    DISQUALIFIED
+    PROPOSAL
     CONVERTED
+    DISQUALIFIED
 }
 
 enum LeadSource {
@@ -392,6 +399,7 @@ enum InteractionType {
 }
 
 enum OpportunityStage {
+    QUALIFICATION
     DISCOVERY
     STRATEGY
     PROPOSAL
@@ -587,7 +595,7 @@ model DiscoveryPersona {
     frustrations   String?
 
     opportunityId String
-    opportunity   Opportunity @relation(fields: [opportunityId], references: [id])
+    opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
 }
 
 model DiscoveryCompetitor {
@@ -599,7 +607,7 @@ model DiscoveryCompetitor {
     marketShare String?
 
     opportunityId String
-    opportunity   Opportunity @relation(fields: [opportunityId], references: [id])
+    opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
 }
 
 model DiscoveryProduct {
@@ -611,7 +619,7 @@ model DiscoveryProduct {
     painPoints String?
 
     opportunityId String
-    opportunity   Opportunity @relation(fields: [opportunityId], references: [id])
+    opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
 }
 
 // --------------------------------------
@@ -619,19 +627,21 @@ model DiscoveryProduct {
 // --------------------------------------
 
 model Lead {
-    id                String     @id @default(cuid())
-    leadNo            String?
-    companyName       String
-    contactName       String?
-    contactEmail      String?
-    contactPhone      String?
-    industry          String?
-    estimatedBudget   Float?
-    currency          String     @default("EGP")
-    expectedCloseDate DateTime?
-    source            LeadSource @default(OTHER)
-    status            LeadStatus @default(NEW)
-    notes             String?
+    id                 String     @id @default(cuid())
+    leadNo             String?
+    companyName        String
+    contactName        String?
+    contactEmail       String?
+    contactPhone       String?
+    industry           String?
+    estimatedBudget    Float?
+    currency           String     @default("EGP")
+    expectedCloseDate  DateTime?
+    source             LeadSource @default(OTHER)
+    status             LeadStatus @default(NEW)
+    disqualifiedReason String?
+    convertedAt        DateTime?
+    notes              String?
 
     agencyId String
     agency   Agency  @relation(fields: [agencyId], references: [id])
@@ -674,6 +684,7 @@ model Opportunity {
     budget   Float?
     currency String           @default("EGP")
 
+    expectedCloseDate   DateTime?
     companyMission      String?
     brandValues         String?
     personas            DiscoveryPersona[]
@@ -688,12 +699,22 @@ model Opportunity {
     launchStrategy        String?
     kpis                  String[]
 
-    leadId   String @unique
-    lead     Lead   @relation(fields: [leadId], references: [id])
+    leadId String? @unique
+    lead   Lead?   @relation(fields: [leadId], references: [id])
+
+    ownerId String?
+    owner   User?   @relation("OpportunityOwner", fields: [ownerId], references: [id])
+
     agencyId String
     agency   Agency @relation(fields: [agencyId], references: [id])
 
     proposals Proposal[]
+
+    userId String?
+    user   User?   @relation("UserOpportunities", fields: [userId], references: [id])
+
+    clientId String?
+    client   Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
 
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
@@ -703,18 +724,18 @@ model Opportunity {
 
 model Proposal {
     id              String         @id @default(cuid())
-    proposalNo      String?
+    proposalNo      String?        @unique
     status          ProposalStatus @default(DRAFT)
     totalAmount     Float          @default(0.0)
     currency        String         @default("EGP")
     validUntil      DateTime?
-    scope           String?
-    risks           String?
-    assumptions     String?
-    paymentSchedule String?
+    scope           String?        @db.Text
+    risks           String?        @db.Text
+    assumptions     String?        @db.Text
+    paymentSchedule String?        @db.Text
 
     opportunityId String
-    opportunity   Opportunity @relation(fields: [opportunityId], references: [id])
+    opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
     agencyId      String
     agency        Agency      @relation(fields: [agencyId], references: [id])
 
@@ -734,12 +755,13 @@ model ProposalLineItem {
     description String
     quantity    Float  @default(1.0)
     unitPrice   Float  @default(0.0)
-    total       Float  @default(0.0)
+    total       Float  @default(0.0) // Computed as quantity * unitPrice
 
     proposalId String
-    proposal   Proposal @relation(fields: [proposalId], references: [id])
+    proposal   Proposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
 
     createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
 }
 
 model Agency {
@@ -938,20 +960,24 @@ model ApiKey {
     revokedReason String?
 
     agencyId  String
-    agency    Agency   @relation(fields: [agencyId], references: [id])
+    agency    Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
     createdAt DateTime @default(now())
+
+    // Fast lookups when listing agency keys or verifying active keys
+    @@index([agencyId])
 }
 
 model RefreshToken {
     id        String    @id @default(cuid())
     tokenHash String    @unique
     userId    String
-    user      User      @relation(fields: [userId], references: [id])
-    expiresAt DateTime
+    user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+    isRevoked Boolean   @default(false)
     revokedAt DateTime?
     ipAddress String?
     userAgent String?
     createdAt DateTime  @default(now())
+    expiresAt DateTime
 
     @@index([userId])
 }
@@ -1045,6 +1071,9 @@ model User {
     milestonesOwned       Milestone[]            @relation("MilestoneOwner")
     creativeAssetReviews  CreativeAssetVersion[] @relation("CreativeAssetReviewer")
     resourceAllocations   ResourceAllocation[]
+
+    opportunities         Opportunity[] @relation("OpportunityOwner")
+    assignedOpportunities Opportunity[] @relation("UserOpportunities")
 
     @@index([agencyId, role])
     @@index([agencyId, isActive])
@@ -1226,6 +1255,7 @@ model Client {
     recurringInvoiceSchedules RecurringInvoiceSchedule[]
     feedback                  ClientFeedback[]
     reports                   Report[]
+    opportunities             Opportunity[]
 
     @@index([agencyId, clientNo])
     @@index([agencyId, clientName])
@@ -1367,6 +1397,7 @@ model Campaign {
 model Project {
     id             String        @id @default(cuid())
     projectNo      String?
+    name           String
     projectName    String
     targetDeadline DateTime?
     status         ProjectStatus @default(ACTIVE)
@@ -2323,14 +2354,15 @@ model Notification {
     actionUrl String?
 
     userId   String
-    user     User   @relation(fields: [userId], references: [id])
+    user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
     agencyId String
-    agency   Agency @relation(fields: [agencyId], references: [id])
+    agency   Agency @relation(fields: [agencyId], references: [id], onDelete: Cascade)
 
     createdAt DateTime  @default(now())
     readAt    DateTime?
 
     @@index([userId, isRead])
+    @@index([agencyId])
 }
 
 model Attachment {
@@ -2342,13 +2374,14 @@ model Attachment {
     description String?
 
     agencyId     String
-    agency       Agency   @relation(fields: [agencyId], references: [id])
+    agency       Agency  @relation(fields: [agencyId], references: [id], onDelete: Cascade)
     uploadedById String?
-    uploadedBy   User?    @relation(fields: [uploadedById], references: [id])
-    projectId    String?
-    project      Project? @relation(fields: [projectId], references: [id])
-    taskId       String?
-    task         Task?    @relation(fields: [taskId], references: [id])
+    uploadedBy   User?   @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
+
+    projectId String?
+    project   Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+    taskId    String?
+    task      Task?    @relation(fields: [taskId], references: [id], onDelete: Cascade)
 
     createdAt DateTime @default(now())
 
@@ -2368,9 +2401,9 @@ model AuditLog {
     userAgent  String?
 
     agencyId String
-    agency   Agency  @relation(fields: [agencyId], references: [id])
+    agency   Agency  @relation(fields: [agencyId], references: [id], onDelete: Cascade)
     actorId  String?
-    actor    User?   @relation(fields: [actorId], references: [id])
+    actor    User?   @relation(fields: [actorId], references: [id], onDelete: SetNull)
 
     timestamp DateTime @default(now())
 
@@ -2387,7 +2420,7 @@ model Webhook {
     isActive Boolean  @default(true)
 
     agencyId String
-    agency   Agency @relation(fields: [agencyId], references: [id])
+    agency   Agency @relation(fields: [agencyId], references: [id], onDelete: Cascade)
 
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt

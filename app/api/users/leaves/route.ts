@@ -1,10 +1,14 @@
 import { NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
+import { withAuthGuard } from "@/lib/auth/guard";
+import { getScopedPrisma } from "@/lib/prisma";
 
-export async function GET() {
+// ─── GET /api/users/leaves ────────────────────────────────────────────────
+export const GET = withAuthGuard("user:read", async (req, { agencyId }) => {
   try {
-    // Fetches all users along with their embedded leaves data array
-    const usersWithLeaves = await prisma.user.findMany({
+    const db = getScopedPrisma(agencyId);
+
+    // Fetches all users scoped to the current agency along with their embedded leaves array
+    const usersWithLeaves = await db.user.findMany({
       select: {
         id: true,
         name: true,
@@ -14,9 +18,10 @@ export async function GET() {
 
     return NextResponse.json(usersWithLeaves, { status: 200 });
   } catch (error: any) {
+    console.error("[LEAVES_GET_ALL_ERROR]", error);
     return NextResponse.json(
       { error: "Failed to fetch leaves structural array data", details: error.message },
       { status: 500 }
     );
   }
-}
+});

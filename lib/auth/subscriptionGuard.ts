@@ -1,3 +1,4 @@
+// lib/auth/subscriptionGuard.ts
 import basePrisma from "@/lib/prisma";
 import { SubscriptionPlan } from "@prisma/client";
 

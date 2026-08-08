@@ -255,7 +255,7 @@ export async function PATCH(req: Request, context: RouteContext) {
         accountType: clean(body.accountType),
         status: clean(body.status),
         relationshipType: body.relationshipType,
-        email: clean(body.email),
+        email: clean(body.email.toLowerCase().trim()),
         phoneNumber: clean(body.phoneNumber),
         website: clean(body.website),
         notes: clean(body.notes),
@@ -274,7 +274,7 @@ export async function PATCH(req: Request, context: RouteContext) {
           data: {
             name: clean(body.contactName)!,
             title: clean(body.contactTitle),
-            email: clean(body.contactEmail),
+            email: clean(body.contactEmail.toLowerCase().trim()),
             phoneNumber: clean(body.contactPhone),
             isPrimary: true,
           },
@@ -284,7 +284,7 @@ export async function PATCH(req: Request, context: RouteContext) {
           data: {
             name: clean(body.contactName)!,
             title: clean(body.contactTitle),
-            email: clean(body.contactEmail),
+            email: clean(body.contactEmail.toLowerCase().trim()),
             phoneNumber: clean(body.contactPhone),
             isPrimary: true,
             clientId: id,

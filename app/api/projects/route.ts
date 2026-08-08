@@ -396,6 +396,7 @@ export const POST = withAuthGuard("project:create", async (req, { agencyId }) =>
           data: {
             projectNo,
             projectName,
+            name: projectName, 
             projectStory,
             cloudLink,
             status: "ACTIVE",

@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
       include: { user: true },
     });
 
-    // 1. Token doesn't exist or has expired
+    // 1. Missing Token or Expired
     if (!existingToken || existingToken.expiresAt < new Date()) {
       if (existingToken) {
         await prisma.refreshToken.delete({ where: { id: existingToken.id } });
@@ -41,32 +41,34 @@ export async function POST(req: NextRequest) {
       return response;
     }
 
-    // 2. Token Reuse Detection (Triggers if an already-rotated token is reused)
-    if (existingToken.revokedAt !== null) {
-      // Security measure: Revoke all active refresh tokens for this compromised user
-      await prisma.refreshToken.deleteMany({
-        where: { userId: existingToken.userId },
+    // 2. Token Reuse Detection
+    // If token is flagged as revoked, a bad actor may be reusing a stolen token.
+    if (existingToken.isRevoked || existingToken.revokedAt !== null) {
+      // Invalidate ALL active refresh tokens for this compromised account
+      await prisma.refreshToken.updateMany({
+        where: { userId: existingToken.userId, isRevoked: false },
+        data: { isRevoked: true, revokedAt: new Date() },
       });
 
       const response = NextResponse.json(
-        { error: "Token reuse detected. All sessions revoked for safety." },
+        { error: "Security Alert: Token reuse detected. All sessions revoked." },
         { status: 403 }
       );
 
-      response.cookies.delete({ name: "refreshToken", path: "/" });
+      response.cookies.delete("refreshToken");
       return response;
     }
 
     const { userId, user } = existingToken;
 
-    // Extract IP & User-Agent safely
-    const ipAddress =
-      req.headers.get("x-forwarded-for")?.split(",")[0].trim() ||
-      req.headers.get("x-real-ip") ||
-      null;
+    // Safely extract IP & User-Agent
+    const rawForwarded = req.headers.get("x-forwarded-for");
+    const ipAddress = rawForwarded
+      ? rawForwarded.split(",")[0].trim()
+      : req.headers.get("x-real-ip") || null;
     const userAgent = req.headers.get("user-agent") || null;
 
-    // 3. Generate New Access and Refresh Tokens
+    // 3. Generate new Access & Refresh tokens
     const newAccessToken = generateAccessToken({
       userId: user.id,
       agencyId: user.agencyId,
@@ -80,11 +82,14 @@ export async function POST(req: NextRequest) {
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + refreshTokenExpiresInDays);
 
-    // 4. Database Transaction: Soft-delete/revoke old token & Store new rotated token
+    // 4. Atomic Transaction: Revoke existing token and issue rotated token
     await prisma.$transaction([
       prisma.refreshToken.update({
         where: { id: existingToken.id },
-        data: { revokedAt: new Date() },
+        data: {
+          isRevoked: true,
+          revokedAt: new Date(),
+        },
       }),
       prisma.refreshToken.create({
         data: {
@@ -97,7 +102,7 @@ export async function POST(req: NextRequest) {
       }),
     ]);
 
-    // 5. Respond with New Access Token & Updated HTTP-Only Cookie
+    // 5. Send response with rotated HTTP-only cookie
     const response = NextResponse.json(
       {
         success: true,

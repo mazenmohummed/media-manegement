@@ -1,10 +1,11 @@
-import { PrismaClient, Prisma } from "@prisma/client";
+import { PrismaClient, Prisma, AuditAction } from "@prisma/client";
+import { auditContextStore } from "@/lib/context/async-store";
 
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
 };
 
-// Base Prisma Client Singleton
+// Base raw Prisma client instance
 export const basePrisma =
   globalForPrisma.prisma ??
   new PrismaClient({
@@ -16,9 +17,37 @@ export const basePrisma =
 
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = basePrisma;
 
+// Models subject to automated multi-tenant query isolation
+const TENANT_SCOPED_MODELS = new Set([
+  "Project",
+  "Client",
+  "User",
+  "Asset",
+  "Payment",
+  "Subscription",
+  "Task",
+  "Invoice",
+  "Attachment",
+  "Payout",
+]);
+
+// Models subject to automated audit logging on mutations
+const AUDITED_MODELS = new Set([
+  "Task",
+  "Project",
+  "Invoice",
+  "User",
+  "Attachment",
+  "Client",
+  "Payout",
+  "Asset",
+  "Payment",
+  "Subscription",
+]);
+
 /**
- * Returns a tenant-scoped Prisma instance that automatically injects
- * `agencyId` filtering into read, write, update, and delete queries.
+ * Returns a tenant-scoped Prisma instance that automatically injects `agencyId` isolation
+ * and fires automated AuditLog entries for mutations.
  */
 export function getScopedPrisma(agencyId: string) {
   if (!agencyId) {
@@ -29,21 +58,13 @@ export function getScopedPrisma(agencyId: string) {
     query: {
       $allModels: {
         async $allOperations({ model, operation, args, query }) {
-          // Models requiring multi-tenant scoping
-          const tenantScopedModels = [
-            "Project",
-            "Client",
-            "User",
-            "Asset",
-            "Payment",
-            "Subscription",
-          ];
+          const castArgs = (args || {}) as Record<string, any>;
 
-          if (tenantScopedModels.includes(model)) {
-            // Type assertion for mutation safety
-            const castArgs = args as Record<string, any>;
-
-            // 1. Read Operations (findMany, findFirst, count, aggregate, groupBy)
+          // ----------------------------------------------------
+          // 1. TENANT ISOLATION LAYER
+          // ----------------------------------------------------
+          if (model && TENANT_SCOPED_MODELS.has(model)) {
+            // Read queries
             if (
               [
                 "findMany",
@@ -57,7 +78,7 @@ export function getScopedPrisma(agencyId: string) {
               castArgs.where = { ...castArgs.where, agencyId };
             }
 
-            // 2. Single Record Read Operations (Convert findUnique to findFirst for compound filter support)
+            // Single record reads (Convert findUnique to findFirst for compound filtering)
             if (["findUnique", "findUniqueOrThrow"].includes(operation)) {
               const targetModel = (basePrisma as Record<string, any>)[
                 model.toLowerCase()
@@ -65,7 +86,6 @@ export function getScopedPrisma(agencyId: string) {
 
               if (targetModel) {
                 const searchWhere = { ...castArgs.where, agencyId };
-
                 return operation === "findUnique"
                   ? targetModel.findFirst({ ...castArgs, where: searchWhere })
                   : targetModel.findFirstOrThrow({
@@ -75,7 +95,7 @@ export function getScopedPrisma(agencyId: string) {
               }
             }
 
-            // 3. Updates & Deletions
+            // Updates & Deletions
             if (
               ["update", "updateMany", "delete", "deleteMany"].includes(
                 operation
@@ -84,30 +104,83 @@ export function getScopedPrisma(agencyId: string) {
               castArgs.where = { ...castArgs.where, agencyId };
             }
 
-            // 4. Record Creation
+            // Single Creation
             if (operation === "create") {
               castArgs.data = { ...castArgs.data, agencyId };
             }
 
-            // 5. Bulk Creation
+            // Bulk Creation
             if (operation === "createMany") {
               if (Array.isArray(castArgs.data)) {
-                castArgs.data = castArgs.data.map((item: Record<string, any>) => ({
-                  ...item,
-                  agencyId,
-                }));
+                castArgs.data = castArgs.data.map(
+                  (item: Record<string, any>) => ({
+                    ...item,
+                    agencyId,
+                  })
+                );
               } else if (castArgs.data) {
                 castArgs.data = { ...castArgs.data, agencyId };
               }
             }
           }
 
-          return query(args);
+          // Execute primary query
+          const result = await query(args);
+
+          // ----------------------------------------------------
+          // 2. AUTOMATED AUDIT LOGGING LAYER
+          // ----------------------------------------------------
+          if (model && AUDITED_MODELS.has(model) && model !== "AuditLog") {
+            let action: AuditAction | null = null;
+            if (operation === "create" || operation === "createMany")
+              action = "CREATE";
+            if (operation === "update" || operation === "updateMany")
+              action = "UPDATE";
+            if (operation === "delete" || operation === "deleteMany")
+              action = "DELETE";
+
+            if (action) {
+              const store = auditContextStore.getStore();
+              const effectiveAgencyId = agencyId || store?.agencyId;
+
+              if (effectiveAgencyId) {
+                const entityId =
+                  (result && typeof result === "object" && "id" in result
+                    ? (result.id as string)
+                    : undefined) ||
+                  castArgs.where?.id ||
+                  "bulk_operation";
+
+                // Non-blocking asynchronous audit record creation via basePrisma
+                basePrisma.auditLog
+                  .create({
+                    data: {
+                      action,
+                      entityType: model,
+                      entityId: String(entityId),
+                      agencyId: effectiveAgencyId,
+                      actorId: store?.actorId || null,
+                      ipAddress: store?.ipAddress || null,
+                      userAgent: store?.userAgent || null,
+                      metadata: {
+                        operation,
+                        argsWhere: castArgs.where || null,
+                      },
+                    },
+                  })
+                  .catch((err) => {
+                    console.error("[AUTO_AUDIT_LOG_ERROR]", err);
+                  });
+              }
+            }
+          }
+
+          return result;
         },
       },
     },
   });
 }
 
-// Export default base client for un-scoped/system queries
+export { basePrisma as prisma };
 export default basePrisma;

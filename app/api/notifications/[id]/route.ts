@@ -1,27 +1,91 @@
-// app/api/notifications/[id]/route.ts
-import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/authOptions";
+import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { withAuthGuard, AuthContext } from "@/lib/auth/guard";
 
-export async function PATCH(
-  _req: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const session = await getServerSession(authOptions);
-  if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const { id } = await params;
-  await prisma.notification.update({ where: { id }, data: { isRead: true } });
-  return NextResponse.json({ ok: true });
+interface RouteParams {
+  params: Promise<{ id: string }>;
 }
 
-export async function DELETE(
-  _req: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const session = await getServerSession(authOptions);
-  if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const { id } = await params;
-  await prisma.notification.delete({ where: { id } });
-  return NextResponse.json({ ok: true });
-}
+// PATCH: Mark a single notification as read
+export const PATCH = withAuthGuard(
+  "user:read",
+  async (
+    _req: NextRequest,
+    authCtx: AuthContext,
+    routeProps: RouteParams
+  ) => {
+    try {
+      const { id } = await routeProps.params;
+      const { userId, agencyId, role } = authCtx;
+
+      const isAdmin = role === "ADMIN" || role === "SUPERADMIN";
+
+      const updated = await prisma.notification.updateMany({
+        where: {
+          id,
+          agencyId,
+          ...(isAdmin ? {} : { userId }),
+        },
+        data: {
+          isRead: true,
+          readAt: new Date(),
+        },
+      });
+
+      if (updated.count === 0) {
+        return NextResponse.json(
+          { error: "Notification not found or unauthorized" },
+          { status: 404 }
+        );
+      }
+
+      return NextResponse.json({ message: "Notification marked as read", ok: true });
+    } catch (error: any) {
+      console.error("[NOTIFICATION_PATCH_ERROR]", error);
+      return NextResponse.json(
+        { error: "Failed to update notification" },
+        { status: 500 }
+      );
+    }
+  }
+);
+
+// DELETE: Remove a notification
+export const DELETE = withAuthGuard(
+  "user:read",
+  async (
+    _req: NextRequest,
+    authCtx: AuthContext,
+    routeProps: RouteParams
+  ) => {
+    try {
+      const { id } = await routeProps.params;
+      const { userId, agencyId, role } = authCtx;
+
+      const isAdmin = role === "ADMIN" || role === "SUPERADMIN";
+
+      const deleted = await prisma.notification.deleteMany({
+        where: {
+          id,
+          agencyId,
+          ...(isAdmin ? {} : { userId }),
+        },
+      });
+
+      if (deleted.count === 0) {
+        return NextResponse.json(
+          { error: "Notification not found or unauthorized" },
+          { status: 404 }
+        );
+      }
+
+      return NextResponse.json({ message: "Notification deleted", ok: true });
+    } catch (error: any) {
+      console.error("[NOTIFICATION_DELETE_ERROR]", error);
+      return NextResponse.json(
+        { error: "Failed to delete notification" },
+        { status: 500 }
+      );
+    }
+  }
+);

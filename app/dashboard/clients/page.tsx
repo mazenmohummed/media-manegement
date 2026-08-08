@@ -15,6 +15,7 @@ import {
   SlidersHorizontal,
   Wallet,
 } from "lucide-react";
+import CreateClientCard from "@/components/opportunities/CreateClientCard"; // Adjust import path if needed
 
 const DEFAULT_AGENCY_ID = "cmqv7pkzo0000xmkk0u7229sf";
 
@@ -61,58 +62,6 @@ type ClientRow = {
   } | null;
 };
 
-type ClientForm = {
-  clientName: string;
-  accountType: string;
-  status: string;
-  relationshipType: "ONE_TIME" | "RECURRING";
-  email: string;
-  phoneNumber: string;
-  website: string;
-  notes: string;
-  billingLine1: string;
-  billingCity: string;
-  billingCountry: string;
-  contactName: string;
-  contactTitle: string;
-  contactEmail: string;
-  contactPhone: string;
-  creditLimit: string;
-  isOnCreditHold: boolean;
-  creditHoldReason: string;
-  creditLimitAlertPct: string;
-  budgetAmount: string;
-  budgetPeriodStart: string;
-  budgetPeriodEnd: string;
-  currency: string;
-};
-
-const DEFAULT_FORM: ClientForm = {
-  clientName: "",
-  accountType: "Retainer",
-  status: "ACTIVE",
-  relationshipType: "RECURRING",
-  email: "",
-  phoneNumber: "",
-  website: "",
-  notes: "",
-  billingLine1: "",
-  billingCity: "",
-  billingCountry: "Egypt",
-  contactName: "",
-  contactTitle: "",
-  contactEmail: "",
-  contactPhone: "",
-  creditLimit: "",
-  isOnCreditHold: false,
-  creditHoldReason: "",
-  creditLimitAlertPct: "90",
-  budgetAmount: "",
-  budgetPeriodStart: "",
-  budgetPeriodEnd: "",
-  currency: "EGP",
-};
-
 const currency = (value: number, code = "EGP") =>
   new Intl.NumberFormat("en-US", {
     style: "currency",
@@ -147,11 +96,9 @@ export default function ClientsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [showForm, setShowForm] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedType, setSelectedType] = useState("ALL");
   const [selectedStatus, setSelectedStatus] = useState("ALL");
-  const [formData, setFormData] = useState<ClientForm>(DEFAULT_FORM);
 
   const fetchClients = async (activeAgencyId = agencyId) => {
     setLoading(true);
@@ -244,48 +191,6 @@ export default function ClientsPage() {
   const collectionRate = stats.totalInvoiced
     ? (stats.totalReceived / stats.totalInvoiced) * 100
     : 0;
-
-  const updateForm = <Key extends keyof ClientForm>(key: Key, value: ClientForm[Key]) => {
-    setFormData((current) => ({ ...current, [key]: value }));
-  };
-
-  const handleAddClient = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    setIsSubmitting(true);
-    setError("");
-
-    try {
-      const payload = {
-        ...formData,
-        agencyId,
-        budgetAmount: formData.budgetAmount ? Number(formData.budgetAmount) : undefined,
-        creditLimit: formData.creditLimit ? Number(formData.creditLimit) : undefined,
-        creditLimitAlertPct: formData.creditLimitAlertPct ? Number(formData.creditLimitAlertPct) : 90,
-      };
-
-      const res = await fetch("/api/clients", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-agency-id": agencyId,
-        },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data?.error || "Failed to create client");
-      }
-
-      setShowForm(false);
-      setFormData(DEFAULT_FORM);
-      await fetchClients(agencyId);
-    } catch (err: any) {
-      setError(err?.message || "Failed to create client");
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
 
   return (
     <main className="space-y-6">
@@ -456,15 +361,12 @@ export default function ClientsPage() {
 
       {showForm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
-          <form
-            onSubmit={handleAddClient}
-            className="flex max-h-[90vh] w-full max-w-3xl flex-col rounded-md border bg-background shadow-xl"
-          >
+          <div className="flex max-h-[90vh] w-full max-w-3xl flex-col rounded-md border bg-background shadow-xl overflow-hidden">
             <div className="flex shrink-0 items-start justify-between gap-4 border-b p-6">
               <div>
                 <h2 className="text-lg font-semibold">Create client</h2>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Add account, contact, billing, credit, and budget details.
+                  Add account, portal user, contact, billing, credit, and budget details.
                 </p>
               </div>
               <button
@@ -477,106 +379,16 @@ export default function ClientsPage() {
             </div>
 
             <div className="flex-1 overflow-y-auto p-6">
-              <div className="grid gap-4 md:grid-cols-2">
-                <Field label="Client name">
-                  <input required value={formData.clientName} onChange={(event) => updateForm("clientName", event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:border-blue-500" />
-                </Field>
-                <Field label="Account type">
-                  <select value={formData.accountType} onChange={(event) => updateForm("accountType", event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none">
-                    <option value="Retainer">Retainer</option>
-                    <option value="One-off">One-off</option>
-                    <option value="Project">Project</option>
-                  </select>
-                </Field>
-                <Field label="Status">
-                  <select value={formData.status} onChange={(event) => updateForm("status", event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none">
-                    <option value="ACTIVE">Active</option>
-                    <option value="SUSPENDED">Suspended</option>
-                    <option value="COMPLETED">Completed</option>
-                  </select>
-                </Field>
-                <Field label="Relationship">
-                  <select value={formData.relationshipType} onChange={(event) => updateForm("relationshipType", event.target.value as ClientForm["relationshipType"])} className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none">
-                    <option value="RECURRING">Recurring</option>
-                    <option value="ONE_TIME">One time</option>
-                  </select>
-                </Field>
-                <Field label="Billing email">
-                  <input type="email" value={formData.email} onChange={(event) => updateForm("email", event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:border-blue-500" />
-                </Field>
-                <Field label="Phone">
-                  <input value={formData.phoneNumber} onChange={(event) => updateForm("phoneNumber", event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:border-blue-500" />
-                </Field>
-                <Field label="Website">
-                  <input value={formData.website} onChange={(event) => updateForm("website", event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:border-blue-500" />
-                </Field>
-                <Field label="Billing address">
-                  <input value={formData.billingLine1} onChange={(event) => updateForm("billingLine1", event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:border-blue-500" />
-                </Field>
-                <Field label="City">
-                  <input value={formData.billingCity} onChange={(event) => updateForm("billingCity", event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:border-blue-500" />
-                </Field>
-                <Field label="Country">
-                  <input value={formData.billingCountry} onChange={(event) => updateForm("billingCountry", event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:border-blue-500" />
-                </Field>
-                <Field label="Primary contact">
-                  <input value={formData.contactName} onChange={(event) => updateForm("contactName", event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:border-blue-500" />
-                </Field>
-                <Field label="Contact title">
-                  <input value={formData.contactTitle} onChange={(event) => updateForm("contactTitle", event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:border-blue-500" />
-                </Field>
-                <Field label="Contact email">
-                  <input type="email" value={formData.contactEmail} onChange={(event) => updateForm("contactEmail", event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:border-blue-500" />
-                </Field>
-                <Field label="Contact phone">
-                  <input value={formData.contactPhone} onChange={(event) => updateForm("contactPhone", event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:border-blue-500" />
-                </Field>
-                <Field label="Credit limit">
-                  <input type="number" min="0" value={formData.creditLimit} onChange={(event) => updateForm("creditLimit", event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:border-blue-500" />
-                </Field>
-                <Field label="Credit alert %">
-                  <input type="number" min="0" max="100" value={formData.creditLimitAlertPct} onChange={(event) => updateForm("creditLimitAlertPct", event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:border-blue-500" />
-                </Field>
-                <label className="flex h-10 items-center gap-2 rounded-md border px-3 text-sm">
-                  <input type="checkbox" checked={formData.isOnCreditHold} onChange={(event) => updateForm("isOnCreditHold", event.target.checked)} />
-                  Credit hold
-                </label>
-                <Field label="Credit hold reason">
-                  <input value={formData.creditHoldReason} onChange={(event) => updateForm("creditHoldReason", event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:border-blue-500" />
-                </Field>
-                <Field label="Budget amount">
-                  <input type="number" min="0" value={formData.budgetAmount} onChange={(event) => updateForm("budgetAmount", event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:border-blue-500" />
-                </Field>
-                <Field label="Currency">
-                  <select value={formData.currency} onChange={(event) => updateForm("currency", event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none">
-                    <option value="EGP">EGP</option>
-                    <option value="USD">USD</option>
-                    <option value="EUR">EUR</option>
-                    <option value="AED">AED</option>
-                  </select>
-                </Field>
-                <Field label="Budget start">
-                  <input type="date" value={formData.budgetPeriodStart} onChange={(event) => updateForm("budgetPeriodStart", event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:border-blue-500" />
-                </Field>
-                <Field label="Budget end">
-                  <input type="date" value={formData.budgetPeriodEnd} onChange={(event) => updateForm("budgetPeriodEnd", event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:border-blue-500" />
-                </Field>
-                <Field label="Notes">
-                  <textarea value={formData.notes} onChange={(event) => updateForm("notes", event.target.value)} className="min-h-20 w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus:border-blue-500 md:col-span-2" />
-                </Field>
-              </div>
+              <CreateClientCard
+                agencyId={agencyId}
+                onSuccess={() => {
+                  setShowForm(false);
+                  fetchClients(agencyId);
+                }}
+                onCancel={() => setShowForm(false)}
+              />
             </div>
-
-            <div className="flex shrink-0 justify-end gap-3 border-t p-6">
-              <button type="button" onClick={() => setShowForm(false)} className="h-10 rounded-md px-4 text-sm font-semibold hover:bg-muted">
-                Cancel
-              </button>
-              <button type="submit" disabled={isSubmitting || !agencyId} className="inline-flex h-10 items-center gap-2 rounded-md bg-blue-600 px-4 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-60">
-                {isSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
-                Create client
-              </button>
-            </div>
-          </form>
+          </div>
         </div>
       )}
     </main>
@@ -628,14 +440,5 @@ function StatusPill({ status }: { status: string }) {
     <span className={`inline-flex rounded-md border px-2 py-1 text-xs font-semibold ${className}`}>
       {status}
     </span>
-  );
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label className="space-y-1.5">
-      <span className="text-xs font-medium text-muted-foreground">{label}</span>
-      {children}
-    </label>
   );
 }

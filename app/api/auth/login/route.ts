@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import bcrypt from "bcryptjs";
+import { authRateLimiter } from "@/lib/rate-limit";
 import {
   generateAccessToken,
   generateRefreshToken,
@@ -8,8 +9,37 @@ import {
 } from "@/lib/auth";
 
 export async function POST(req: Request) {
+  // ---------------------------------------------------------------------------
+  // 1. Rate Limiting Guard
+  // ---------------------------------------------------------------------------
+  const rawForwardedFor = req.headers.get("x-forwarded-for");
+  const clientIp = rawForwardedFor
+    ? rawForwardedFor.split(",")[0].trim()
+    : "127.0.0.1";
+
+  const { success, limit, remaining, reset } = await authRateLimiter.limit(
+    clientIp
+  );
+
+  if (!success) {
+    return NextResponse.json(
+      { success: false, message: "Too many login attempts. Please try again later." },
+      {
+        status: 429,
+        headers: {
+          "X-RateLimit-Limit": limit.toString(),
+          "X-RateLimit-Remaining": remaining.toString(),
+          "X-RateLimit-Reset": reset.toString(),
+        },
+      }
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // 2. Main Login Logic
+  // ---------------------------------------------------------------------------
   try {
-    // 1. Safe JSON Parsing
+    // Safe JSON Parsing
     const text = await req.text();
     const body = text ? JSON.parse(text) : {};
 
@@ -23,7 +53,7 @@ export async function POST(req: Request) {
       );
     }
 
-    // 2. Fetch User & Essential Relations
+    // Fetch User & Essential Relations
     const user = await prisma.user.findUnique({
       where: { email },
       include: {
@@ -40,7 +70,7 @@ export async function POST(req: Request) {
       },
     });
 
-    // 3. Credential & Account Status Guard
+    // Credential & Account Status Guard
     if (!user || !user.password || user.deletedAt || !user.isActive) {
       return NextResponse.json(
         { success: false, message: "Invalid Access Credentials" },
@@ -48,7 +78,7 @@ export async function POST(req: Request) {
       );
     }
 
-    // 4. Password Verification
+    // Password Verification
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
       return NextResponse.json(
@@ -57,7 +87,7 @@ export async function POST(req: Request) {
       );
     }
 
-    // 5. Generate Auth Tokens
+    // Generate Auth Tokens
     const accessToken = generateAccessToken({
       userId: user.id,
       agencyId: user.agencyId,
@@ -71,17 +101,15 @@ export async function POST(req: Request) {
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + refreshTokenExpiresInDays);
 
-    const clientIp =
-      req.headers.get("x-forwarded-for")?.split(",")[0].trim() || null;
     const userAgent = req.headers.get("user-agent") || null;
 
-    // 6. Update User Last Login
+    // Update User Last Login
     await prisma.user.update({
       where: { id: user.id },
       data: { lastLoginAt: new Date() },
     });
 
-    // 7. Save Refresh Token
+    // Save Refresh Token with IP and User-Agent
     await prisma.refreshToken.create({
       data: {
         tokenHash,
@@ -92,7 +120,7 @@ export async function POST(req: Request) {
       },
     });
 
-    // 8. Safe Non-blocking Audit Logging (Won't crash login if schema is missing fields)
+    // Safe Non-blocking Audit Logging
     prisma.auditLog
       .create({
         data: {
@@ -106,7 +134,7 @@ export async function POST(req: Request) {
       })
       .catch((err) => console.error("Audit log error ignored:", err));
 
-    // 9. Build JSON Response
+    // Build JSON Response & Set HttpOnly Cookie
     const response = NextResponse.json({
       success: true,
       accessToken,
@@ -127,7 +155,6 @@ export async function POST(req: Request) {
       },
     });
 
-    // 10. Set Cookie
     response.cookies.set("refreshToken", rawRefreshToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",

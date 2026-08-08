@@ -86,7 +86,7 @@ export default function AddEmployeeModal({ open, onClose, onCreated }: AddEmploy
 
     setSubmitting(true);
     try {
-      const res = await fetch("/api/employees", {
+      const res = await fetch("/api/users", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
