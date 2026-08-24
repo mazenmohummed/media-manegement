@@ -534,6 +534,13 @@ enum ReportFormat {
     DASHBOARD
 }
 
+enum PlannedOrderStatus {
+    PLANNED
+    APPROVED
+    REJECTED
+    CONVERTED
+}
+
 // --------------------------------------
 // PostgreSQL Converted Models from Mongo Types
 // --------------------------------------
@@ -859,6 +866,8 @@ model Agency {
     reports                  Report[]
     resourceAllocations      ResourceAllocation[]
     leaves                   Leave[]
+    vendorCategories         VendorCategory[]
+    plannedPurchaseOrders    PlannedPurchaseOrder[]
 
     @@index([agencyName])
 }
@@ -1447,9 +1456,10 @@ model Project {
     reports                  Report[]
     resourceAllocations      ResourceAllocation[]
 
-    createdAt DateTime  @default(now())
-    updatedAt DateTime  @updatedAt
-    deletedAt DateTime?
+    createdAt             DateTime               @default(now())
+    updatedAt             DateTime               @updatedAt
+    deletedAt             DateTime?
+    plannedPurchaseOrders PlannedPurchaseOrder[]
 
     @@index([agencyId, projectNo])
     @@index([agencyId, status])
@@ -2189,43 +2199,66 @@ model ExchangeRate {
 }
 
 model Vendor {
-    id                 String                    @id @default(cuid())
-    vendorNo           String?
-    name               String
-    email              String?
-    phoneNumber        String?
-    status             VendorStatus              @default(ACTIVE)
-    category           String?
-    address            Address?
-    taxNumber          String?
-    notes              String?
-    paymentTerms       String                    @default("COD")
-    agencyId           String
-    agency             Agency                    @relation(fields: [agencyId], references: [id])
-    plannedExpenses    TaskPlannedExpense[]
-    expenses           TaskExpense[]
-    quotations         Quotation[]
-    purchaseOrders     PurchaseOrder[]
-    performanceReviews VendorPerformanceReview[]
-    createdAt          DateTime                  @default(now())
-    updatedAt          DateTime                  @updatedAt
+    id          String       @id @default(cuid())
+    vendorNo    String?
+    name        String
+    email       String?
+    phoneNumber String?
+    status      VendorStatus @default(ACTIVE)
+
+    // Updated category relation fields:
+    categoryId String?
+    category   VendorCategory? @relation("VendorCategoryRelation", fields: [categoryId], references: [id], onDelete: SetNull)
+
+    address                     Address?
+    taxNumber                   String?
+    notes                       String?
+    paymentTerms                String                       @default("COD")
+    agencyId                    String
+    agency                      Agency                       @relation(fields: [agencyId], references: [id])
+    plannedExpenses             TaskPlannedExpense[]
+    expenses                    TaskExpense[]
+    quotations                  Quotation[]
+    purchaseOrders              PurchaseOrder[]
+    performanceReviews          VendorPerformanceReview[]
+    createdAt                   DateTime                     @default(now())
+    updatedAt                   DateTime                     @updatedAt
+    quotationVendors            QuotationVendor[]
+    plannedPurchaseOrders       PlannedPurchaseOrder[]
+    plannedPurchaseOrderVendors PlannedPurchaseOrderVendor[]
 
     @@index([agencyId, vendorNo])
     @@index([agencyId, name])
+    @@index([categoryId])
+}
+
+model VendorCategory {
+    id          String   @id @default(cuid())
+    name        String
+    description String?
+    color       String? // Optional: for UI badge coloring (e.g., "#3b82f6")
+    agencyId    String
+    agency      Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+    vendors     Vendor[] @relation("VendorCategoryRelation")
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@unique([agencyId, name]) // Ensures category names are unique per agency
+    @@index([agencyId])
 }
 
 model Quotation {
-    id          String          @id @default(cuid())
-    quotationNo String?
-    description String?
-    amount      Float
-    currency    String          @default("EGP")
-    status      QuotationStatus @default(REQUESTED)
-    validUntil  DateTime?
-    notes       String?
+    id            String          @id @default(cuid())
+    quotationNo   String?
+    description   String?
+    amount        Float? // Final or approved amount
+    plannedAmount Float?          @default(0.0) // Initial planned amount
+    currency      String          @default("EGP")
+    status        QuotationStatus @default(REQUESTED)
+    validUntil    DateTime?
+    notes         String?
 
-    vendorId  String
-    vendor    Vendor   @relation(fields: [vendorId], references: [id])
     projectId String?
     project   Project? @relation(fields: [projectId], references: [id])
     taskId    String?
@@ -2233,14 +2266,82 @@ model Quotation {
     agencyId  String
     agency    Agency   @relation(fields: [agencyId], references: [id])
 
-    purchaseOrder PurchaseOrder?
+    vendors        QuotationVendor[]      @relation("QuotationVendors")
+    purchaseOrders PurchaseOrder[]
+    plannedOrders  PlannedPurchaseOrder[] // Linked planned orders
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+    vendor    Vendor?  @relation(fields: [vendorId], references: [id])
+    vendorId  String?
+
+    @@index([agencyId, status])
+    @@index([projectId])
+}
+
+model QuotationVendor {
+    id          String    @id @default(cuid())
+    quotationId String
+    quotation   Quotation @relation("QuotationVendors", fields: [quotationId], references: [id], onDelete: Cascade)
+    vendorId    String
+    vendor      Vendor    @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+
+    @@unique([quotationId, vendorId])
+}
+
+// Planned purchase orders stage with many-to-many vendors support
+model PlannedPurchaseOrder {
+    id                   String             @id @default(cuid())
+    plannedPoNo          String?
+    status               PlannedOrderStatus @default(PLANNED) // PLANNED, APPROVED, REJECTED
+    totalAmount          Float              @default(0.0)
+    currency             String             @default("EGP")
+    expectedDeliveryDate DateTime?
+    notes                String?
+
+    quotationId String?
+    quotation   Quotation? @relation(fields: [quotationId], references: [id])
+
+    // Kept single vendor field as optional if needed, or manage via vendors relation below
+    vendorId String?
+    vendor   Vendor? @relation(fields: [vendorId], references: [id])
+
+    projectId String?
+    project   Project? @relation(fields: [projectId], references: [id])
+    agencyId  String
+    agency    Agency   @relation(fields: [agencyId], references: [id])
+
+    vendors PlannedPurchaseOrderVendor[] @relation("PlannedPOVendors")
+    items   PlannedPurchaseOrderItem[]
 
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
 
-    @@index([agencyId, status])
-    @@index([vendorId])
-    @@index([projectId])
+    @@index([quotationId])
+    @@index([agencyId])
+}
+
+model PlannedPurchaseOrderVendor {
+    id                     String               @id @default(cuid())
+    plannedPurchaseOrderId String
+    plannedPurchaseOrder   PlannedPurchaseOrder @relation("PlannedPOVendors", fields: [plannedPurchaseOrderId], references: [id], onDelete: Cascade)
+    vendorId               String
+    vendor                 Vendor               @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+
+    @@unique([plannedPurchaseOrderId, vendorId])
+}
+
+model PlannedPurchaseOrderItem {
+    id          String @id @default(cuid())
+    description String
+    quantity    Float  @default(1.0)
+    unitCost    Float  @default(0.0)
+    total       Float  @default(0.0)
+
+    plannedPurchaseOrderId String
+    plannedPurchaseOrder   PlannedPurchaseOrder @relation(fields: [plannedPurchaseOrderId], references: [id], onDelete: Cascade)
+
+    createdAt DateTime @default(now())
 }
 
 model PurchaseOrder {
@@ -2255,7 +2356,7 @@ model PurchaseOrder {
 
     vendorId    String
     vendor      Vendor     @relation(fields: [vendorId], references: [id])
-    quotationId String?    @unique
+    quotationId String?
     quotation   Quotation? @relation(fields: [quotationId], references: [id])
     projectId   String?
     project     Project?   @relation(fields: [projectId], references: [id])
@@ -2270,6 +2371,7 @@ model PurchaseOrder {
     @@unique([agencyId, poNo])
     @@index([vendorId, status])
     @@index([projectId])
+    @@index([quotationId])
 }
 
 model PurchaseOrderItem {

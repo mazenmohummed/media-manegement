@@ -1,89 +1,141 @@
-import { NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
-import { getServerSession } from "next-auth/next";
-import { authOptions } from "@/lib/authOptions";
+import { NextResponse } from 'next/server';
+import { PrismaClient, InvoiceStatus, PaymentAllocationStatus } from '@prisma/client';
 
-export async function POST(req: Request) {
-  const session = await getServerSession(authOptions);
-  
-  if (!session?.user?.agencyId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+const prisma = new PrismaClient();
 
+// GET: List all payments for an agency
+export async function GET(request: Request) {
   try {
-    const { amount, method, datePaid, clientId, projectId, description } = await req.json();
+    const { searchParams } = new URL(request.url);
+    const agencyId = searchParams.get('agencyId');
 
-    if (!amount || amount <= 0 || !clientId || !projectId) {
-      return NextResponse.json({ error: "Missing required transactional fields" }, { status: 400 });
+    if (!agencyId) {
+      return NextResponse.json({ error: 'agencyId is required' }, { status: 400 });
     }
 
-    // Run as an atomic transaction to avoid race conditions or sequential number collisions
-    const result = await prisma.$transaction(async (tx) => {
-      
-      // 1. Verify the invoice exists and belongs to this workspace
-      const project = await tx.project.findUnique({
-        where: { id: projectId, agencyId: session.user.agencyId },
-        include: { payments: true }
-      });
-
-      if (!project) throw new Error("Invoice record not found in workspace");
-
-      // 2. Generate an auto-incremented sequential Voucher reference code
-      const currentYear = new Date(datePaid).getFullYear();
-      
-      // Count existing transactions for this agency during the target year
-      const paymentCount = await tx.payment.count({
-        where: {
-          agencyId: session.user.agencyId,
-          datePaid: {
-            gte: new Date(`${currentYear}-01-01T00:00:00.000Z`),
-            lte: new Date(`${currentYear}-12-31T23:59:59.999Z`),
-          }
-        }
-      });
-
-      // Construct formatted pad string sequence e.g., TRX-2026-0001
-      const generatedPaymentNo = `TRX-${currentYear}-${String(paymentCount + 1).padStart(4, "0")}`;
-
-      // 3. Compute aggregate balance tracking
-      const previousPaidSum = project.payments.reduce((sum, p) => sum + p.amount, 0);
-      const totalPaidSoFar = previousPaidSum + parseFloat(amount);
-      const invoiceTotalValue = project.totalValue;
-
-      // 4. Determine the dynamic billing status transition logic
-      let updatedStatus: "PAID" | "PARTIALLY_PAID" | "SENT" = "SENT";
-      if (totalPaidSoFar >= invoiceTotalValue) {
-        updatedStatus = "PAID";
-      } else if (totalPaidSoFar > 0) {
-        updatedStatus = "PARTIALLY_PAID";
-      }
-
-      // 5. Record the secure payment entry with the assigned reference string
-      const newPayment = await tx.payment.create({
-        data: {
-          paymentNo: generatedPaymentNo, // 💡 Assigned serial value here
-          amount: parseFloat(amount),
-          method,
-          datePaid: new Date(datePaid),
-          clientId,
-          projectId,
-          agencyId: session.user.agencyId,
-          description: description || `Payment statement capture for ${project.projectName}`
-        }
-      });
-
-      // 6. Commit status changes directly back onto the project ledger entry
-      await tx.project.update({
-        where: { id: projectId },
-        data: { invoiceStatus: updatedStatus }
-      });
-
-      return newPayment;
+    const payments = await prisma.payment.findMany({
+      where: { agencyId },
+      include: {
+        client: { select: { id: true, clientName: true } },
+        allocations: {
+          include: {
+            invoice: { select: { id: true, invoiceNo: true, totalAmount: true } },
+          },
+        },
+      },
+      orderBy: { datePaid: 'desc' },
     });
 
-    return NextResponse.json(result);
+    return NextResponse.json(payments);
   } catch (error: any) {
-    console.error("[INVOICE_POST_ERR]", error.message);
-    return NextResponse.json({ error: error.message || "Internal System Sync Error" }, { status: 500 });
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}
+
+// POST: Record a manual payment and allocate against one or more invoices
+export async function POST(request: Request) {
+  try {
+    const body = await request.json();
+    const {
+      agencyId,
+      clientId,
+      amount,
+      currency = 'EGP',
+      method = 'CASH',
+      datePaid,
+      referenceNo,
+      description,
+      allocations, // Array of { invoiceId: string, amount: number }
+    } = body;
+
+    if (!agencyId || !clientId || !amount || !datePaid) {
+      return NextResponse.json(
+        { error: 'Missing required fields: agencyId, clientId, amount, datePaid' },
+        { status: 400 }
+      );
+    }
+
+    // Execute within a transaction to maintain atomicity and balance integrity
+    const result = await prisma.$transaction(async (tx) => {
+      let totalAllocated = 0;
+      const parsedAllocations = allocations || [];
+
+      // Validate allocations and calculate total allocated amount
+      for (const alloc of parsedAllocations) {
+        totalAllocated += alloc.amount;
+      }
+
+      if (totalAllocated > amount) {
+        throw new Error('Total allocated amount cannot exceed the total payment amount.');
+      }
+
+      const unappliedAmount = amount - totalAllocated;
+
+      // 1. Create the Payment record
+      const payment = await tx.payment.create({
+        data: {
+          agencyId,
+          clientId,
+          amount,
+          unappliedAmount,
+          currency,
+          method,
+          datePaid: new Date(datePaid),
+          referenceNo,
+          description,
+        },
+      });
+
+      // 2. Process each allocation and update target invoices
+      for (const alloc of parsedAllocations) {
+        const invoice = await tx.clientInvoice.findUnique({
+          where: { id: alloc.invoiceId },
+        });
+
+        if (!invoice) {
+          throw new Error(`Invoice with ID ${alloc.invoiceId} not found.`);
+        }
+
+        const newAmountPaid = invoice.amountPaid + alloc.amount;
+        const newBalanceDue = Math.max(0, invoice.totalAmount - newAmountPaid);
+        
+        let newStatus: InvoiceStatus = invoice.status;
+        if (newBalanceDue === 0) {
+          newStatus = InvoiceStatus.PAID;
+        } else if (newAmountPaid > 0) {
+          newStatus = InvoiceStatus.PARTIALLY_PAID;
+        }
+
+        // Create the payment allocation record
+        await tx.paymentAllocation.create({
+          data: {
+            agencyId,
+            clientId,
+            paymentId: payment.id,
+            invoiceId: alloc.invoiceId,
+            amount: alloc.amount,
+            currency,
+            status: PaymentAllocationStatus.APPLIED,
+          },
+        });
+
+        // Update the invoice amounts and status
+        await tx.clientInvoice.update({
+          where: { id: alloc.invoiceId },
+          data: {
+            amountPaid: newAmountPaid,
+            balanceDue: newBalanceDue,
+            status: newStatus,
+            paidAt: newStatus === InvoiceStatus.PAID ? new Date() : invoice.paidAt,
+          },
+        });
+      }
+
+      return payment;
+    });
+
+    return NextResponse.json(result, { status: 201 });
+  } catch (error: any) {
+    return NextResponse.json({ error: error.message }, { status: 400 });
   }
 }

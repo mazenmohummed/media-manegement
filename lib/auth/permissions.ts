@@ -17,6 +17,11 @@ export const ACTION_PERMISSIONS = {
   "department:update": ["SUPERADMIN", "ADMIN"],
   "department:delete": ["SUPERADMIN", "ADMIN"],
 
+  // Task Management
+  "task:read": ["SUPERADMIN", "ADMIN", "OPERATOR", "TEAMLEADER", "CREATIVE", "FINANCE", "CLIENT"],
+  "task:update": ["SUPERADMIN", "ADMIN", "OPERATOR", "TEAMLEADER", "CREATIVE"],
+  "task:delete": ["SUPERADMIN", "ADMIN"],
+
   // Financials & Payouts
   "payout:create": ["SUPERADMIN", "ADMIN", "FINANCE"],
   "payout:read:all": ["SUPERADMIN", "ADMIN", "FINANCE"],
@@ -31,8 +36,13 @@ export const ACTION_PERMISSIONS = {
   // Client Portal & Projects
   "project:create": ["SUPERADMIN", "ADMIN", "OPERATOR"],
   "project:read": ["SUPERADMIN", "ADMIN", "OPERATOR", "TEAMLEADER", "CREATIVE", "FINANCE", "CLIENT"],
-} as const;
 
+  // Task Categories
+  "taskCategory:read": ["SUPERADMIN", "ADMIN", "OPERATOR", "TEAMLEADER", "CREATIVE", "FINANCE"],
+  "taskCategory:create": ["SUPERADMIN", "ADMIN", "OPERATOR"],
+  "taskCategory:update": ["SUPERADMIN", "ADMIN"],
+  "taskCategory:delete": ["SUPERADMIN", "ADMIN"],
+} as const;
 export type Action = keyof typeof ACTION_PERMISSIONS;
 
 // ── 2. SUBSCRIPTION FEATURE LIMITS & GATES ──────────────────────────────────

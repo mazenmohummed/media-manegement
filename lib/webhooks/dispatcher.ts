@@ -5,7 +5,10 @@ export type WebhookEventType =
   | "task.completed"
   | "invoice.paid"
   | "user.created"
-  | "payout.processed";
+  | "payout.processed"
+  | "task.updated"
+  | "notification.created" 
+  | "invoice.created";
 
 interface DispatchParams {
   agencyId: string;

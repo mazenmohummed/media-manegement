@@ -1,364 +1,258 @@
-"use client";
+import { db } from "@/lib/db";
+import { notFound, redirect } from "next/navigation";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/authOptions";
+import Link from "next/link";
+import { ArrowLeft, Plus, Briefcase } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { ProjectStatus } from "@prisma/client";
+import { TemplateProjectStarter } from "@/components/projects/template-project-starter";
 
-import React, { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import { useSession } from "next-auth/react";
-import { ProjectIdentitySidebar } from "@/components/main/projects/ProjectIdentitySidebar";
-import { 
-  TaskConfigCard, 
-  TaskInput, 
-  RentalInput, 
-  TodoInput, 
-  TaskEmployee 
-} from "@/components/main/projects/TaskConfigCard";
-
-interface Client {
-  id: string;
-  clientName: string;
-  clientNo?: string;
+interface PageProps {
+  searchParams: Promise<{ template?: string }>;
 }
 
-function OSMLocationSearch({ onSearch, defaultValue }: { onSearch: (val: string) => void, defaultValue?: string }) {
-  const [val, setVal] = useState(defaultValue || "");
-  return (
-    <div className="flex gap-2">
-      <input
-        type="text"
-        placeholder="Search location (e.g. Selena Bay)..."
-        value={val}
-        onChange={(e) => setVal(e.target.value)}
-        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); onSearch(val); } }}
-        className="flex-1 bg-transparent text-xs font-bold outline-none border-b border-emerald-600/20 pb-1"
-      />
-      <button type="button" onClick={() => onSearch(val)} className="text-[9px] bg-emerald-600 text-white px-2 py-1 rounded hover:bg-emerald-700 transition-colors">
-        SEARCH
-      </button>
-    </div>
-  );
-}
+export default async function NewProjectPage({ searchParams }: PageProps) {
+  const session = await getServerSession(authOptions);
+  if (!session?.user?.agencyId) return notFound();
 
-const DEPARTMENTS = ["Consultation", "Video", "Photo", "Design", "Sponsor", "Copy Writer", "Content preparation"];
+  const agencyId = session.user.agencyId;
+  const { template: preselectedTemplateId } = await searchParams;
 
-export default function NewProjectPage() {
-  const router = useRouter();
-  const { data: session, status } = useSession();
-  
-  const [clients, setClients] = useState<Client[]>([]);
-  const [dbEmployees, setDbEmployees] = useState<{ id: string; name: string; userType: string; role: string; verifiedSkills: string[]; }[]>([]);
-  const [dbAssets, setDbAssets] = useState<{ id: string; assetName: string; category: string; availabilityStatus: string; }[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [projectName, setProjectName] = useState("");
-  const [clientId, setClientId] = useState("");
-  const [projectStory, setProjectStory] = useState("");
-  const [cloudLink, setCloudLink] = useState(""); 
-  const [selectedTasks, setSelectedTasks] = useState<Record<string, TaskInput>>({});
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [conflicts, setConflicts] = useState<Record<string, { employees: string[], assets: string[] }>>({});
-
-  const validateAvailability = async (dept: string, task: TaskInput) => {
-    if (!task.startDate || !task.endDate) return;
-    try {
-      const res = await fetch("/api/projects/validate-availability", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          startDate: combineDateTime(task.startDate, task.startTime),
-          endDate: combineDateTime(task.endDate, task.endTime),
-          employeeIds: task.employeeIds.map(e => e.id),
-          assetIds: task.assetIds
-        })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setConflicts(prev => ({ ...prev, [dept]: data }));
-      }
-    } catch (err) {
-      console.error("Validation failed:", err);
-    }
-  };
-
-  const addRental = (dept: string) => {
-    const newRental: RentalInput = { id: Date.now().toString(), name: "", cost: "0", category: "EQUIPMENT", description: "", status: "PENDING" };
-    const currentRentals = selectedTasks[dept].rentals || [];
-    updateTaskField(dept, "rentals", [...currentRentals, newRental]);
-  };
-
-  const toggleTask = (dept: string) => {
-    setSelectedTasks((prev) => {
-      const next = { ...prev };
-      if (next[dept]) {
-        delete next[dept];
-      } else {
-        next[dept] = {
-          startDate: "",
-          endDate: "",
-          startTime: "09:00",
-          endTime: "18:00",
-          employeeIds: [],
-          assetIds: [],
-          grossRevenue: "0",
-          margin: "30",
-          notes: "",
-          rentals: [],
-          todos: [],
-          // ── compensation defaults ──
-          isOutOfWorkingHours: false,
-          compensationStrategy: "NONE",
-          compensationAmount: "",
-          deductionStrategy: "NONE",
-        };
-      }
-      return next;
-    });
-  };
-
-  const updateTaskField = (dept: string, field: keyof TaskInput, value: any) => {
-    setSelectedTasks(prev => {
-      const updatedTask = { ...prev[dept], [field]: value };
-      if (["startDate", "endDate", "employeeIds", "assetIds"].includes(field)) {
-        validateAvailability(dept, updatedTask);
-      }
-      return { ...prev, [dept]: updatedTask };
-    });
-  };
-
-  const removeRental = (dept: string, rentalId: string) => {
-    const updatedRentals = selectedTasks[dept].rentals.filter(r => r.id !== rentalId);
-    updateTaskField(dept, "rentals", updatedRentals);
-  };
-
-  const updateRentalField = (dept: string, rentalId: string, field: keyof RentalInput, value: string) => {
-    const updatedRentals = selectedTasks[dept].rentals.map(r => r.id === rentalId ? { ...r, [field]: value } : r);
-    updateTaskField(dept, "rentals", updatedRentals);
-  };
-
-  useEffect(() => {
-    Object.entries(selectedTasks).forEach(([dept, task]) => {
-      if (task.startDate && task.endDate) validateAvailability(dept, task);
-    });
-  }, [selectedTasks]);
-
-  useEffect(() => {
-    if (status !== "authenticated" || !session?.user?.agencyId) return;
-
-    async function loadData() {
-      setLoading(true);
-      const agencyId = session!.user.agencyId;
-      try {
-        const [clientRes, employeeRes, assetRes] = await Promise.all([
-          fetch(`/api/clients?agencyId=${agencyId}`),
-          fetch(`/api/employees?agencyId=${agencyId}`),
-          fetch(`/api/assets?agencyId=${agencyId}`)
-        ]);
-        if (clientRes.ok) { const data = await clientRes.json(); setClients(Array.isArray(data) ? data : data.clients || []); }
-        if (employeeRes.ok) { const data = await employeeRes.json(); setDbEmployees(Array.isArray(data) ? data : data.employees || []); }
-        if (assetRes.ok) { const data = await assetRes.json(); setDbAssets(Array.isArray(data) ? data : data.assets || []); }
-      } catch (err) {
-        console.error("Data Fetch Error:", err);
-        setDbEmployees([]); setClients([]); setDbAssets([]);
-      } finally {
-        setLoading(false);
-      }
-    }
-    loadData();
-  }, [status, session]);
-
-  const combineDateTime = (dateStr: string, timeStr?: string) => {
-    if (!dateStr) return null;
-    const time = timeStr || "00:00";
-    const dt = new Date(`${dateStr}T${time}:00`);
-    return isNaN(dt.getTime()) ? null : dt.toISOString();
-  };
-
-  const handleUseCurrentLocation = (type: string) => {
-    if (!navigator.geolocation) return alert("Geolocation is not supported by your browser.");
-    updateTaskField(type, "isSearching", true);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const { latitude, longitude } = pos.coords;
-        setSelectedTasks(prev => ({
-          ...prev,
-          [type]: { ...prev[type], latitude, longitude, locationName: `Manual GPS Pin (${latitude.toFixed(4)}, ${longitude.toFixed(4)})`, isSearching: false }
-        }));
+  const [clients, contracts, templates, eligibleUsers] = await Promise.all([
+    db.client.findMany({
+      where: { agencyId },
+      select: { id: true, clientName: true, clientNo: true },
+      orderBy: { clientName: "asc" },
+    }),
+    db.contract.findMany({
+      where: { agencyId, status: "ACTIVE" },
+      select: { id: true, contractNo: true, name: true, clientId: true },
+      orderBy: { createdAt: "desc" },
+    }),
+    db.projectTemplate.findMany({
+      where: { agencyId },
+      select: { id: true, name: true, description: true, _count: { select: { items: true } } },
+      orderBy: { updatedAt: "desc" },
+    }),
+    db.user.findMany({
+      where: { 
+        agencyId, 
+        isActive: true,
+        role: { in: ["ADMIN", "OPERATOR"] } 
       },
-      (err) => { console.error(err); updateTaskField(type, "isSearching", false); alert("Unable to retrieve your location."); },
-      { enableHighAccuracy: true }
-    );
-  };
+      select: { id: true, name: true, role: true },
+      orderBy: { name: "asc" },
+    }),
+  ]);
 
-  const handleSearch = async (query: string, type: string) => {
-    if (!query || query.length < 3) return;
-    updateTaskField(type, "isSearching", true);
-    const coordRegex = /^(-?\d+(\.\d+)?),\s*(-?\d+(\.\d+)?)$/;
-    if (coordRegex.test(query.trim())) {
-      const [lat, lon] = query.trim().split(',').map(n => parseFloat(n.trim()));
-      setSelectedTasks(prev => ({ ...prev, [type]: { ...prev[type], latitude: lat, longitude: lon, locationName: `📍 Exact Pin: ${lat}, ${lon}`, isSearching: false } }));
-      return;
-    }
-    const plusCodeRegex = /[A-Z0-9]{4,}\+[A-Z0-9]{2,}/g;
-    let cleanQuery = query.replace(plusCodeRegex, "").trim().replace(/(after|beside|behind|امام|بجوار|خلف|بعد)/gi, "").replace(/[،,]/g, " ").trim();
-    try {
-      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(cleanQuery)}&countrycodes=eg&limit=1&addressdetails=1&accept-language=ar,en`);
-      const data = await res.json();
-      if (data && data.length > 0) {
-        const { lat, lon, display_name } = data[0];
-        setSelectedTasks(prev => ({ ...prev, [type]: { ...prev[type], latitude: parseFloat(lat), longitude: parseFloat(lon), locationName: display_name, isSearching: false } }));
-      } else {
-        updateTaskField(type, "isSearching", false);
-      }
-    } catch (err) {
-      console.error("Search Error:", err); updateTaskField(type, "isSearching", false);
-    }
-  };
+  const selectedTemplate = preselectedTemplateId
+    ? templates.find((t) => t.id === preselectedTemplateId)
+    : null;
 
-  const updateTodoDescription = (dept: string, todoId: string, description: string) => {
-    const updatedTodos = selectedTasks[dept].todos.map(t => t.id === todoId ? { ...t, description } : t);
-    updateTaskField(dept, "todos", updatedTodos);
-  };
+  async function createProject(formData: FormData) {
+    "use server";
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.agencyId) throw new Error("Unauthorized");
 
-  const addTodo = (dept: string) => {
-    const newTodo = { id: Date.now().toString(), text: "" };
-    updateTaskField(dept, "todos", [...(selectedTasks[dept].todos || []), newTodo]);
-  };
+    const agencyId = session.user.agencyId;
+    const name = formData.get("name") as string;
+    const projectName = formData.get("projectName") as string;
+    const clientId = formData.get("clientId") as string;
+    const contractId = formData.get("contractId") as string;
+    const assignedUserId = formData.get("assignedUserId") as string;
+    const currency = (formData.get("currency") as string) || "EGP";
+    const totalValue = parseFloat(formData.get("totalValue") as string) || 0;
+    const targetDeadline = formData.get("targetDeadline") as string;
+    const projectStory = formData.get("projectStory") as string;
+    const status = (formData.get("status") as ProjectStatus) || ProjectStatus.DRAFT;
 
-  const removeTodo = (dept: string, todoId: string) => {
-    updateTaskField(dept, "todos", selectedTasks[dept].todos.filter(t => t.id !== todoId));
-  };
+    if (!name || !clientId) throw new Error("Project name and client are required");
 
-  const updateTodoText = (dept: string, todoId: string, text: string) => {
-    updateTaskField(dept, "todos", selectedTasks[dept].todos.map(t => t.id === todoId ? { ...t, text } : t));
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!session?.user?.agencyId) return alert("Session expired.");
-    if (!clientId || !projectName) return alert("Missing required fields.");
-
-    const hasConflicts = Object.values(conflicts).some(c => c.employees.length > 0 || c.assets.length > 0);
-    if (hasConflicts) return alert("Cannot initialize production: scheduling conflicts detected. Please resolve them first.");
-
-    setIsSubmitting(true);
-
-    const formattedTasks = Object.entries(selectedTasks).map(([type, detail]) => ({
-      taskType: type,
-      startDate: combineDateTime(detail.startDate, detail.startTime),
-      endDate:   combineDateTime(detail.endDate,   detail.endTime),
-
-      // ── Financials ────────────────────────────────────────────────────────
-      internalCost: parseFloat(detail.grossRevenue) || 0,
-      grossRevenue: detail.grossRevenue, // send both so API fallback always resolves
-      margin:       parseFloat(detail.margin) || 0,
-      description:  detail.notes,
-
-      // ── Team & assets ─────────────────────────────────────────────────────
-      employeeIds: detail.employeeIds, // [{ id, salary }] — API reads this for freelancer pay
-      assigneeIds: detail.employeeIds, // duplicate key the API also checks
-      assetIds:    detail.assetIds,
-
-      // ── Location ──────────────────────────────────────────────────────────
-      latitude:     detail.latitude     ?? null,
-      longitude:    detail.longitude    ?? null,
-      locationName: detail.locationName ?? null,
-      radius: 200,
-
-      // ── Out-of-hours compensation — THE FIELDS THAT WERE MISSING ─────────
-      isOutOfWorkingHours:  detail.isOutOfWorkingHours  ?? false,
-      compensationStrategy: detail.compensationStrategy ?? "NONE",
-      compensationAmount:   detail.compensationAmount   ?? "0",
-      deductionStrategy:    detail.deductionStrategy    ?? "NONE",
-
-      // ── Expenses & todos ──────────────────────────────────────────────────
-      rentals: detail.rentals.map(r => ({
-        id:          r.id,
-        name:        r.name,
-        itemName:    r.name,
-        cost:        r.cost,
-        category:    r.category,
-        description: r.description,
-      })),
-      todos: (detail.todos || []).map((t, index) => ({
-        text:        t.text,
-        description: t.description || "",
-        order:       index,
-        agencyId:    session!.user.agencyId,
-        priority:    "MEDIUM",
-      })),
-
-      status: "PENDING",
-    }));
-
-    const payload = { projectName, clientId, projectStory, cloudLink, tasks: formattedTasks };
-
-    try {
-      const response = await fetch("/api/projects", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+    if (assignedUserId) {
+      const userCheck = await db.user.findFirst({
+        where: { id: assignedUserId, agencyId, role: { in: ["ADMIN", "OPERATOR"] } },
       });
-
-      if (response.ok) {
-        router.push("/dashboard/projects");
-      } else {
-        const errData = await response.json();
-        alert(`Failed to save: ${errData.error}`);
-        setIsSubmitting(false);
-      }
-    } catch (err) {
-      console.error("Submission error:", err);
-      setIsSubmitting(false);
+      if (!userCheck) throw new Error("Invalid assignee selected");
     }
-  };
 
-  if (loading) return <div className="p-20 text-center font-black uppercase italic animate-pulse">Syncing Production Environment...</div>;
+    const projectCount = await db.project.count({ where: { agencyId } });
+    const projectNo = `PRJ-${new Date().getFullYear()}-${String(projectCount + 1).padStart(4, "0")}`;
+
+    const project = await db.project.create({
+      data: {
+        projectNo,
+        name,
+        projectName: projectName || name,
+        status,
+        currency,
+        totalValue,
+        agencyId,
+        clientId,
+        contractId: contractId || undefined,
+        userId: assignedUserId || undefined,
+        targetDeadline: targetDeadline ? new Date(targetDeadline) : undefined,
+        projectStory: projectStory || undefined,
+      },
+    });
+
+    redirect(`/dashboard/projects/${project.id}`);
+  }
 
   return (
-    <div className="max-w-7xl mx-auto p-8 bg-background min-h-screen space-y-10">
-      <header>
-        <h1 className="text-4xl font-black uppercase italic underline decoration-blue-600 decoration-4">New Project</h1>
-        <p className="text-muted-foreground font-medium uppercase text-xs tracking-widest mt-2">Prisma Multi-Asset Production</p>
-      </header>
+    <div className="max-w-3xl mx-auto p-6 space-y-6">
+      <Link href="/dashboard/projects" className="inline-flex items-center gap-2 text-sm text-zinc-400 hover:text-zinc-200 transition-colors">
+        <ArrowLeft className="w-4 h-4" /> Back to Projects
+      </Link>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
-        <ProjectIdentitySidebar 
-          clients={clients}
-          clientId={clientId}
-          setClientId={setClientId}
-          projectName={projectName}
-          setProjectName={setProjectName}
-          projectStory={projectStory}
-          setProjectStory={setProjectStory}
-          cloudLink={cloudLink}
-          setCloudLink={setCloudLink}
-          departments={DEPARTMENTS}
-          selectedTasks={selectedTasks}
-          toggleTask={toggleTask}
-          handleSubmit={handleSubmit}
-          isSubmitting={isSubmitting}
-        />
-
-        <div className="lg:col-span-8 space-y-6">
-          {Object.entries(selectedTasks).map(([type, detail]) => (
-            <TaskConfigCard
-              key={type}
-              type={type}
-              detail={detail}
-              dbEmployees={dbEmployees}
-              dbAssets={dbAssets}
-              conflicts={conflicts[type]} 
-              updateTaskField={updateTaskField}
-              addRental={addRental}
-              removeRental={removeRental}
-              updateRentalField={updateRentalField}
-              addTodo={addTodo}
-              removeTodo={removeTodo}
-              updateTodoText={updateTodoText}
-              updateTodoDescription={updateTodoDescription}
-              handleUseCurrentLocation={handleUseCurrentLocation}
-              handleSearch={handleSearch}
-            />
-          ))}
-        </div>
+      <div>
+        <h1 className="text-3xl font-bold text-zinc-100">New Project</h1>
+        <p className="text-sm text-zinc-400 mt-1">
+          {selectedTemplate
+            ? "Quick-start from a template, or switch to manual setup."
+            : "Create a one-off project manually, or accelerate with a template."}
+        </p>
       </div>
+
+      {/* Template Mode */}
+      {selectedTemplate && (
+        <TemplateProjectStarter
+          templateId={selectedTemplate.id}
+          templateName={selectedTemplate.name}
+          clients={clients}
+        />
+      )}
+
+      {/* Template Selector (when not preselected) */}
+      {!selectedTemplate && templates.length > 0 && (
+        <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 space-y-3">
+          <h2 className="text-sm font-semibold text-zinc-200">Start from Template</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {templates.slice(0, 4).map((t) => (
+              <Link
+                key={t.id}
+                href={`/dashboard/projects/new?template=${t.id}`}
+                className="bg-zinc-950 border border-zinc-800 rounded-lg p-3 hover:border-purple-500/30 hover:bg-zinc-800/40 transition-all group"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium text-zinc-200 group-hover:text-purple-300 transition-colors">{t.name}</span>
+                  <span className="text-[10px] text-zinc-500 bg-zinc-900 px-1.5 py-0.5 rounded">{t._count.items} items</span>
+                </div>
+                {t.description && <p className="text-[10px] text-zinc-500 mt-1 line-clamp-1">{t.description}</p>}
+              </Link>
+            ))}
+            <Link href="/dashboard/templates" className="flex items-center justify-center bg-zinc-950 border border-zinc-800 border-dashed rounded-lg p-3 text-xs text-zinc-500 hover:text-zinc-300 hover:border-zinc-600 transition-all">
+              <Plus className="w-3.5 h-3.5 mr-1.5" /> Manage Templates
+            </Link>
+          </div>
+        </div>
+      )}
+
+      {/* Manual Form */}
+      {!selectedTemplate && (
+        <form action={createProject} className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 space-y-5">
+          <h2 className="text-sm font-semibold text-zinc-200 flex items-center gap-2 border-b border-zinc-800 pb-3">
+            <Briefcase className="w-4 h-4 text-blue-400" />
+            Manual Project Setup
+          </h2>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-zinc-400">Project Name *</label>
+              <Input name="name" required placeholder="e.g. One-off Event Coverage" className="bg-zinc-950 border-zinc-800 text-zinc-100 focus-visible:ring-purple-500" />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-zinc-400">Display Name</label>
+              <Input name="projectName" placeholder="Optional public-facing name" className="bg-zinc-950 border-zinc-800 text-zinc-100 focus-visible:ring-purple-500" />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-zinc-400">Client *</label>
+              <select name="clientId" required className="w-full bg-zinc-950 border border-zinc-800 rounded-md text-sm text-zinc-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500 appearance-none">
+                <option value="">Select client...</option>
+                {clients.map((c) => (
+                  <option key={c.id} value={c.id}>{c.clientName}{c.clientNo ? ` (${c.clientNo})` : ""}</option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-zinc-400">Linked Contract</label>
+              <select name="contractId" className="w-full bg-zinc-950 border border-zinc-800 rounded-md text-sm text-zinc-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500 appearance-none">
+                <option value="">No contract (one-off)</option>
+                {contracts.map((c) => (
+                  <option key={c.id} value={c.id}>{c.contractNo} — {c.name}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-zinc-400">Assign Project Manager (Admin/Operator)</label>
+              <select 
+                name="assignedUserId" 
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-md text-sm text-zinc-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500 appearance-none"
+              >
+                <option value="">Unassigned</option>
+                {eligibleUsers.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.name} ({u.role})
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-zinc-400">Target Deadline</label>
+              <Input name="targetDeadline" type="date" className="bg-zinc-950 border-zinc-800 text-zinc-100 focus-visible:ring-purple-500" />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-zinc-400">Total Value</label>
+              <Input name="totalValue" type="number" min="0" step="0.01" defaultValue="0" className="bg-zinc-950 border-zinc-800 text-zinc-100 focus-visible:ring-purple-500" />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-zinc-400">Currency</label>
+              <select name="currency" defaultValue="EGP" className="w-full bg-zinc-950 border border-zinc-800 rounded-md text-sm text-zinc-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500 appearance-none">
+                <option value="EGP">EGP</option>
+                <option value="USD">USD</option>
+                <option value="EUR">EUR</option>
+                <option value="GBP">GBP</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-zinc-400">Status</label>
+            <div className="flex gap-2">
+              {[ProjectStatus.DRAFT, ProjectStatus.ACTIVE].map((s) => (
+                <label key={s} className="flex items-center gap-2 px-3 py-2 rounded-md border border-zinc-800 bg-zinc-950 cursor-pointer hover:border-zinc-700 transition-colors">
+                  <input type="radio" name="status" value={s} defaultChecked={s === ProjectStatus.DRAFT} className="accent-purple-500" />
+                  <span className="text-xs text-zinc-300 font-medium">{s}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-zinc-400">Project Story / Brief</label>
+            <textarea name="projectStory" rows={3} placeholder="High-level objectives, deliverables, or creative direction..." className="w-full bg-zinc-950 border border-zinc-800 rounded-md text-sm text-zinc-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500 placeholder:text-zinc-600 resize-none" />
+          </div>
+
+          <div className="pt-4 border-t border-zinc-800 flex items-center justify-end gap-3">
+            <Link href="/dashboard/projects">
+              <Button type="button" variant="outline" className="border-zinc-700 text-zinc-300 hover:bg-zinc-800">Cancel</Button>
+            </Link>
+            <Button type="submit" className="bg-purple-600 hover:bg-purple-500 text-white gap-1.5">
+              <Plus className="w-4 h-4" /> Create Empty Project
+            </Button>
+          </div>
+        </form>
+      )}
     </div>
   );
 }

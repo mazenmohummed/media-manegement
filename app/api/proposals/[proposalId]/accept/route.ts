@@ -1,4 +1,3 @@
-// app/api/proposals/[proposalId]/accept/route.ts
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getServerSession } from "next-auth";
@@ -7,6 +6,7 @@ import {
   ProposalStatus,
   ContractStatus,
   ProjectStatus,
+  TaskStatus,
   AuditAction,
 } from "@prisma/client";
 
@@ -24,6 +24,8 @@ export async function POST(request: Request, { params }: RouteParams) {
     }
 
     const { proposalId } = await params;
+    const body = await request.json().catch(() => ({}));
+    const { templateId } = body;
 
     const proposal = await db.proposal.findUnique({
       where: { id: proposalId },
@@ -42,7 +44,7 @@ export async function POST(request: Request, { params }: RouteParams) {
               },
             },
             client: { select: { id: true } },
-            user: { select: { id: true } }, // ← carry over assigned employee
+            user: { select: { id: true } },
           },
         },
       },
@@ -100,6 +102,37 @@ export async function POST(request: Request, { params }: RouteParams) {
       );
     }
 
+    // ── Pre-fetch template (outside tx for validation) ───────────────
+    let template: {
+      items: {
+        id: string;
+        milestoneName: string;
+        taskTitle: string;
+        taskType: string | null;
+        description: string | null;
+        estimatedHours: number;
+        order: number;
+        categoryId: string | null;
+      }[];
+    } | null = null;
+
+    if (templateId) {
+      template = await db.projectTemplate.findUnique({
+        where: { id: templateId, agencyId },
+        include: {
+          items: {
+            orderBy: { order: "asc" },
+          },
+        },
+      });
+      if (!template) {
+        return NextResponse.json(
+          { error: "Selected template not found" },
+          { status: 404 }
+        );
+      }
+    }
+
     const contractCount = await db.contract.count({ where: { agencyId } });
     const contractNo = `CNT-${new Date().getFullYear()}-${String(
       contractCount + 1
@@ -107,7 +140,7 @@ export async function POST(request: Request, { params }: RouteParams) {
 
     // ── Atomic transaction ───────────────────────────────────────────
     const result = await db.$transaction(async (tx) => {
-      // 1. Create Contract (with assigned employee carried over)
+      // 1. Create Contract
       const newContract = await tx.contract.create({
         data: {
           contractNo,
@@ -118,7 +151,7 @@ export async function POST(request: Request, { params }: RouteParams) {
           termsUrl: proposal.scope ?? undefined,
           agencyId,
           clientId,
-          userId: proposal.opportunity.userId ?? proposal.userId ?? undefined, // ← NEW
+          userId: proposal.opportunity.userId ?? proposal.userId ?? undefined,
         },
       });
 
@@ -129,7 +162,7 @@ export async function POST(request: Request, { params }: RouteParams) {
           status: ProposalStatus.ACCEPTED,
           contractId: newContract.id,
           clientId,
-          userId: proposal.opportunity.userId ?? proposal.userId ?? undefined, // ← NEW
+          userId: proposal.opportunity.userId ?? proposal.userId ?? undefined,
         },
       });
 
@@ -147,15 +180,73 @@ export async function POST(request: Request, { params }: RouteParams) {
         },
       });
 
-      // 4. Audit log
+      // 4. Instantiate Milestones + Tasks from Template
+      const createdMilestones: { id: string; name: string }[] = [];
+      const createdTasks: { id: string; title: string }[] = [];
+
+      if (template) {
+        const milestoneMap = new Map<string, string>();
+
+        for (const item of template.items) {
+          let milestoneId: string | undefined;
+
+          // Group by milestone name — create once, reuse ID
+          if (item.milestoneName?.trim()) {
+            const key = item.milestoneName.trim();
+            if (!milestoneMap.has(key)) {
+              const milestone = await tx.milestone.create({
+                data: {
+                  name: key,
+                  projectId: newProject.id,
+                  agencyId,
+                  order: item.order,
+                  budget: 0,
+                  currency: proposal.currency,
+                },
+              });
+              milestoneMap.set(key, milestone.id);
+              createdMilestones.push({ id: milestone.id, name: key });
+            }
+            milestoneId = milestoneMap.get(key);
+          }
+
+          // Create task if title exists
+          if (item.taskTitle?.trim()) {
+            const task = await tx.task.create({
+              data: {
+                taskType: item.taskType?.trim() || "General",
+                title: item.taskTitle.trim(),
+                description: item.description?.trim() || null,
+                estimatedHours: item.estimatedHours || 0,
+                status: TaskStatus.PENDING,
+                projectId: newProject.id,
+                agencyId,
+                milestoneId,
+                categoryId: item.categoryId || undefined,
+              },
+            });
+            createdTasks.push({ id: task.id, title: item.taskTitle.trim() });
+          }
+        }
+      }
+
+      // 5. Audit log
       await tx.auditLog.create({
         data: {
           action: AuditAction.CREATE,
           entityType: "Contract & Project",
           entityId: newContract.id,
-          message: `Accepted proposal ${
-            proposal.proposalNo || proposal.id
-          } generated Contract ${contractNo} and Project ${newProject.id}`,
+          message: template
+            ? `Accepted proposal ${
+                proposal.proposalNo || proposal.id
+              } generated Contract ${contractNo}, Project ${
+                newProject.id
+              }, ${createdMilestones.length} milestones, ${
+                createdTasks.length
+              } tasks from template "${templateId}"`
+            : `Accepted proposal ${
+                proposal.proposalNo || proposal.id
+              } generated Contract ${contractNo} and Project ${newProject.id}`,
           agencyId,
         },
       });
@@ -164,6 +255,8 @@ export async function POST(request: Request, { params }: RouteParams) {
         contract: newContract,
         project: newProject,
         proposal: updatedProposal,
+        milestones: createdMilestones,
+        tasks: createdTasks,
       };
     });
 

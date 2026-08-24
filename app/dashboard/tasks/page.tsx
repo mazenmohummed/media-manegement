@@ -1,340 +1,417 @@
 "use client";
 
-import React, { useState, useMemo, useEffect } from "react";
-import { Calendar, momentLocalizer, Views } from 'react-big-calendar';
-import moment from 'moment';
-import 'react-big-calendar/lib/css/react-big-calendar.css';
-import { useRouter } from "next/navigation";
+import { useEffect, useState, useCallback } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
+import {
+  Filter,
+  LayoutGrid,
+  List,
+  Plus,
+  Search,
+  Calendar,
+  Users,
+  CheckCircle2,
+  Clock,
+  AlertCircle,
+  XCircle,
+  ChevronRight,
+  Milestone,
+  Tag,
+  FolderKanban,
+} from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
-const localizer = momentLocalizer(moment);
-// Matching your exact capital-case data model formats
-const CATEGORIES = ["Consultation", "Video", "Design", "Photo", "Reals"];
-type FilterMode = "PRESET" | "MONTH" | "CUSTOM";
+interface Project {
+  id: string;
+  name: string;
+  projectName: string;
+}
 
-export default function TaskManagementPage() {
-  const router = useRouter();
-  const [tasks, setTasks] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  
-  // Updated to match your active MongoDB record group parameter layout
-  const [agencyId] = useState("cmqv7pkzo0000xmkk0u7229sf");
+interface Task {
+  id: string;
+  taskNo: string | null;
+  title: string | null;
+  description: string | null;
+  status: string;
+  priority: string;
+  progress: number;
+  dueDate: string | null;
+  startDate: string | null;
+  endDate: string | null;
+  completedAt: string | null;
+  milestoneId: string | null;
+  milestone: { id: string; name: string; order: number } | null;
+  project: Project | null;
+  assignees: { id: string; name: string; avatarUrl: string | null }[];
+  category: { id: string; name: string } | null;
+  _count: { comments: number; todos: number };
+}
 
-  // --- FILTERS STATE ---
-  const [selectedCats, setSelectedCats] = useState<string[]>([]);
-  const [filterMode, setFilterMode] = useState<FilterMode>("PRESET");
-  const [activePreset, setActivePreset] = useState("ALL");
-  const [selectedMonth, setSelectedMonth] = useState<string>(new Date().getMonth().toString());
-  const [dateRange, setDateRange] = useState({ start: "", end: "" });
-  const [generalSearch, setGeneralSearch] = useState("");
-
-  // --- CALENDAR SPECIFIC STATE ---
-  const [view, setView] = useState<any>(Views.MONTH);
-  const [date, setDate] = useState(new Date());
-
-  // --- HANDLERS ---
-  const handleNavigate = (newDate: Date) => setDate(newDate);
-  const handleViewChange = (newView: any) => setView(newView);
-
-  const fetchTasks = async () => {
-    try {
-      const res = await fetch(`/api/tasks?agencyId=${agencyId}`);
-      const data = await res.json();
-      
-      if (Array.isArray(data)) {
-        setTasks(data);
-      } else if (data && Array.isArray(data.tasks)) {
-        setTasks(data.tasks);
-      } else if (data && Array.isArray(data.data)) {
-        setTasks(data.data);
-      } else {
-        console.warn("Received structured data wrapping object payload:", data);
-        setTasks([]);
-      }
-    } catch (err) { 
-      console.error("Failed to query production node registers:", err); 
-      setTasks([]);
-    } finally { 
-      setLoading(false); 
-    }
+interface MilestoneGroup {
+  milestone: {
+    id: string;
+    name: string;
+    order: number;
+    status: string;
+    progress: number;
   };
+  tasks: Task[];
+}
 
-  useEffect(() => { 
-    fetchTasks(); 
-  }, [agencyId]);
+interface ProjectGroup {
+  project: Project;
+  milestones: MilestoneGroup[];
+  ungroupedTasks: Task[];
+}
+
+type StatusConfig = Record<string, { label: string; color: string; icon: React.ReactNode }>;
+type PriorityConfig = Record<string, { label: string; color: string }>;
+
+const statusConfig: StatusConfig = {
+  PENDING: { label: "Pending", color: "bg-zinc-700 text-zinc-300 border-zinc-600", icon: <Clock className="w-3 h-3" /> },
+  ACTIVE: { label: "Active", color: "bg-blue-950/40 text-blue-400 border-blue-800", icon: <Clock className="w-3 h-3" /> },
+  IN_REVIEW: { label: "In Review", color: "bg-amber-950/40 text-amber-400 border-amber-800", icon: <AlertCircle className="w-3 h-3" /> },
+  COMPLETED: { label: "Completed", color: "bg-emerald-950/40 text-emerald-400 border-emerald-800", icon: <CheckCircle2 className="w-3 h-3" /> },
+  CANCELLED: { label: "Cancelled", color: "bg-red-950/40 text-red-400 border-red-800", icon: <XCircle className="w-3 h-3" /> },
+};
+
+const priorityConfig: PriorityConfig = {
+  LOW: { label: "Low", color: "bg-zinc-800 text-zinc-400 border-zinc-700" },
+  MEDIUM: { label: "Medium", color: "bg-blue-950/30 text-blue-400 border-blue-800" },
+  HIGH: { label: "High", color: "bg-orange-950/30 text-orange-400 border-orange-800" },
+  URGENT: { label: "Urgent", color: "bg-red-950/30 text-red-400 border-red-800" },
+};
+
+export default function TasksPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const urlProjectId = searchParams.get("projectId") || "ALL";
+
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [projectGroups, setProjectGroups] = useState<ProjectGroup[]>([]);
+  const [flatProjects, setFlatProjects] = useState<Project[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [viewMode, setViewMode] = useState<"list" | "board">("board");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<string>("ALL");
+  const [priorityFilter, setPriorityFilter] = useState<string>("ALL");
+  const [milestoneFilter, setMilestoneFilter] = useState<string>("ALL");
+  const [projectFilter, setProjectFilter] = useState<string>(urlProjectId);
+
+  const fetchTasks = useCallback(async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (projectFilter && projectFilter !== "ALL") params.set("projectId", projectFilter);
+      if (statusFilter !== "ALL") params.set("status", statusFilter);
+      if (priorityFilter !== "ALL") params.set("priority", priorityFilter);
+      if (milestoneFilter !== "ALL") params.set("milestoneId", milestoneFilter);
+      if (searchQuery) params.set("q", searchQuery);
+
+      const res = await fetch(`/api/tasks?${params.toString()}`);
+      if (res.ok) {
+        const data = await res.json();
+        setTasks(data.tasks || []);
+        setProjectGroups(data.projects || []);
+        setFlatProjects(data.rawProjects || []);
+      }
+    } catch (err) {
+      console.error("Failed to load tasks:", err);
+    } finally {
+      setLoading(false);
+    }
+  }, [projectFilter, statusFilter, priorityFilter, milestoneFilter, searchQuery]);
 
   useEffect(() => {
-    if (filterMode === "MONTH") {
-      const newDate = new Date();
-      newDate.setMonth(parseInt(selectedMonth));
-      setDate(newDate);
-    }
-  }, [selectedMonth, filterMode]);
+    fetchTasks();
+  }, [fetchTasks]);
 
-  // --- FILTER ENGINE ---
-  const filteredTasks = useMemo(() => {
-    const reliableTasksArray = Array.isArray(tasks) ? tasks : [];
+  const filteredTasks = tasks.filter((t) => {
+    const q = searchQuery.toLowerCase();
+    return (
+      !q ||
+      (t.title?.toLowerCase().includes(q) ?? false) ||
+      (t.taskNo?.toLowerCase().includes(q) ?? false) ||
+      (t.description?.toLowerCase().includes(q) ?? false)
+    );
+  });
 
-    return reliableTasksArray.filter(task => {
-      // 1. Normalized Case-Insensitive Category Filter
-      const taskCat = task.taskType?.trim().toUpperCase();
-      const catMatch = selectedCats.length === 0 || 
-        selectedCats.some(c => c.toUpperCase() === taskCat);
-      
-      // 2. Search Filter matching task fields safely
-      const searchLower = generalSearch.toLowerCase().trim();
-      const searchMatch = searchLower === "" || 
-        task.project?.projectName?.toLowerCase().includes(searchLower) || 
-        task.taskType?.toLowerCase().includes(searchLower) ||
-        task.taskNo?.toLowerCase().includes(searchLower) ||
-        task.description?.toLowerCase().includes(searchLower);
-
-      // 3. Time Filter Logic
-      if (!task.startDate) return catMatch && searchMatch;
-      const taskDate = new Date(task.startDate);
-      let timeMatch = true;
-
-      if (filterMode === "PRESET") {
-        const month = taskDate.getMonth();
-        if (activePreset === "Q1") timeMatch = month >= 0 && month <= 2;
-        else if (activePreset === "Q2") timeMatch = month >= 3 && month <= 5;
-        else if (activePreset === "ALL") timeMatch = true;
-      } 
-      else if (filterMode === "MONTH") {
-        timeMatch = taskDate.getMonth() === parseInt(selectedMonth);
-      } 
-      else if (filterMode === "CUSTOM") {
-        const start = dateRange.start ? new Date(dateRange.start) : null;
-        const end = dateRange.end ? new Date(dateRange.end) : null;
-        if (start) timeMatch = timeMatch && taskDate >= start;
-        if (end) timeMatch = timeMatch && taskDate <= end;
-      }
-
-      return catMatch && searchMatch && timeMatch;
-    });
-  }, [tasks, selectedCats, generalSearch, filterMode, activePreset, selectedMonth, dateRange]);
-
-  const combinedEvents = useMemo(() => {
-    return filteredTasks.map(task => ({
-      id: task.id || task._id,
-      title: `[${task.taskNo || "TASK"}] ${task.taskType}`,
-      start: new Date(task.startDate),
-      end: task.endDate ? new Date(task.endDate) : new Date(task.startDate),
-      resource: task,
-    }));
-  }, [filteredTasks]);
-
-  if (loading) return <div className="p-20 text-center font-black animate-pulse text-xs tracking-widest">SYNCING PRODUCTION NODES...</div>;
+  // Extract unique milestone options for filter dropdown
+  const allMilestoneOptions = projectGroups.flatMap((pg) => pg.milestones.map((m) => m.milestone));
 
   return (
-    <div className="max-w-7xl mx-auto p-8 space-y-10 bg-background min-h-screen text-foreground">
-      {/* HEADER & SEARCH */}
-      <header className="flex flex-col md:flex-row justify-between items-start md:items-end border-b border-border pb-8 gap-6">
-        <div>
-          <h1 className="text-3xl font-black tracking-tight uppercase italic underline decoration-blue-600 decoration-4">Production Control</h1>
-          <p className="text-muted-foreground font-medium uppercase text-[10px] tracking-widest mt-1">Live Agency Workflow</p>
+    <div className="max-w-7xl mx-auto p-6 space-y-6">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <CheckCircle2 className="w-6 h-6 text-purple-400" />
+          <h1 className="text-2xl font-bold text-zinc-100">Tasks</h1>
         </div>
-        <input 
-          type="text" 
-          placeholder="Search Nodes..." 
-          className="bg-card border-2 border-border rounded-2xl px-5 py-3 text-xs font-bold uppercase outline-none focus:border-blue-500 w-full md:w-80"
-          value={generalSearch}
-          onChange={(e) => setGeneralSearch(e.target.value)}
-        />
-      </header>
-
-      {/* ADVANCED FILTER SECTION */}
-      <div className="bg-card border border-border p-6 rounded-[2.5rem] shadow-sm space-y-6">
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
-          <div className="space-y-3">
-            <h2 className="text-[10px] font-black text-muted-foreground uppercase tracking-[0.2em]">Filter Mode</h2>
-            <div className="flex bg-muted p-1 rounded-xl border border-border w-fit">
-              {(["PRESET", "MONTH", "CUSTOM"] as FilterMode[]).map((mode) => (
-                <button key={mode} onClick={() => setFilterMode(mode)}
-                  className={`px-4 py-2 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${filterMode === mode ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>
-                  {mode}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="space-y-3">
-            <h2 className="text-[10px] font-black text-muted-foreground uppercase tracking-[0.2em]">Selection</h2>
-            <div className="flex flex-wrap items-center gap-4">
-              {filterMode === "PRESET" && (
-                <select value={activePreset} onChange={(e) => setActivePreset(e.target.value)}
-                  className="bg-background border border-border px-4 py-2.5 rounded-xl text-[10px] font-black uppercase outline-none focus:ring-2 ring-blue-500/20 transition-all cursor-pointer">
-                  <option value="ALL">All Recorded Time</option>
-                  <option value="Q1">Q1 (Jan — Mar)</option>
-                  <option value="Q2">Q2 (Apr — Jun)</option>
-                </select>
-              )}
-              {filterMode === "MONTH" && (
-                <select value={selectedMonth} onChange={(e) => setSelectedMonth(e.target.value)}
-                  className="bg-background border border-border px-4 py-2.5 rounded-xl text-[10px] font-black uppercase outline-none focus:ring-2 ring-blue-500/20 transition-all cursor-pointer">
-                  {["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].map((m, i) => (
-                    <option key={m} value={i}>{m}</option>
-                  ))}
-                </select>
-              )}
-              {filterMode === "CUSTOM" && (
-                <div className="flex items-center gap-3">
-                  <input type="date" className="bg-background border border-border px-3 py-2 rounded-xl text-[10px] uppercase font-bold outline-none focus:ring-2 ring-blue-500/20 transition-all" onChange={(e) => setDateRange({...dateRange, start: e.target.value})} />
-                  <span className="text-muted-foreground text-[10px] font-black tracking-widest">TO</span>
-                  <input type="date" className="bg-background border border-border px-3 py-2 rounded-xl text-[10px] uppercase font-bold outline-none focus:ring-2 ring-blue-500/20 transition-all" onChange={(e) => setDateRange({...dateRange, end: e.target.value})} />
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* CATEGORY CHIPS & RESET */}
-      <div className="flex flex-wrap items-center gap-4">
-        <div className="flex flex-wrap gap-2">
-          {CATEGORIES.map(cat => (
-            <button key={cat} onClick={() => setSelectedCats(prev => prev.includes(cat) ? prev.filter(c => c !== cat) : [...prev, cat])}
-              className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all ${selectedCats.includes(cat) ? "bg-blue-600 border-blue-600 text-white shadow-md shadow-blue-500/20" : "bg-card border-border text-muted-foreground hover:border-foreground"}`}>
-              {cat}
+        <div className="flex items-center gap-2">
+          <div className="flex bg-zinc-900 border border-zinc-800 rounded-lg p-0.5">
+            <button
+              onClick={() => setViewMode("board")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                viewMode === "board" ? "bg-zinc-800 text-zinc-100" : "text-zinc-500 hover:text-zinc-300"
+              }`}
+            >
+              <LayoutGrid className="w-3.5 h-3.5" /> Board
             </button>
-          ))}
-        </div>
-        <div className="ml-auto flex items-center gap-4">
-          <span className="text-[10px] font-black text-muted-foreground uppercase bg-muted px-3 py-1 rounded-full">
-            {filteredTasks.length} Nodes Active
-          </span>
-          <button onClick={() => { setSelectedCats([]); setGeneralSearch(""); setActivePreset("ALL"); setDateRange({start:"", end:""}); }} className="text-[10px] font-black uppercase text-red-500 hover:underline">Reset System ×</button>
+            <button
+              onClick={() => setViewMode("list")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                viewMode === "list" ? "bg-zinc-800 text-zinc-100" : "text-zinc-500 hover:text-zinc-300"
+              }`}
+            >
+              <List className="w-3.5 h-3.5" /> List
+            </button>
+          </div>
+          <Link
+            href={projectFilter !== "ALL" ? `/dashboard/tasks/new?projectId=${projectFilter}` : "/dashboard/tasks/new"}
+            className="inline-flex items-center gap-2 bg-purple-600 hover:bg-purple-500 text-white font-medium px-4 py-2 rounded-lg transition-colors text-sm shadow-lg shadow-purple-950/20"
+          >
+            <Plus className="w-4 h-4" /> New Task
+          </Link>
         </div>
       </div>
 
-      {/* TASKS TABLE */}
-      <div className="bg-card border border-border rounded-[2.5rem] overflow-hidden shadow-sm">
-        <table className="w-full text-left border-collapse">
-          <thead className="bg-muted/30 text-[10px] uppercase font-black text-muted-foreground border-b border-border">
-            <tr>
-              <th className="p-6">Task Node</th>
-              <th className="p-6">Priority</th>
-              <th className="p-6">Progress</th>
-              <th className="p-6">Status</th>
-              <th className="p-6">Timeline context</th>
-              <th className="p-6">Assignee</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border">
-            {filteredTasks.length === 0 ? (
-              <tr>
-                <td colSpan={6} className="p-20 text-center text-muted-foreground font-black uppercase text-[10px]">
-                  No Nodes matching current workspace filters
-                </td>
-              </tr>
-            ) : (
-              filteredTasks.map((task) => (
-                <tr 
-                  key={task.id || task._id} 
-                  onClick={() => router.push(`/dashboard/tasks/${task.id || task._id}`)}
-                  className="hover:bg-muted/10 transition-colors group cursor-pointer"
-                >
-                  {/* 1. TASK NODE */}
-                  <td className="p-6">
-                    <div className="font-bold text-sm text-foreground">{task.taskType}</div>
-                    <div className="text-[9px] text-blue-600 font-mono font-bold uppercase tracking-tight">
-                      {task.taskNo || "NO ID"} {task.project?.projectName ? `| ${task.project.projectName}` : ""}
-                    </div>
-                  </td>
+      {/* Filters */}
+      <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 space-y-3">
+        <div className="flex flex-col lg:flex-row gap-3">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
+            <Input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search tasks by title, number, or description..."
+              className="pl-9 bg-zinc-950 border-zinc-800 text-zinc-100 focus-visible:ring-purple-500"
+            />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <select
+              value={projectFilter}
+              onChange={(e) => setProjectFilter(e.target.value)}
+              className="bg-zinc-950 border border-zinc-800 rounded-md text-sm text-zinc-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500"
+            >
+              <option value="ALL">All Projects</option>
+              {flatProjects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name || p.projectName}
+                </option>
+              ))}
+            </select>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="bg-zinc-950 border border-zinc-800 rounded-md text-sm text-zinc-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500"
+            >
+              <option value="ALL">All Statuses</option>
+              <option value="PENDING">Pending</option>
+              <option value="ACTIVE">Active</option>
+              <option value="IN_REVIEW">In Review</option>
+              <option value="COMPLETED">Completed</option>
+              <option value="CANCELLED">Cancelled</option>
+            </select>
+            <select
+              value={priorityFilter}
+              onChange={(e) => setPriorityFilter(e.target.value)}
+              className="bg-zinc-950 border border-zinc-800 rounded-md text-sm text-zinc-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500"
+            >
+              <option value="ALL">All Priorities</option>
+              <option value="LOW">Low</option>
+              <option value="MEDIUM">Medium</option>
+              <option value="HIGH">High</option>
+              <option value="URGENT">Urgent</option>
+            </select>
+            <select
+              value={milestoneFilter}
+              onChange={(e) => setMilestoneFilter(e.target.value)}
+              className="bg-zinc-950 border border-zinc-800 rounded-md text-sm text-zinc-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500"
+            >
+              <option value="ALL">All Milestones</option>
+              {allMilestoneOptions.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      </div>
 
-                  {/* 2. PRIORITY */}
-                  <td className="p-6">
-                    <span className={`text-[8px] font-black uppercase px-2 py-1 rounded-md border ${
-                      task.priority === 'URGENT' || task.priority === 'HIGH'
-                        ? "bg-red-500/10 text-red-500 border-red-500/20" 
-                        : "bg-blue-500/10 text-blue-500 border-blue-500/20"
-                    }`}>
-                      {task.priority || 'MEDIUM'}
-                    </span>
-                  </td>
+      {/* Content Rendering Structured Hierarchies */}
+      {loading ? (
+        <div className="flex items-center justify-center py-20">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-500" />
+        </div>
+      ) : filteredTasks.length === 0 ? (
+        <div className="bg-zinc-900/50 border border-dashed border-zinc-800 rounded-xl p-16 text-center">
+          <CheckCircle2 className="w-10 h-10 text-zinc-600 mx-auto mb-4" />
+          <p className="text-sm text-zinc-500 font-medium">No tasks found.</p>
+        </div>
+      ) : (
+        <div className="space-y-10">
+          {projectGroups.map((pg) => {
+            // Filter milestones and tasks based on active search/filters
+            const filteredMilestones = pg.milestones
+              .map((m) => ({
+                ...m,
+                tasks: m.tasks.filter((t) => filteredTasks.some((ft) => ft.id === t.id)),
+              }))
+              .filter((m) => m.tasks.length > 0 || milestoneFilter === "ALL");
 
-                  {/* 3. PROGRESS */}
-                  <td className="p-6">
-                    <div className="flex items-center gap-3">
-                      <div className="flex-1 min-w-[80px] bg-muted h-1.5 rounded-full overflow-hidden">
-                        <div 
-                          className={`h-full transition-all duration-500 ${
-                            task.progress === 100 ? "bg-emerald-500" : "bg-blue-600"
-                          }`} 
-                          style={{ width: `${task.progress || 0}%` }} 
-                        />
+            const filteredUngrouped = pg.ungroupedTasks.filter((t) =>
+              filteredTasks.some((ft) => ft.id === t.id)
+            );
+
+            if (filteredMilestones.length === 0 && filteredUngrouped.length === 0) return null;
+
+            return (
+              <div key={pg.project.id} className="bg-zinc-950 border border-zinc-800/80 rounded-2xl p-6 space-y-6">
+                {/* Project Header */}
+                <div className="flex items-center gap-3 pb-4 border-b border-zinc-800">
+                  <div className="p-2 bg-purple-950/40 border border-purple-800/60 rounded-lg">
+                    <FolderKanban className="w-5 h-5 text-purple-400" />
+                  </div>
+                  <h2 className="text-lg font-bold text-zinc-100">
+                    {pg.project.name || pg.project.projectName}
+                  </h2>
+                </div>
+
+                {/* Milestones Nested under Project */}
+                <div className="space-y-8 pl-2 sm:pl-4">
+                  {filteredMilestones.map((mg) => (
+                    <div key={mg.milestone.id} className="space-y-3">
+                      <div className="flex items-center gap-3">
+                        <Milestone className="w-4 h-4 text-purple-400" />
+                        <h3 className="text-sm font-semibold text-zinc-200">{mg.milestone.name}</h3>
+                        <Badge className="bg-zinc-800 text-zinc-400 border-zinc-700 text-[10px]">
+                          {mg.tasks.length} tasks
+                        </Badge>
+                        {mg.milestone.progress > 0 && (
+                          <div className="flex items-center gap-2 ml-auto">
+                            <div className="w-24 h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                              <div
+                                className="h-full bg-purple-500 rounded-full"
+                                style={{ width: `${mg.milestone.progress}%` }}
+                              />
+                            </div>
+                            <span className="text-[10px] text-zinc-500">{mg.milestone.progress}%</span>
+                          </div>
+                        )}
                       </div>
-                      <span className="text-[10px] font-black w-8">{task.progress || 0}%</span>
+
+                      {viewMode === "board" ? (
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                          {mg.tasks.map((task) => (
+                            <TaskCard key={task.id} task={task} statusConfig={statusConfig} priorityConfig={priorityConfig} />
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
+                          {mg.tasks.map((task, idx) => (
+                            <TaskRow
+                              key={task.id}
+                              task={task}
+                              statusConfig={statusConfig}
+                              priorityConfig={priorityConfig}
+                              isLast={idx === mg.tasks.length - 1}
+                            />
+                          ))}
+                        </div>
+                      )}
                     </div>
-                  </td>
+                  ))}
 
-                  {/* 4. STATUS */}
-                  <td className="p-6">
-                    <span className={`text-[8px] font-black uppercase px-2 py-1 rounded-md border ${
-                      task.status === 'COMPLETED' 
-                        ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20" 
-                        : "bg-amber-500/10 text-amber-500 border-amber-500/20"
-                    }`}>
-                      {task.status}
-                    </span>
-                  </td>
-
-                  {/* 5. TIMELINE CONTEXT */}
-                  <td className="p-6">
-                    <div className="text-[10px] font-bold uppercase tracking-tight">
-                      {task.startDate ? moment(task.startDate).format("MMM DD, YYYY") : "NO DATE"}
+                  {/* Project Ungrouped Tasks */}
+                  {filteredUngrouped.length > 0 && (
+                    <div className="space-y-3">
+                      <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
+                        Ungrouped Tasks
+                      </h3>
+                      {viewMode === "board" ? (
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                          {filteredUngrouped.map((task) => (
+                            <TaskCard key={task.id} task={task} statusConfig={statusConfig} priorityConfig={priorityConfig} />
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
+                          {filteredUngrouped.map((task, idx) => (
+                            <TaskRow
+                              key={task.id}
+                              task={task}
+                              statusConfig={statusConfig}
+                              priorityConfig={priorityConfig}
+                              isLast={idx === filteredUngrouped.length - 1}
+                            />
+                          ))}
+                        </div>
+                      )}
                     </div>
-                    <div className="text-[8px] text-muted-foreground font-medium">
-                      {task.startDate && moment(task.startDate).format("hh:mm A")}
-                    </div>
-                  </td>
-
-                  {/* 6. ASSIGNEES RELATION */}
-                  <td className="p-6 text-xs font-bold text-foreground">
-                    {task.assignees && task.assignees.length > 0 ? (
-                      <div className="flex flex-col gap-1">
-                        {task.assignees.map((user: any) => (
-                          <span key={user.id || user._id} className="block text-blue-600">
-                            {user.name}
-                          </span>
-                        ))}
-                      </div>
-                    ) : (
-                      <span className="text-muted-foreground text-[10px] italic font-medium">UNASSIGNED</span>
-                    )}
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      {/* CALENDAR */}
-      <div className="bg-card p-8 border border-border rounded-[2.5rem] shadow-sm overflow-hidden">
-        <div className="h-[700px] text-sm custom-calendar-wrapper">
-          <Calendar
-            localizer={localizer}
-            events={combinedEvents}
-            view={view}
-            date={date}
-            onView={handleViewChange}
-            onNavigate={handleNavigate}
-            views={['month', 'week', 'day', 'agenda']}
-            step={60}
-            timeslots={1}
-            eventPropGetter={(event: any) => ({
-              style: {
-                backgroundColor: event.resource.status === 'COMPLETED' ? '#10b981' : '#2563eb',
-                borderRadius: '6px',
-                border: 'none',
-                fontSize: '11px',
-                fontWeight: '700',
-                padding: '2px 5px'
-              }
-            })}
-          />
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </div>
-      </div>
+      )}
     </div>
+  );
+}
+
+function TaskCard({ task, statusConfig, priorityConfig }: { task: Task; statusConfig: StatusConfig; priorityConfig: PriorityConfig }) {
+  const status = statusConfig[task.status] || statusConfig.PENDING;
+  const priority = priorityConfig[task.priority] || priorityConfig.MEDIUM;
+
+  return (
+    <Link
+      href={`/dashboard/tasks/${task.id}`}
+      className="block bg-zinc-900 border border-zinc-800 rounded-xl p-4 hover:border-zinc-700 transition-colors group"
+    >
+      <div className="flex items-start justify-between gap-2 mb-2">
+        <Badge className={`${priority.color} text-[10px] px-1.5 py-0`}>{priority.label}</Badge>
+        <span className="text-[10px] font-mono text-zinc-600">{task.taskNo ?? task.id.slice(0, 8)}</span>
+      </div>
+      <h4 className="text-sm font-medium text-zinc-200 group-hover:text-zinc-100 line-clamp-2 mb-1">
+        {task.title ?? "Untitled Task"}
+      </h4>
+      <div className="flex items-center gap-2 mb-3">
+        <Badge className={`${status.color} text-[10px] px-1.5 py-0 flex items-center gap-1`}>
+          {status.icon}
+          {status.label}
+        </Badge>
+      </div>
+      <div className="w-full h-1 bg-zinc-800 rounded-full overflow-hidden">
+        <div className="h-full bg-purple-500 rounded-full" style={{ width: `${task.progress}%` }} />
+      </div>
+    </Link>
+  );
+}
+
+function TaskRow({ task, statusConfig, priorityConfig, isLast }: { task: Task; statusConfig: StatusConfig; priorityConfig: PriorityConfig; isLast: boolean }) {
+  const status = statusConfig[task.status] || statusConfig.PENDING;
+  const priority = priorityConfig[task.priority] || priorityConfig.MEDIUM;
+
+  return (
+    <Link
+      href={`/dashboard/tasks/${task.id}`}
+      className={`flex items-center gap-4 px-4 py-3 hover:bg-zinc-800/50 transition-colors group ${
+        !isLast ? "border-b border-zinc-800/60" : ""
+      }`}
+    >
+      <Badge className={`${priority.color} text-[10px] px-1.5 py-0 shrink-0`}>{priority.label}</Badge>
+      <div className="flex-1 min-w-0">
+        <h4 className="text-sm font-medium text-zinc-200 truncate">{task.title ?? "Untitled Task"}</h4>
+      </div>
+      <Badge className={`${status.color} text-[10px] px-1.5 py-0 flex items-center gap-1`}>
+        {status.icon}
+        {status.label}
+      </Badge>
+      <ChevronRight className="w-4 h-4 text-zinc-600 shrink-0" />
+    </Link>
   );
 }

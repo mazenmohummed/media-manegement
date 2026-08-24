@@ -24,6 +24,7 @@ import { OpportunityHeaderEditForm } from "@/components/opportunities/opportunit
 import { CreateProposalButton } from "@/components/opportunities/create-proposal-button";
 import { DeleteOpportunityButton } from "@/components/opportunities/delete-opportunity-button";
 import { CreateClientButton } from "@/components/opportunities/create-client-button";
+import { CreateBriefButton } from "@/components/opportunities/create-brief-button";
 
 const STRATEGY_FIELDS: { key: keyof StrategyFields; label: string }[] = [
   { key: "companyMission", label: "Company Mission" },
@@ -275,20 +276,23 @@ export default async function OpportunityDetailPage({
             <Compass className="w-4 h-4 text-emerald-400" />
             <span>Strategy & Direction</span>
           </div>
-          <OpportunityStrategyForm
-            opportunityId={opportunity.id}
-            initialData={{
-              companyMission: opportunity.companyMission,
-              brandValues: opportunity.brandValues,
-              marketResearchNotes: opportunity.marketResearchNotes,
-              marketingStrategy: opportunity.marketingStrategy,
-              communicationStrategy: opportunity.communicationStrategy,
-              mediaStrategy: opportunity.mediaStrategy,
-              creativeStrategy: opportunity.creativeStrategy,
-              launchStrategy: opportunity.launchStrategy,
-              kpis: opportunity.kpis,
-            }}
-          />
+          <div className="flex items-center gap-2">
+            <CreateBriefButton opportunityId={opportunity.id} />
+            <OpportunityStrategyForm
+              opportunityId={opportunity.id}
+              initialData={{
+                companyMission: opportunity.companyMission,
+                brandValues: opportunity.brandValues,
+                marketResearchNotes: opportunity.marketResearchNotes,
+                marketingStrategy: opportunity.marketingStrategy,
+                communicationStrategy: opportunity.communicationStrategy,
+                mediaStrategy: opportunity.mediaStrategy,
+                creativeStrategy: opportunity.creativeStrategy,
+                launchStrategy: opportunity.launchStrategy,
+                kpis: opportunity.kpis,
+              }}
+            />
+          </div>
         </h3>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
@@ -324,6 +328,7 @@ export default async function OpportunityDetailPage({
         )}
       </div>
 
+  
       {/* Associated Proposals */}
       <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 space-y-4">
         <h3 className="text-sm font-semibold text-zinc-200 border-b border-zinc-800 pb-2 flex items-center justify-between">

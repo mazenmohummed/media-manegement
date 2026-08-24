@@ -1,5 +1,5 @@
-// app/api/users/route.ts
 import { NextResponse } from "next/server";
+import { UserRole } from "@prisma/client";
 import { withAuthGuard } from "@/lib/auth/guard";
 import { checkQuotaGuard } from "@/lib/auth/subscriptionGuard";
 import { getScopedPrisma } from "@/lib/prisma";
@@ -8,9 +8,36 @@ import bcrypt from "bcryptjs";
 // ─── GET /api/users ───────────────────────────────────────────────────────
 export const GET = withAuthGuard("user:read", async (req, { agencyId }) => {
   try {
-    // Instantiate tenant-scoped database client (auto-applies `where: { agencyId }`)
     const db = getScopedPrisma(agencyId);
+    const { searchParams } = new URL(req.url);
+    const q = searchParams.get("q");
 
+    // Lightweight search mode — explicitly typed as UserRole[] to satisfy Prisma
+    const ASSIGNABLE_ROLES: UserRole[] = ["ADMIN", "OPERATOR", "TEAMLEADER", "CREATIVE"];
+
+    if (q !== null) {
+      const users = await db.user.findMany({
+        where: {
+          isActive: true,
+          role: { in: ASSIGNABLE_ROLES },
+          ...(q.trim()
+            ? {
+                OR: [
+                  { name: { contains: q, mode: "insensitive" } },
+                  { email: { contains: q, mode: "insensitive" } },
+                ],
+              }
+            : {}),
+        },
+        select: { id: true, name: true, email: true, avatarUrl: true, role: true },
+        orderBy: { name: "asc" },
+        take: 20,
+      });
+
+      return NextResponse.json({ users });
+    }
+
+    // ── Full HR dashboard logic ──
     const users = await db.user.findMany({
       include: {
         tasks: {
@@ -45,7 +72,6 @@ export const GET = withAuthGuard("user:read", async (req, { agencyId }) => {
       orderBy: { name: "asc" },
     });
 
-    // ── Track Upcoming Revenue Globally ──
     let upcomingPending = 0;
     let upcomingPartial = 0;
 
@@ -53,12 +79,10 @@ export const GET = withAuthGuard("user:read", async (req, { agencyId }) => {
       const baseSalary = u.baseSalary ?? 0;
       const walletBalance = u.walletBalance ?? 0;
 
-      // Handle structural capitalization issues safely
       const completedTasks = u.tasks.filter(
         (t) => t.status?.trim().toUpperCase() === "COMPLETED"
       );
 
-      // Revenue and Profit Aggregations
       const totalRevenue = completedTasks.reduce(
         (s, t) => s + (t.totalInvoice ?? t.internalCost ?? 0),
         0
@@ -76,7 +100,6 @@ export const GET = withAuthGuard("user:read", async (req, { agencyId }) => {
       const totalPayouts = u.payouts.reduce((s, p) => s + p.amount, 0);
       const ledgerTotal = u.financialLedger.reduce((s, t) => s + t.amount, 0);
 
-      // Extract Commissions and Overtime metrics from the Ledger
       const commissions = u.financialLedger
         .filter((t) => t.type === "COMMISSION" && t.status !== "CANCELLED")
         .reduce((s, t) => s + t.amount, 0);
@@ -85,12 +108,10 @@ export const GET = withAuthGuard("user:read", async (req, { agencyId }) => {
         .filter((t) => t.type === "OVERTIME" && t.status !== "CANCELLED")
         .reduce((s, t) => s + t.amount, 0);
 
-      // Extract Deductions safely from the Ledger
       const deductions = u.financialLedger
         .filter((t) => t.amount < 0 && t.status !== "CANCELLED")
         .reduce((s, t) => s + t.amount, 0);
 
-      // Individual upcoming task metrics aggregation logic
       u.tasks.forEach((t) => {
         const taskStatus = t.status?.trim().toUpperCase();
         const payStatus = t.paymentStatus?.trim().toUpperCase();
@@ -109,7 +130,6 @@ export const GET = withAuthGuard("user:read", async (req, { agencyId }) => {
         }
       });
 
-      // Active check-in state tracking
       const todayStr = new Date().toISOString().split("T")[0];
       const isCheckedInToday = u.attendanceLogs.some((l) => {
         const logDate = new Date(l.checkInTime).toISOString().split("T")[0];
@@ -141,7 +161,6 @@ export const GET = withAuthGuard("user:read", async (req, { agencyId }) => {
       };
     });
 
-    // ── Agency-level metrics ──────────────────────────────────────────────────
     const totalRevenueSum = employees.reduce((s, e) => s + e.totalRevenue, 0);
     const totalProfitSum = employees.reduce((s, e) => s + e.profitContribution, 0);
     const totalPayrollSum = employees.reduce((s, e) => s + (e.baseSalary ?? 0), 0);
@@ -183,7 +202,6 @@ export const GET = withAuthGuard("user:read", async (req, { agencyId }) => {
 // ─── POST /api/users ──────────────────────────────────────────────────────
 export const POST = withAuthGuard("user:create", async (req, { agencyId }) => {
   try {
-    // 1. Enforce Subscription Seat Limits via Central Guard
     const quotaCheck = await checkQuotaGuard(agencyId, "users");
     if (!quotaCheck.allowed) {
       return NextResponse.json(
@@ -214,7 +232,6 @@ export const POST = withAuthGuard("user:create", async (req, { agencyId }) => {
 
     const db = getScopedPrisma(agencyId);
 
-    // 2. Check duplicate email across system
     const exists = await db.user.findFirst({ where: { email } });
     if (exists) {
       return NextResponse.json(
@@ -225,7 +242,6 @@ export const POST = withAuthGuard("user:create", async (req, { agencyId }) => {
 
     const hashed = await bcrypt.hash(password, 10);
 
-    // 3. Create User within Tenant Scope
     const created = await db.user.create({
       data: {
         agencyId,

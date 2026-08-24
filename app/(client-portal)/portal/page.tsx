@@ -8,12 +8,15 @@ import {
   Receipt, 
   Clock, 
   ExternalLink,
-  DollarSign
+  DollarSign,
+  Calendar,
+  AlertCircle
 } from "lucide-react";
+import LogoutButton from "@/components/LogoutButton";
 
 async function getClientPortalData(clientId: string) {
-  const [client, rawProjects, rawInvoices, deliverables] = await Promise.all([
-    // Fetch Client Details & Budget Overview
+  const [client, rawProjects, rawInvoices, deliverables, rawPayments, recurringSchedules] = await Promise.all([
+    // Fetch Client Details & Budget Overview[cite: 1]
     prisma.client.findUnique({
       where: { id: clientId },
       select: {
@@ -24,7 +27,7 @@ async function getClientPortalData(clientId: string) {
       },
     }),
 
-    // Fetch Active Projects & Milestones
+    // Fetch ALL Active & Historical Projects & Milestones[cite: 1]
     prisma.project.findMany({
       where: {
         clientId,
@@ -35,6 +38,7 @@ async function getClientPortalData(clientId: string) {
         projectNo: true,
         projectName: true,
         status: true,
+        createdAt: true,
         targetDeadline: true,
         cloudLink: true,
         milestones: {
@@ -51,7 +55,7 @@ async function getClientPortalData(clientId: string) {
       orderBy: { createdAt: "desc" },
     }),
 
-    // Fetch Recent Invoices
+    // Fetch ALL Invoices[cite: 1]
     prisma.clientInvoice.findMany({
       where: { clientId },
       select: {
@@ -65,10 +69,9 @@ async function getClientPortalData(clientId: string) {
         issuedAt: true,
       },
       orderBy: { createdAt: "desc" },
-      take: 5,
     }),
 
-    // Fetch Deliverables / Creative Asset Versions under Client Review
+    // Fetch Deliverables / Creative Asset Versions under Client Review[cite: 1]
     prisma.creativeAssetVersion.findMany({
       where: {
         status: "CLIENT_REVIEW",
@@ -103,19 +106,55 @@ async function getClientPortalData(clientId: string) {
       },
       orderBy: { createdAt: "desc" },
     }),
+
+    // Fetch ALL Payments[cite: 1]
+    prisma.payment.findMany({
+      where: { clientId },
+      select: {
+        id: true,
+        paymentNo: true,
+        amount: true,
+        currency: true,
+        method: true,
+        status: true,
+        datePaid: true,
+        referenceNo: true,
+      },
+      orderBy: { datePaid: "desc" },
+    }),
+
+    // Fetch Recurring Invoice Schedules for Upcoming Payment Projections[cite: 1]
+    prisma.recurringInvoiceSchedule.findMany({
+      where: { clientId, isActive: true },
+      select: {
+        id: true,
+        name: true,
+        amount: true,
+        currency: true,
+        frequency: true,
+        nextRunDate: true,
+      },
+      orderBy: { nextRunDate: "asc" },
+    }),
   ]);
 
-  // Safely map projects to handle field naming flexibility
+  // Safely map projects
   const projects = rawProjects.map((p: any) => ({
     ...p,
-    displayName: p.projectName || p.name || p.projectNo || "Untitled Project",
+    displayName: p.projectName || p.projectNo || "Untitled Project",
   }));
 
-  // Safely map invoices to ensure Decimal values serialize properly
+  // Safely map invoices to ensure Decimal/Float values serialize properly
   const invoices = rawInvoices.map((inv: any) => ({
     ...inv,
     totalAmount: Number(inv.totalAmount ?? 0),
     balanceDue: Number(inv.balanceDue ?? 0),
+  }));
+
+  // Safely map payments
+  const payments = rawPayments.map((p: any) => ({
+    ...p,
+    amount: Number(p.amount ?? 0),
   }));
 
   // Safely cast client outstanding balance
@@ -124,12 +163,11 @@ async function getClientPortalData(clientId: string) {
     outstandingBalance: Number(client.outstandingBalance ?? 0),
   } : null;
 
-  return { client: clientData, projects, invoices, deliverables };
+  return { client: clientData, projects, invoices, deliverables, payments, recurringSchedules };
 }
 
 export default async function ClientPortalPage() {
   const session = await getServerSession(authOptions);
-
   const clientId = session?.user?.clientId as string | undefined;
 
   if (!clientId) {
@@ -140,12 +178,73 @@ export default async function ClientPortalPage() {
     );
   }
 
-  const { client, projects, invoices, deliverables } = await getClientPortalData(clientId);
+  const { client, projects, invoices, deliverables, payments, recurringSchedules } = await getClientPortalData(clientId);
 
   const activeProjectsCount = projects.filter((p: any) => p.status === "ACTIVE").length;
   const pendingInvoicesCount = invoices.filter(
     (i: any) => i.status === "SENT" || i.status === "OVERDUE" || i.status === "PARTIALLY_PAID"
   ).length;
+
+  // Determine Next Payment / Due Item
+  const pendingInvoices = invoices
+    .filter((i: any) => i.status === "SENT" || i.status === "OVERDUE" || i.status === "PARTIALLY_PAID")
+    .sort((a: any, b: any) => new Date(a.dueDate || 0).getTime() - new Date(b.dueDate || 0).getTime());
+  
+  const nextInvoiceDue = pendingInvoices[0] || null;
+  const nextRecurring = recurringSchedules[0] || null;
+
+  // Build a unified chronological timeline array
+  const timelineEvents: Array<{ date: Date; title: string; subtitle: string; type: string; badge: string }> = [];
+
+  projects.forEach((p: any) => {
+    if (p.createdAt) {
+      timelineEvents.push({
+        date: new Date(p.createdAt),
+        title: `Project Initiated: ${p.displayName}`,
+        subtitle: `Project ID: ${p.projectNo || p.id}`,
+        type: 'project',
+        badge: p.status,
+      });
+    }
+    p.milestones.forEach((m: any) => {
+      if (m.deadline) {
+        timelineEvents.push({
+          date: new Date(m.deadline),
+          title: `Milestone Due: ${m.name}`,
+          subtitle: `Project: ${p.displayName}`,
+          type: 'milestone',
+          badge: m.status,
+        });
+      }
+    });
+  });
+
+  invoices.forEach((inv: any) => {
+    if (inv.issuedAt) {
+      timelineEvents.push({
+        date: new Date(inv.issuedAt),
+        title: `Invoice Issued: ${inv.invoiceNo}`,
+        subtitle: `Amount: ${inv.currency} ${inv.totalAmount.toLocaleString()}`,
+        type: 'invoice',
+        badge: inv.status,
+      });
+    }
+  });
+
+  payments.forEach((pmt: any) => {
+    if (pmt.datePaid) {
+      timelineEvents.push({
+        date: new Date(pmt.datePaid),
+        title: `Payment Processed (${pmt.method})`,
+        subtitle: `Amount: ${pmt.currency} ${pmt.amount.toLocaleString()}`,
+        type: 'payment',
+        badge: pmt.status,
+      });
+    }
+  });
+
+  // Sort timeline descending for recent activity flow
+  timelineEvents.sort((a, b) => b.date.getTime() - a.date.getTime());
 
   return (
     <div className="space-y-8">
@@ -156,23 +255,24 @@ export default async function ClientPortalPage() {
             Welcome, {client?.clientName || "Valued Client"}
           </h1>
           <p className="text-slate-500 text-sm mt-1">
-            Track your ongoing projects, review asset deliverables, and manage invoices.
+            Complete account overview including historical tracking, active contracts, and comprehensive financial records.
           </p>
         </div>
         {client?.isOnCreditHold && (
-          <div className="px-4 py-2 bg-amber-50 border border-amber-200 text-amber-800 rounded-lg text-xs font-medium">
+          <div className="px-4 py-2 bg-amber-50 border border-amber-200 text-amber-800 rounded-lg text-xs font-medium flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-amber-600" />
             Account Credit Hold: Please clear outstanding balances.
           </div>
         )}
+
+        <LogoutButton />
       </div>
 
-      {/* Overview Stat Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      {/* Overview Stat Cards & Next Payment Callout */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-              Active Projects
-            </p>
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Active Projects</p>
             <p className="text-2xl font-bold text-slate-800 mt-1">{activeProjectsCount}</p>
           </div>
           <div className="h-12 w-12 bg-indigo-50 rounded-lg flex items-center justify-center text-indigo-600">
@@ -182,9 +282,7 @@ export default async function ClientPortalPage() {
 
         <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-              Pending Invoices
-            </p>
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Pending Invoices</p>
             <p className="text-2xl font-bold text-slate-800 mt-1">{pendingInvoicesCount}</p>
           </div>
           <div className="h-12 w-12 bg-amber-50 rounded-lg flex items-center justify-center text-amber-600">
@@ -194,15 +292,37 @@ export default async function ClientPortalPage() {
 
         <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-              Outstanding Balance
-            </p>
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Outstanding Balance</p>
             <p className="text-2xl font-bold text-slate-800 mt-1">
               ${client?.outstandingBalance ? client.outstandingBalance.toLocaleString() : "0.00"}
             </p>
           </div>
           <div className="h-12 w-12 bg-emerald-50 rounded-lg flex items-center justify-center text-emerald-600">
             <DollarSign className="w-6 h-6" />
+          </div>
+        </div>
+
+        {/* Fixed Next Payment Highlight Card */}
+        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Next Expected Payment</p>
+            <p className="text-2xl font-bold text-slate-800 mt-1">
+              {nextInvoiceDue 
+                ? `${nextInvoiceDue.currency} ${nextInvoiceDue.balanceDue.toLocaleString()}` 
+                : nextRecurring 
+                ? `${nextRecurring.currency} ${nextRecurring.amount.toLocaleString()}` 
+                : "No Dues"}
+            </p>
+            <p className="text-xs text-slate-500 mt-1">
+              {nextInvoiceDue 
+                ? `Due: ${new Date(nextInvoiceDue.dueDate).toLocaleDateString()} (${nextInvoiceDue.invoiceNo})` 
+                : nextRecurring 
+                ? `Recurring: ${new Date(nextRecurring.nextRunDate).toLocaleDateString()}` 
+                : "All accounts current."}
+            </p>
+          </div>
+          <div className="h-12 w-12 bg-indigo-50 rounded-lg flex items-center justify-center text-indigo-600">
+            <Calendar className="w-6 h-6" />
           </div>
         </div>
       </div>
@@ -232,7 +352,7 @@ export default async function ClientPortalPage() {
                     {item.creativeAsset.name} (v{item.versionNo})
                   </h3>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    Project: {item.creativeAsset.concept.project.projectName || item.creativeAsset.concept.project.name} &bull; Type: {item.creativeAsset.type}
+                    Project: {item.creativeAsset.concept.project.projectName} &bull; Type: {item.creativeAsset.type}
                   </p>
                 </div>
                 {item.fileUrl && (
@@ -252,9 +372,9 @@ export default async function ClientPortalPage() {
         )}
       </section>
 
-      {/* Active Projects Grid */}
+      {/* Complete Project Overview Grid */}
       <section className="space-y-4">
-        <h2 className="text-lg font-semibold text-slate-900">Project Overview</h2>
+        <h2 className="text-lg font-semibold text-slate-900">All Projects & Milestones</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {projects.map((project: any) => (
             <div key={project.id} className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 flex flex-col justify-between">
@@ -271,22 +391,18 @@ export default async function ClientPortalPage() {
                   </span>
                 </div>
 
-                {/* Project Milestones */}
                 <div className="mt-4 space-y-2">
                   <p className="text-xs font-medium text-slate-500 uppercase">Milestones</p>
                   {project.milestones.length === 0 ? (
                     <p className="text-xs text-slate-400">No milestones tracked.</p>
                   ) : (
-                    <div className="space-y-1.5">
+                    <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
                       {project.milestones.map((m: any) => (
                         <div key={m.id} className="flex items-center justify-between text-xs bg-slate-50 p-2 rounded-lg">
                           <span className="text-slate-700 font-medium">{m.name}</span>
                           <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
-                            m.status === 'COMPLETED' 
-                              ? 'bg-emerald-100 text-emerald-800' 
-                              : m.status === 'IN_PROGRESS' 
-                              ? 'bg-blue-100 text-blue-800' 
-                              : 'bg-slate-200 text-slate-700'
+                            m.status === 'COMPLETED' ? 'bg-emerald-100 text-emerald-800' :
+                            m.status === 'IN_PROGRESS' ? 'bg-blue-100 text-blue-800' : 'bg-slate-200 text-slate-700'
                           }`}>
                             {m.status}
                           </span>
@@ -315,15 +431,16 @@ export default async function ClientPortalPage() {
         </div>
       </section>
 
-      {/* Recent Invoices Table */}
+      {/* Complete Invoices Table */}
       <section className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="p-6 border-b border-slate-100">
-          <h2 className="text-lg font-semibold text-slate-900">Recent Invoices</h2>
+        <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-slate-900">All Invoices</h2>
+          <span className="text-xs text-slate-400">Total Records: {invoices.length}</span>
         </div>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto max-h-96">
           <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-slate-50 text-slate-400 uppercase text-[10px] font-semibold tracking-wider">
+            <thead className="sticky top-0 bg-slate-50">
+              <tr className="text-slate-400 uppercase text-[10px] font-semibold tracking-wider">
                 <th className="px-6 py-3">Invoice #</th>
                 <th className="px-6 py-3">Issued Date</th>
                 <th className="px-6 py-3">Due Date</th>
@@ -335,9 +452,7 @@ export default async function ClientPortalPage() {
             <tbody className="divide-y divide-slate-100 text-xs text-slate-700">
               {invoices.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-6 py-4 text-center text-slate-400">
-                    No billing records found.
-                  </td>
+                  <td colSpan={6} className="px-6 py-4 text-center text-slate-400">No billing records found.</td>
                 </tr>
               ) : (
                 invoices.map((inv: any) => (
@@ -349,11 +464,8 @@ export default async function ClientPortalPage() {
                     <td className="px-6 py-4 text-slate-500">{inv.currency} {inv.balanceDue.toLocaleString()}</td>
                     <td className="px-6 py-4">
                       <span className={`px-2.5 py-1 rounded-full text-[10px] font-semibold ${
-                        inv.status === 'PAID' 
-                          ? 'bg-emerald-50 text-emerald-700' 
-                          : inv.status === 'OVERDUE' 
-                          ? 'bg-red-50 text-red-700' 
-                          : 'bg-amber-50 text-amber-700'
+                        inv.status === 'PAID' ? 'bg-emerald-50 text-emerald-700' :
+                        inv.status === 'OVERDUE' ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-700'
                       }`}>
                         {inv.status}
                       </span>
@@ -364,6 +476,83 @@ export default async function ClientPortalPage() {
             </tbody>
           </table>
         </div>
+      </section>
+
+      {/* Complete Payments Table */}
+      <section className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+        <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-slate-900">All Payment Transactions</h2>
+          <span className="text-xs text-slate-400">Total Transactions: {payments.length}</span>
+        </div>
+        <div className="overflow-x-auto max-h-96">
+          <table className="w-full text-left border-collapse">
+            <thead className="sticky top-0 bg-slate-50">
+              <tr className="text-slate-400 uppercase text-[10px] font-semibold tracking-wider">
+                <th className="px-6 py-3">Payment #</th>
+                <th className="px-6 py-3">Date Paid</th>
+                <th className="px-6 py-3">Method</th>
+                <th className="px-6 py-3">Reference</th>
+                <th className="px-6 py-3">Amount</th>
+                <th className="px-6 py-3">Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 text-xs text-slate-700">
+              {payments.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-6 py-4 text-center text-slate-400">No payment records found.</td>
+                </tr>
+              ) : (
+                payments.map((pmt: any) => (
+                  <tr key={pmt.id} className="hover:bg-slate-50 transition">
+                    <td className="px-6 py-4 font-mono font-medium text-slate-900">{pmt.paymentNo || "—"}</td>
+                    <td className="px-6 py-4">{pmt.datePaid ? new Date(pmt.datePaid).toLocaleDateString() : "-"}</td>
+                    <td className="px-6 py-4 font-medium">{pmt.method}</td>
+                    <td className="px-6 py-4 font-mono text-slate-500">{pmt.referenceNo || "—"}</td>
+                    <td className="px-6 py-4 font-semibold text-emerald-600">{pmt.currency} {pmt.amount.toLocaleString()}</td>
+                    <td className="px-6 py-4">
+                      <span className={`px-2.5 py-1 rounded-full text-[10px] font-semibold ${
+                        pmt.status === 'COMPLETED' ? 'bg-emerald-50 text-emerald-700' :
+                        pmt.status === 'REFUNDED' ? 'bg-purple-50 text-purple-700' :
+                        pmt.status === 'FAILED' ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-700'
+                      }`}>
+                        {pmt.status}
+                      </span>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {/* Client Activity & Milestone Timeline */}
+      <section className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+        <h2 className="text-lg font-semibold text-slate-900 mb-6 flex items-center gap-2">
+          <Calendar className="w-5 h-5 text-indigo-600" />
+          Interactive Client Timeline
+        </h2>
+        {timelineEvents.length === 0 ? (
+          <p className="text-slate-400 text-xs text-center py-6">No historical timeline events available.</p>
+        ) : (
+          <div className="relative border-l border-slate-200 ml-3 space-y-6">
+            {timelineEvents.map((evt, idx) => (
+              <div key={idx} className="flex gap-2 flex-row pl-2">
+                <span className="flex h-3 w-3 rounded-full bg-indigo-600 ring-4 ring-indigo-50" />
+                <span className="inline-block mt-1 text-[10px] font-semibold px-2 py-0.5 bg-slate-100 text-slate-600 rounded">
+                  {evt.badge}
+                </span>
+                <div className="flex sm:items-center justify-between gap-1">
+                  <h3 className="text-sm font-semibold text-slate-800">{evt.title}</h3>
+                  <span className="text-[10px] font-mono text-slate-400">
+                    {evt.date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500 mt-0.5">{evt.subtitle}</p>
+              </div>
+            ))}
+          </div>
+        )}
       </section>
     </div>
   );

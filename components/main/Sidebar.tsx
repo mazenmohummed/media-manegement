@@ -4,27 +4,54 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useSession, signOut } from "next-auth/react";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import nextDynamic from "next/dynamic";
 import { useAttendance } from "@/components/main/attendance/Attendancecontext";
 import { 
   Users, 
   Briefcase, 
-  Workflow,
   CheckSquare, 
   UserCircle, 
   DollarSign, 
   Wrench, 
   LogOut,
   ChevronLeft,
+  ChevronDown,
   Menu,
   Calendar,
   LayoutDashboard,
   Clock,
   Bell,
   LucideDatabase,
+  Target,
+  FileText,
+  FileCheck,
+  LayoutTemplate,
+  Layers,
+  Building2,
+  Flag,
+  Receipt,
+  CreditCard,
+  PieChart,
+  Repeat,
+  FileSpreadsheet, 
 } from "lucide-react";
 import { NotificationDrawer } from "./EmployeeDashboard";
+
+// Define the interface for navigation items
+interface NavItem {
+  name: string;
+  href: string;
+  icon: React.ReactNode;
+  children?: NavItem[];
+}
+
+interface NavSection {
+  title: string;
+  isDropdownGroup?: boolean;
+  mainLink?: { name: string; href: string; icon: React.ReactNode };
+  items: NavItem[];
+}
 
 // Safe dynamic import to permanently silence Radix UI hydration mismatches
 const ModeToggle = nextDynamic(() => import("../ModeToggle").then((mod) => mod.ModeToggle), {
@@ -44,23 +71,113 @@ export default function Sidebar() {
 
   // Shared attendance state
   const { attendance, loading, error, performAction } = useAttendance();
-
   const isCheckedIn = !!attendance && !attendance.checkOutTime;
 
-  const navLinks = [
-    { name: "Dashboard", href: "/dashboard", icon: <LayoutDashboard size={20} /> },
-    { name: "Leads", href: "/dashboard/leads", icon: <LucideDatabase size={20} /> },
-    { name: "opportunities", href: "/dashboard/opportunities", icon: <LucideDatabase size={20} /> },
-    { name: "proposals", href: "/dashboard/proposals", icon: <LucideDatabase size={20} /> },
-    { name: "Clients", href: "/dashboard/clients", icon: <Users size={20} /> },
-    { name: "Campaigns", href: "/dashboard/campaigns", icon: <Workflow size={20} /> },
-    { name: "Projects", href: "/dashboard/projects", icon: <Briefcase size={20} /> },
-    { name: "Tasks", href: "/dashboard/tasks", icon: <CheckSquare size={20} /> },
-    { name: "Calendar", href: "/dashboard/calender", icon: <Calendar size={20} /> },
-    { name: "Employees", href: "/dashboard/employees", icon: <UserCircle size={20} /> },
-    { name: "Finance", href: "/dashboard/finance", icon: <DollarSign size={20} /> },
-    { name: "Equipment", href: "/dashboard/equipment", icon: <Wrench size={20} /> },
+  // Grouped navigation categories with fixed nested vendor sub-pages
+  const navSections: NavSection[] = [
+    {
+      title: "Overview",
+      isDropdownGroup: true,
+      mainLink: { name: "Dashboard", href: "/dashboard", icon: <LayoutDashboard size={18} /> },
+      items: [    
+        { name: "Calendar", href: "/dashboard/calender", icon: <Calendar size={18} /> },
+      ],
+    },
+    {
+      title: "Sales & CRM",
+      isDropdownGroup: true,
+      mainLink: { name: "Sales & CRM", href: "/dashboard/sales-crm", icon: <Target size={18} /> },
+      items: [
+        { name: "Leads", href: "/dashboard/leads", icon: <LucideDatabase size={18} /> },
+        { name: "Opportunities", href: "/dashboard/opportunities", icon: <Target size={18} /> },
+        { name: "Proposals", href: "/dashboard/proposals", icon: <FileText size={18} /> },
+        { 
+          name: "Contracts",
+          href: "/dashboard/contracts",
+          icon: <FileCheck size={18} />,
+          children: [
+            { name: "Recurring Schedules", href: "/dashboard/contracts/recurring-schedules", icon: <Repeat size={18} /> }
+          ]
+        },
+      ],
+    },
+    {
+      title: "Projects & Tasks",
+      isDropdownGroup: true,
+      mainLink: { name: "Projects & Tasks", href: "/dashboard/projects-tasks", icon: <Target size={18} /> },
+      items: [
+        { name: "Projects", href: "/dashboard/projects", icon: <Briefcase size={18} /> },
+        { name: "Milestones", href: "/dashboard/milestones", icon: <Flag size={18} /> },
+        { name: "Tasks", href: "/dashboard/tasks", icon: <CheckSquare size={18} /> },
+        { name: "Task Categories", href: "/dashboard/task-categories", icon: <Layers size={18} /> },
+        { name: "Templates", href: "/dashboard/templates", icon: <LayoutTemplate size={18} /> },
+      ],
+    },
+    {
+      title: "Finance & Billing",
+      isDropdownGroup: true,
+      mainLink: { name: "Finance Hub", href: "/dashboard/finance", icon: <DollarSign size={18} /> },
+      items: [
+        { name: "Clients", href: "/dashboard/finance/clients", icon: <Users size={18} /> },
+        { name: "Employees", href: "/dashboard/finance/employees", icon: <UserCircle size={18} /> },
+        { name: "Equipment", href: "/dashboard/finance/equipment", icon: <Wrench size={18} /> },
+        { name: "Expenses", href: "/dashboard/finance/expenses", icon: <PieChart size={18} /> },
+        { name: "Invoices", href: "/dashboard/finance/invoices", icon: <Receipt size={18} /> },
+        { name: "Payments", href: "/dashboard/finance/payments", icon: <CreditCard size={18} /> },
+      ],
+    },
+    {
+      title: "Organization & HR",
+      isDropdownGroup: true,
+      mainLink: { name: "Organization & HR", href: "/dashboard/organization-hr", icon: <Target size={18} /> },
+      items: [
+        { name: "Clients Directory", href: "/dashboard/clients", icon: <Users size={18} /> },
+        { name: "Employees Directory", href: "/dashboard/employees", icon: <UserCircle size={18} /> },
+        { name: "Departments", href: "/dashboard/departments", icon: <Building2 size={18} /> },
+        { name: "Equipment Directory", href: "/dashboard/equipment", icon: <Wrench size={18} /> },
+        { 
+          name: "Vendors", 
+          href: "/dashboard/vendors", 
+          icon: <Building2 size={18} />,
+          children: [
+            { name: "Quotations", href: "/dashboard/procurement/quotations", icon: <FileSpreadsheet size={18} /> },
+            { name: "Planned Orders", href: "/dashboard/procurement/planned-purchase-orders", icon: <Receipt size={18} /> },
+            { name: "Purchase Orders", href: "/dashboard/vendors/purchase-orders", icon: <Receipt size={18} /> }
+          ]
+        },
+      ],
+    },
   ];
+
+  // Track open/closed state for dropdown sections
+  const [openSections, setOpenSections] = useState<{ [key: string]: boolean }>(() => {
+    const initial: { [key: string]: boolean } = {};
+    navSections.forEach((section) => {
+      const hasActive = section.isDropdownGroup 
+        ? (section.mainLink?.href === pathname || section.items.some((link) => pathname.startsWith(link.href)))
+        : section.items.some((link) => link.href === "/dashboard" ? pathname === "/dashboard" : pathname.startsWith(link.href) || (link.children && link.children.some(c => pathname.startsWith(c.href))));
+      initial[section.title] = hasActive;
+    });
+    return initial;
+  });
+
+  // Track independent open states for specific nested parent items (like Vendors)
+  const [openSubMenus, setOpenSubMenus] = useState<{ [key: string]: boolean }>({
+    "Vendors": pathname.startsWith("/dashboard/vendors") || pathname.startsWith("/dashboard/procurement"),
+    "Contracts": pathname.startsWith("/dashboard/contracts")
+  });
+
+  const toggleSection = (title: string) => {
+    if (isCollapsed) return;
+    setOpenSections((prev) => ({ ...prev, [title]: !prev[title] }));
+  };
+
+  const toggleSubMenu = (name: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (isCollapsed) return;
+    setOpenSubMenus((prev) => ({ ...prev, [name]: !prev[name] }));
+  };
 
   useEffect(() => {
     const fetchNotifs = async () => {
@@ -78,16 +195,9 @@ export default function Sidebar() {
     return () => clearInterval(interval);
   }, []);
 
-  /**
-   * Unified Logout Handler
-   * Revokes refresh token in database, clears HTTP-Only cookies,
-   * and terminates the NextAuth session.
-   */
   const handlePurgeSession = async () => {
     try {
       setIsLoggingOut(true);
-
-      // 1. Call backend logout endpoint to revoke refresh token & clear HTTP-Only cookie
       await fetch("/api/auth/logout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -95,7 +205,6 @@ export default function Sidebar() {
     } catch (err) {
       console.error("Error revoking session tokens on server:", err);
     } finally {
-      // 2. Clear NextAuth session and redirect user to login
       await signOut({ callbackUrl: "/login" });
     }
   };
@@ -132,20 +241,22 @@ export default function Sidebar() {
       </div>
 
       {/* NOTIFICATIONS TRIGGER */}
-      <button
-        onClick={() => setNotifOpen(true)}
-        className={`relative flex items-center gap-3 w-full px-3 py-3 text-xs font-black uppercase tracking-widest text-foreground hover:bg-muted border border-transparent hover:border-border/50 rounded-xl transition-all ${
-          isCollapsed ? "justify-center" : ""
-        }`}
-      >
-        <Bell size={18} className="shrink-0" />
-        {!isCollapsed && <span>Notifications</span>}
-        {unreadCount > 0 && (
-          <span className="absolute top-2 left-7 w-4 h-4 bg-blue-600 text-white text-[8px] font-black rounded-full flex items-center justify-center">
-            {unreadCount > 9 ? "9+" : unreadCount}
-          </span>
-        )}
-      </button>
+      <div className="px-4 pt-4">
+        <button
+          onClick={() => setNotifOpen(true)}
+          className={`relative flex items-center gap-3 w-full px-3 py-3 text-xs font-black uppercase tracking-widest text-foreground hover:bg-muted border border-transparent hover:border-border/50 rounded-xl transition-all ${
+            isCollapsed ? "justify-center" : ""
+          }`}
+        >
+          <Bell size={18} className="shrink-0" />
+          {!isCollapsed && <span>Notifications</span>}
+          {unreadCount > 0 && (
+            <span className="absolute top-2 left-7 w-4 h-4 bg-blue-600 text-white text-[8px] font-black rounded-full flex items-center justify-center">
+              {unreadCount > 9 ? "9+" : unreadCount}
+            </span>
+          )}
+        </button>
+      </div>
 
       {/* NOTIFICATION DRAWER */}
       {notifOpen && (
@@ -156,7 +267,7 @@ export default function Sidebar() {
       )}
 
       {/* ATTENDANCE WIDGET */}
-      <div className={`mt-auto p-4 transition-all duration-300 ${isCollapsed ? 'px-2' : 'px-6'}`}>
+      <div className={`p-4 transition-all duration-300 ${isCollapsed ? 'px-2' : 'px-4'}`}>
         <div className={`rounded-2xl border transition-all ${isCheckedIn ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-muted/50 border-border'}`}>
           <button
             onClick={() => performAction(isCheckedIn ? "CHECK_OUT" : "CHECK_IN")}
@@ -182,58 +293,130 @@ export default function Sidebar() {
         )}
       </div>
 
-      {/* NAVIGATION LINKS */}
-      <div className="flex-1 overflow-y-auto py-2 px-4 space-y-2 no-scrollbar">
-        {!isCollapsed && (
-          <p className="text-[10px] font-black text-muted-foreground uppercase tracking-[0.3em] px-3 mb-6 opacity-50">
-            Main Systems
-          </p>
-        )}
-        
-        {navLinks.map((link) => {
-          const isActive = link.href === "/dashboard" 
-            ? pathname === "/dashboard" 
-            : pathname.startsWith(link.href);
+      {/* NAVIGATION SECTIONS */}
+      <div className="flex-1 overflow-y-auto py-2 px-4 space-y-3 no-scrollbar">
+        {navSections.map((section, idx) => {
+          const isSectionOpen = openSections[section.title] || false;
           
+          const hasActiveChild = section.isDropdownGroup 
+            ? (pathname === section.mainLink?.href || section.items.some((link) => pathname.startsWith(link.href) || (link.children && link.children.some(c => pathname.startsWith(c.href)))))
+            : section.items.some((link) => link.href === "/dashboard" ? pathname === "/dashboard" : pathname.startsWith(link.href) || (link.children && link.children.some(c => pathname.startsWith(c.href))));
+
           return (
-            <Link
-              key={link.name}
-              href={link.href}
-              className={`relative flex items-center gap-3 px-3 py-3 text-sm font-bold transition-all duration-300 rounded-xl group ${
-                isActive 
-                  ? "text-blue-600 bg-blue-600/10 shadow-[0_0_25px_rgba(37,99,235,0.15)] border border-blue-600/20" 
-                  : "text-muted-foreground hover:text-foreground hover:bg-muted"
-              } ${isCollapsed ? "justify-center" : ""}`}
-            >
-              {/* Active Indicator Line */}
-              {isActive && (
-                <motion.div 
-                  layoutId="activeIndicator"
-                  className="absolute left-0 w-1 h-5 bg-blue-600 rounded-r-full shadow-[0_0_10px_rgba(37,99,235,1)]"
-                />
-              )}
+            <div key={idx} className="space-y-1">
+              {section.isDropdownGroup ? (
+                <div className="space-y-1">
+                  <div className={`flex items-center justify-between px-3 py-2 rounded-xl transition-colors ${
+                    hasActiveChild ? "text-blue-500 bg-blue-500/5" : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                  }`}>
+                    <Link
+                      href={section.mainLink!.href}
+                      className="flex items-center gap-3 flex-1 overflow-hidden"
+                    >
+                      <span className="shrink-0">{section.mainLink!.icon}</span>
+                      {!isCollapsed && (
+                        <span className="text-[10px] font-black uppercase tracking-[0.2em] truncate">
+                          {section.title}
+                        </span>
+                      )}
+                    </Link>
 
-              <span className={`shrink-0 transition-transform duration-300 ${isActive ? "scale-110" : "group-hover:scale-110"}`}>
-                {link.icon}
-              </span>
+                    {!isCollapsed && (
+                      <button 
+                        onClick={() => toggleSection(section.title)}
+                        className="p-1 hover:text-foreground transition-colors"
+                      >
+                        <ChevronDown 
+                          size={14} 
+                          className={`transition-transform duration-300 ${isSectionOpen ? "rotate-180" : ""}`} 
+                        />
+                      </button>
+                    )}
+                  </div>
 
-              {!isCollapsed && (
-                <span className="whitespace-nowrap uppercase tracking-widest text-[11px]">
-                  {link.name}
-                </span>
-              )}
+                  {(isSectionOpen || isCollapsed) && (
+                    <div className={`space-y-1 ${!isCollapsed ? "pl-2 pt-1 border-l border-border/40 ml-3" : ""}`}>
+                      {section.items.map((link) => {
+                        const isActive = link.href === "/dashboard/sales-crm" 
+                          ? pathname === "/dashboard/sales-crm" 
+                          : pathname.startsWith(link.href);
 
-              {/* Decorative Glow Dot for Active */}
-              {isActive && !isCollapsed && (
-                <div className="ml-auto w-1 h-1 bg-blue-600 rounded-full animate-ping" />
-              )}
-            </Link>
+                        const hasChildren = link.children && link.children.length > 0;
+                        const isSubMenuOpen = openSubMenus[link.name] || pathname.startsWith(link.href);
+
+                        return (
+                          <div key={link.name} className="space-y-1">
+                            <div className={`relative flex items-center justify-between px-3 py-2 text-sm font-bold transition-all duration-300 rounded-xl group ${
+                              isActive && !hasChildren
+                                ? "text-blue-600 bg-blue-600/10 shadow-[0_0_25px_rgba(37,99,235,0.15)] border border-blue-600/20" 
+                                : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                            } ${isCollapsed ? "justify-center" : ""}`}>
+                              
+                              <Link
+                                href={link.href}
+                                className={`flex items-center gap-3 flex-1 overflow-hidden ${isCollapsed ? "justify-center" : ""}`}
+                              >
+                                <span className={`shrink-0 transition-transform duration-300 ${isActive ? "scale-110" : "group-hover:scale-110"}`}>
+                                  {link.icon}
+                                </span>
+                                {!isCollapsed && (
+                                  <span className="whitespace-nowrap uppercase tracking-widest text-[11px]">
+                                    {link.name}
+                                  </span>
+                                )}
+                              </Link>
+
+                              {hasChildren && !isCollapsed && (
+                                <button
+                                  onClick={(e) => toggleSubMenu(link.name, e)}
+                                  className="p-1 hover:text-foreground transition-colors"
+                                >
+                                  <ChevronDown 
+                                    size={14} 
+                                    className={`transition-transform duration-300 ${isSubMenuOpen ? "rotate-180" : ""}`} 
+                                  />
+                                </button>
+                              )}
+                            </div>
+
+                            {/* Render Nested Children */}
+                            {hasChildren && isSubMenuOpen && !isCollapsed && (
+                              <div className="pl-4 pt-1 space-y-1 border-l border-border/30 ml-3">
+                                {link.children?.map((child: NavItem) => {
+                                  const isChildActive = pathname.startsWith(child.href);
+                                  return (
+                                    <Link
+                                      key={child.name}
+                                      href={child.href}
+                                      className={`relative flex items-center gap-3 px-3 py-1.5 text-xs font-bold transition-all duration-300 rounded-xl group ${
+                                        isChildActive 
+                                          ? "text-blue-600 bg-blue-600/10 border border-blue-600/20" 
+                                          : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                                      }`}
+                                    >
+                                      <span className="shrink-0">{child.icon}</span>
+                                      <span className="whitespace-nowrap uppercase tracking-widest text-[10px]">
+                                        {child.name}
+                                      </span>
+                                    </Link>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              ) : null}
+            </div>
           );
         })}
       </div>
 
       {/* BOTTOM SECTION */}
-      <div className="p-6 border-t border-border space-y-4 bg-muted/20">
+      <div className="p-4 border-t border-border space-y-3 bg-muted/20">
         {session?.user && !isCollapsed && (
           <div className="px-3">
             <p className="text-[9px] font-black text-muted-foreground uppercase tracking-widest opacity-60">System Operator</p>

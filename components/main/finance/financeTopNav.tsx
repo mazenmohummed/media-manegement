@@ -9,6 +9,7 @@ import {
   Users, 
   Camera, 
   Receipt, 
+  CreditCard, // Added for Payments
   TrendingUp,
   Zap
 } from "lucide-react";
@@ -19,26 +20,25 @@ const navItems = [
   { name: "Employees", href: "/dashboard/finance/employees", icon: Users },
   { name: "Equipment", href: "/dashboard/finance/equipment", icon: Camera },
   { name: "Overhead", href: "/dashboard/finance/expenses", icon: Receipt },
-];
+  { name: "Invoices", href: "/dashboard/finance/invoices", icon: Receipt },
+  { name: "Payments", href: "/dashboard/finance/payments", icon: CreditCard },]
 
 export default function FinanceTopNav() {
   const pathname = usePathname();
 
   return (
-    <nav className="sticky top-0 z-[100] w-full border-b border-border bg-background/80 backdrop-blur-xl px-8 py-2">
+    <nav className="sticky top-0 z-[100] w-full border-b border-border bg-background/85 backdrop-blur-xl px-8 py-2">
       <div className="max-w-[1600px] mx-auto flex items-center justify-between gap-8">
         
-
-
         {/* INLINE LINKS */}
-        <div className="flex-1 flex items-center gap-2">
+        <div className="flex-1 flex items-center gap-2 overflow-x-auto py-1">
           {navItems.map((item) => {
             const isActive = pathname === item.href;
             return (
               <Link
                 key={item.href}
                 href={item.href}
-                className={`flex items-center gap-3 px-6 py-3 rounded-2xl transition-all duration-300 group ${
+                className={`flex items-center gap-3 px-5 py-2.5 rounded-2xl transition-all duration-300 group whitespace-nowrap ${
                   isActive 
                     ? "bg-foreground text-background shadow-lg scale-105" 
                     : "text-muted-foreground hover:bg-muted hover:text-foreground"

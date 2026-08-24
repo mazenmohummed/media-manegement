@@ -1,3 +1,4 @@
+// middleware.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getToken } from "next-auth/jwt";
 import { jwtVerify, JWTPayload } from "jose";
@@ -18,10 +19,12 @@ const PUBLIC_API_ROUTES = [
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
-  // 1. Instantly allow all NextAuth routes (/api/auth/*) and public API endpoints
+  // 1. Instantly allow /login, NextAuth routes (/api/auth/*), public APIs, and static assets
   if (
+    pathname.startsWith("/login") ||
     pathname.startsWith("/api/auth") ||
-    PUBLIC_API_ROUTES.some((route) => pathname.startsWith(route))
+    PUBLIC_API_ROUTES.some((route) => pathname.startsWith(route)) ||
+    pathname.startsWith("/_next")
   ) {
     return NextResponse.next();
   }

@@ -1,309 +1,298 @@
-"use client";
-
-import React, { useEffect, useState, useMemo } from "react";
+import { db } from "@/lib/db";
+import { notFound } from "next/navigation";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/authOptions";
 import Link from "next/link";
-import { 
-  PlusCircle, 
-  Search, 
-  TrendingUp,
+import {
+  Plus,
+  Building,
+  Calendar,
   DollarSign,
-  PieChart,
-  Layers
+  Briefcase,
+  Search,
+  Filter,
+  ArrowUpRight,
+  Layers,
+  FileText,
 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { ProjectStatus } from "@prisma/client";
 
-type ProjectWithRelations = any;
+interface SearchParams {
+  status?: ProjectStatus;
+  search?: string;
+  clientId?: string;
+}
 
-export default function ProjectsPage() {
-  const [projects, setProjects] = useState<ProjectWithRelations[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [searchQuery, setSearchQuery] = useState("");
+export default async function ProjectsPage({
+  searchParams,
+}: {
+  searchParams: Promise<SearchParams>;
+}) {
+  const session = await getServerSession(authOptions);
+  if (!session?.user?.agencyId) return notFound();
 
-  const [filterMode, setFilterMode] = useState<"PRESET" | "MONTH" | "CUSTOM">("PRESET");
-  const [activePreset, setActivePreset] = useState("ALL");
-  const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth().toString());
-  const [dateRange, setDateRange] = useState({ start: "", end: "" });
+  const agencyId = session.user.agencyId;
+  const { status, search, clientId } = await searchParams;
 
-  useEffect(() => {
-    async function loadProjects() {
-      try {
-        const res = await fetch('/api/projects');
-        if (!res.ok) throw new Error("Failed to fetch");
-        const data = await res.json();
-        setProjects(data || []); 
-      } catch (error) {
-        console.error("Failed to load projects", error);
-        setProjects([]);
-      } finally {
-        setLoading(false);
-      }
-    }
-    loadProjects();
-  }, []);
- // --- CALCULATIONS & FILTERING ---
-  const { filteredProjects, stats } = useMemo(() => {
-    // 1. Filter and Map projects
-    const filtered = projects
-      .filter((project) => {
-        const projectDate = new Date(project.createdAt);
-        const matchesSearch = 
-          project.projectName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          project.client?.clientName?.toLowerCase().includes(searchQuery.toLowerCase());
-        
-        if (!matchesSearch) return false;
+  const whereClause: any = { agencyId, deletedAt: null };
+  if (status) whereClause.status = status;
+  if (clientId) whereClause.clientId = clientId;
+  if (search) {
+    whereClause.OR = [
+      { name: { contains: search, mode: "insensitive" } },
+      { projectName: { contains: search, mode: "insensitive" } },
+      { projectNo: { contains: search, mode: "insensitive" } },
+      { client: { clientName: { contains: search, mode: "insensitive" } } },
+    ];
+  }
 
-        if (filterMode === "MONTH") return projectDate.getMonth() === parseInt(selectedMonth);
-        if (filterMode === "CUSTOM" && dateRange.start && dateRange.end) {
-          return projectDate >= new Date(dateRange.start) && projectDate <= new Date(dateRange.end);
-        }
-        if (filterMode === "PRESET") {
-          if (activePreset === "ALL") return true;
-          const month = projectDate.getMonth();
-          if (activePreset === "Q1") return month >= 0 && month <= 2;
-          if (activePreset === "Q2") return month >= 3 && month <= 5;
-        }
-        return true;
-      })
-      .map((project) => {
-        const tasks = project.tasks ?? [];
-        
-        // Aggregating task-level financials for the row
-        const rowTotals = tasks.reduce((acc: any, t: any) => ({
-          totalNetProfit: acc.totalNetProfit + (t.taskNetProfit || 0),
-          totalRealCost: acc.totalRealCost + (t.realCost || 0),
-          totalInvoice: acc.totalInvoice + (t.totalInvoice || 0),
-        }), { totalNetProfit: 0, totalRealCost: 0, totalInvoice: 0 });
+  const [projects, clients, stats] = await Promise.all([
+    db.project.findMany({
+      where: whereClause,
+      include: {
+        client: { select: { id: true, clientName: true } },
+        contract: { select: { id: true, contractNo: true } },
+        campaign: { select: { id: true, name: true } },
+        _count: { select: { tasks: true, milestones: true } },
+      },
+      orderBy: { createdAt: "desc" },
+    }),
+    db.client.findMany({
+      where: { agencyId },
+      select: { id: true, clientName: true },
+      orderBy: { clientName: "asc" },
+    }),
+    db.project.aggregate({
+      where: { agencyId, deletedAt: null },
+      _sum: { totalValue: true },
+      _count: { id: true },
+    }),
+  ]);
 
-        const taskCount = tasks.length;
-        const totalTaskProgress = tasks.reduce((sum: number, t: any) => sum + (t.progress || 0), 0);
-        const avgProgress = taskCount > 0 ? Math.round(totalTaskProgress / taskCount) : 0;
-        const allTasksDone = taskCount > 0 && tasks.every((t: any) => t.status === "COMPLETED");
-        const derivedStatus = allTasksDone ? "COMPLETED" : "ACTIVE";
-
-        return { 
-          ...project, 
-          ...rowTotals, 
-          avgProgress, 
-          derivedStatus 
-        };
-      });
-
-    // 2. Calculate global totals for StatCards (FIXED KEYS)
-    const totals = filtered.reduce((acc, project) => {
-      return {
-        // totalInvoice is the top-line billed amount
-        totalRevenue: acc.totalRevenue + (project.totalInvoice || 0),
-        // totalNetProfit is what remains after realCost
-        totalProfit: acc.totalProfit + (project.totalNetProfit || 0),
-        totalTasks: acc.totalTasks + (project.tasks?.length || 0)
-      };
-    }, { totalRevenue: 0, totalProfit: 0, totalTasks: 0 });
-
-    return { filteredProjects: filtered, stats: totals };
-  }, [projects, searchQuery, filterMode, activePreset, selectedMonth, dateRange]);
-
-  if (loading) return <div className="p-20 text-center font-black uppercase italic animate-pulse text-muted-foreground">Accessing Ledger...</div>;
+  const statusColors: Record<ProjectStatus, string> = {
+    DRAFT: "bg-zinc-800 text-zinc-400 border-zinc-700",
+    ACTIVE: "bg-blue-500/10 text-blue-400 border-blue-500/20",
+    ON_HOLD: "bg-amber-500/10 text-amber-400 border-amber-500/20",
+    COMPLETED: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
+    CANCELLED: "bg-red-500/10 text-red-400 border-red-500/20",
+    ARCHIVED: "bg-purple-500/10 text-purple-400 border-purple-500/20",
+  };
 
   return (
-    <div className="max-w-7xl mx-auto p-6 space-y-8 bg-background min-h-screen">
-      {/* HEADER */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+    <div className="max-w-6xl mx-auto p-6 space-y-6">
+      {/* Header */}
+      <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-black uppercase italic tracking-tighter">Command Center: Projects</h1>
-          <p className="text-muted-foreground text-xs font-bold uppercase tracking-widest">Active Deployments & Financial Tracking</p>
+          <h1 className="text-3xl font-bold text-zinc-100">Projects</h1>
+          <p className="text-sm text-zinc-400 mt-1">
+            Active deployments, contract-linked executions, and production
+            tracking.
+          </p>
         </div>
-        <div className="flex gap-3">
-          <div className="flex bg-card border rounded-xl overflow-hidden p-1 shadow-sm">
-            {["PRESET", "MONTH", "CUSTOM"].map((mode) => (
-              <button 
-                key={mode}
-                onClick={() => setFilterMode(mode as any)}
-                className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase transition-all ${
-                  filterMode === mode ? "bg-primary text-primary-foreground shadow-sm" : "hover:bg-muted text-muted-foreground"
-                }`}
-              >
-                {mode}
-              </button>
-            ))}
-          </div>
-          <Link href="/dashboard/projects/new" className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-2xl flex items-center gap-2 text-xs font-black uppercase tracking-widest transition-all shadow-lg shadow-blue-600/20">
-            <PlusCircle size={16} /> New Deployment
+        <div className="flex items-center gap-2">
+          <Link href="/dashboard/templates">
+            <Button
+              variant="outline"
+              className="border-zinc-700 text-zinc-300 hover:bg-zinc-800 gap-1.5"
+            >
+              <FileText className="w-4 h-4" /> Templates
+            </Button>
+          </Link>
+          <Link href="/dashboard/projects/new">
+            <Button className="bg-purple-600 hover:bg-purple-500 text-white gap-1.5">
+              <Plus className="w-4 h-4" /> New Project
+            </Button>
           </Link>
         </div>
       </div>
 
-      {/* STATS SUMMARY */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-        <StatCard label="Pipeline" value={`${filteredProjects.length} Entities`} icon={<Layers size={14} />} />
-        <StatCard label="total Revenue" value={`$${stats.totalRevenue.toLocaleString()}`} icon={<DollarSign size={14} />} color="blue" />
-        <StatCard label="Gross Revenue" value={`$${stats.totalProfit.toLocaleString()}`} icon={<TrendingUp size={14} />} color="emerald" />
-        <StatCard label="Avg Margin" value={`${stats.totalRevenue > 0 ? ((stats.totalProfit / stats.totalRevenue) * 100).toFixed(1) : 0}%`} icon={<PieChart size={14} />} color="purple" />
+      {/* Stats */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
+          <div className="flex items-center gap-2 text-xs text-zinc-400 mb-1">
+            <Layers className="w-3.5 h-3.5 text-blue-400" /> Total Projects
+          </div>
+          <p className="text-2xl font-bold text-zinc-100">
+            {stats._count.id}
+          </p>
+        </div>
+        <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
+          <div className="flex items-center gap-2 text-xs text-zinc-400 mb-1">
+            <DollarSign className="w-3.5 h-3.5 text-emerald-400" /> Pipeline Value
+          </div>
+          <p className="text-2xl font-bold text-zinc-100">
+            {stats._sum.totalValue?.toLocaleString() ?? "0"}
+          </p>
+        </div>
+        <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
+          <div className="flex items-center gap-2 text-xs text-zinc-400 mb-1">
+            <Briefcase className="w-3.5 h-3.5 text-purple-400" /> Active
+          </div>
+          <p className="text-2xl font-bold text-zinc-100">
+            {
+              projects.filter((p) => p.status === ProjectStatus.ACTIVE).length
+            }
+          </p>
+        </div>
       </div>
 
-      {/* SEARCH & FILTERS */}
-      <div className="bg-card border p-6 rounded-[2.5rem] space-y-4 shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-2 bg-background border px-4 py-2.5 rounded-xl w-full max-w-md focus-within:ring-2 ring-blue-500/20 transition-all">
-            <Search size={14} className="text-muted-foreground" />
-            <input 
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search Projects or Clients..." 
-              className="bg-transparent border-none outline-none text-xs font-bold uppercase w-full"
+      {/* Filters */}
+      <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 flex flex-wrap items-center gap-3">
+        <form className="flex items-center gap-3 flex-wrap flex-1">
+          <div className="relative flex-1 min-w-[240px]">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
+            <Input
+              name="search"
+              defaultValue={search}
+              placeholder="Search projects, clients, or numbers..."
+              className="pl-9 bg-zinc-950 border-zinc-800 text-zinc-100 placeholder:text-zinc-600 focus-visible:ring-purple-500"
             />
           </div>
-          <div className="flex items-center gap-4">
-                <h2 className="text-[10px] font-black text-muted-foreground uppercase tracking-[0.2em]">Timeline Selection:</h2>
-                {filterMode === "PRESET" && (
-                    <select value={activePreset} onChange={(e) => setActivePreset(e.target.value)}
-                        className="bg-background border border-border px-4 py-2 rounded-xl text-[10px] font-black uppercase outline-none focus:ring-2 ring-blue-500/20 cursor-pointer">
-                        <option value="ALL">All Recorded Time</option>
-                        <option value="Q1">Q1 (Jan — Mar)</option>
-                        <option value="Q2">Q2 (Apr — Jun)</option>
-                    </select>
+
+          <div className="flex items-center gap-2">
+            <Filter className="w-4 h-4 text-zinc-500" />
+            <select
+              name="status"
+              defaultValue={status || ""}
+              className="bg-zinc-950 border border-zinc-800 rounded-md text-sm text-zinc-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500"
+            >
+              <option value="">All Statuses</option>
+              {Object.values(ProjectStatus).map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Building className="w-4 h-4 text-zinc-500" />
+            <select
+              name="clientId"
+              defaultValue={clientId || ""}
+              className="bg-zinc-950 border border-zinc-800 rounded-md text-sm text-zinc-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500"
+            >
+              <option value="">All Clients</option>
+              {clients.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.clientName}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <Button
+            type="submit"
+            variant="outline"
+            className="border-zinc-700 text-zinc-300 hover:bg-zinc-800"
+          >
+            Filter
+          </Button>
+
+          {(status || search || clientId) && (
+            <Link href="/dashboard/projects">
+              <Button
+                variant="ghost"
+                className="text-zinc-400 hover:text-zinc-200"
+              >
+                Clear
+              </Button>
+            </Link>
+          )}
+        </form>
+      </div>
+
+      {/* Projects Grid */}
+      {projects.length > 0 ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {projects.map((project) => (
+            <Link
+              key={project.id}
+              href={`/dashboard/projects/${project.id}`}
+              className="group bg-zinc-900 border border-zinc-800 rounded-xl p-5 hover:border-zinc-700 hover:bg-zinc-800/40 transition-all space-y-4 block"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h3 className="font-semibold text-zinc-100 truncate group-hover:text-purple-300 transition-colors">
+                    {project.projectName || project.name}
+                  </h3>
+                  <p className="text-xs text-zinc-500 font-mono mt-0.5">
+                    {project.projectNo || project.id.slice(0, 8)}
+                  </p>
+                </div>
+                <Badge
+                  className={`${statusColors[project.status]} shrink-0`}
+                >
+                  {project.status}
+                </Badge>
+              </div>
+
+              <div className="space-y-2 text-xs">
+                <div className="flex items-center gap-2 text-zinc-300">
+                  <Building className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
+                  <span className="truncate">
+                    {project.client?.clientName || "No client"}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2 text-zinc-300">
+                  <DollarSign className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                  <span>
+                    {project.currency} {project.totalValue.toLocaleString()}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2 text-zinc-300">
+                  <Calendar className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                  <span>
+                    {project.targetDeadline
+                      ? new Date(project.targetDeadline).toLocaleDateString()
+                      : "No deadline"}
+                  </span>
+                </div>
+
+                {project.contract && (
+                  <div className="flex items-center gap-2 text-zinc-300">
+                    <FileText className="w-3.5 h-3.5 text-purple-500 shrink-0" />
+                    <span className="truncate">
+                      {project.contract.contractNo}
+                    </span>
+                  </div>
                 )}
-                {filterMode === "MONTH" && (
-                    <select value={selectedMonth} onChange={(e) => setSelectedMonth(e.target.value)}
-                        className="bg-background border border-border px-4 py-2 rounded-xl text-[10px] font-black uppercase outline-none focus:ring-2 ring-blue-500/20 cursor-pointer">
-                        {["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].map((m, i) => (
-                            <option key={m} value={i}>{m}</option>
-                        ))}
-                    </select>
-                )}
-                {filterMode === "CUSTOM" && (
-                    <div className="flex items-center gap-3">
-                        <input type="date" className="bg-background border border-border px-3 py-2 rounded-xl text-[10px] uppercase font-bold" onChange={(e) => setDateRange({...dateRange, start: e.target.value})} />
-                        <span className="text-muted-foreground text-[10px] font-black tracking-widest">TO</span>
-                        <input type="date" className="bg-background border border-border px-3 py-2 rounded-xl text-[10px] uppercase font-bold" onChange={(e) => setDateRange({...dateRange, end: e.target.value})} />
-                    </div>
-                )}
-            </div>
+              </div>
+
+              <div className="pt-3 border-t border-zinc-800 flex items-center justify-between text-xs">
+                <div className="flex items-center gap-3 text-zinc-400">
+                  <span className="flex items-center gap-1">
+                    <Briefcase className="w-3 h-3" />
+                    {project._count.milestones} milestones
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <Layers className="w-3 h-3" />
+                    {project._count.tasks} tasks
+                  </span>
+                </div>
+                <span className="text-purple-400 flex items-center gap-1 group-hover:underline">
+                  View <ArrowUpRight className="w-3 h-3" />
+                </span>
+              </div>
+            </Link>
+          ))}
         </div>
-      </div>
-
-      {/* LEDGER TABLE */}
-      <div className="bg-card border rounded-[2.5rem] overflow-hidden shadow-sm">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left">
-            <thead>
-              <tr className="text-[10px] font-black uppercase text-muted-foreground tracking-widest bg-muted/30">
-                <th className="px-8 py-5">Project / Story</th>
-                <th className="px-8 py-5">Client</th>
-                <th className="px-8 py-5">Completion Status</th>
-                <th className="px-8 py-5">Financials</th>
-                <th className="px-8 py-5 text-right">Revenue</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y border-t">
-            {filteredProjects.map((project) => {
-              // 1. Calculate the total profit for THIS specific project row
-              const projectProfit = (project.tasks ?? []).reduce((pAcc: number, t: any) => {
-                return pAcc + (t.taskNetProfit || 0);
-              }, 0);
-
-              return (
-                <tr key={project.id} className="hover:bg-muted/10 transition-colors group">
-                  <td className="px-8 py-6">
-                    <Link href={`/dashboard/projects/${project.id}`}>
-                      <span className="font-black text-sm uppercase tracking-tight group-hover:text-blue-600 block">
-                        {project.projectName}
-                      </span>
-                      <p className="text-[10px] text-muted-foreground line-clamp-1 mt-0.5 italic">
-                        {project.projectStory || "No mission brief provided."}
-                      </p>
-                    </Link>
-                  </td>
-                  <td className="px-8 py-6 uppercase font-bold text-xs">{project.client?.clientName}</td>
-                  
-               
-                  {/* --- PROGRESS COLUMN --- */}
-                  <td className="px-8 py-6">
-                    <div className="w-full max-w-[140px] space-y-1.5">
-                      <div className="flex justify-between items-center text-[9px] font-black uppercase tracking-tighter">
-                        <span className={project.derivedStatus === "COMPLETED" ? "text-emerald-600" : "text-blue-600"}>
-                            {project.derivedStatus === "COMPLETED" ? "Deployment Complete" : "Active Deployment"}
-                        </span>
-                        <span className="text-foreground">{project.avgProgress}%</span>
-                      </div>
-                      
-                      <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden">
-                        <div 
-                          className={`h-full transition-all duration-500 rounded-full ${
-                            project.derivedStatus === "COMPLETED" ? "bg-emerald-500" : "bg-blue-600"
-                          }`}
-                          style={{ width: `${project.avgProgress}%` }}
-                        />
-                      </div>
-                    </div>
-                  </td>
-
-                  {/* --- FINANCIALS UI --- */}
-                  <td className="px-8 py-6">
-                    <div className="flex flex-col gap-1">
-                      {/* Real Cost Section */}
-                      <div className="flex items-center gap-1.5">
-                        <div className="w-1 h-3 bg-red-500/50 rounded-full" />
-                        <div className="flex flex-col">
-                          <span className="text-[9px] font-black uppercase text-muted-foreground leading-none">Real Cost</span>
-                          <span className="font-bold text-xs text-red-600/80">
-                            ${(project.totalRealCost || 0).toLocaleString()}
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Net Profit Section */}
-                      <div className="flex items-center gap-1.5">
-                        <div className="w-1 h-3 bg-emerald-500 rounded-full" />
-                        <div className="flex flex-col">
-                          <span className="text-[9px] font-black uppercase text-muted-foreground leading-none">Net Profit</span>
-                          <span className="font-black text-xs text-emerald-600">
-                            +${(project.totalNetProfit || 0).toLocaleString()}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  </td>
-
-                  {/* --- REVENUE UI (Total Invoice) --- */}
-                  <td className="px-8 py-6 text-right">
-                    <div className="flex flex-col">
-                      <span className="text-[10px] font-black uppercase text-blue-600 tracking-widest leading-none mb-1">
-                        Total Invoice
-                      </span>
-                      <p className="font-black italic text-xl tracking-tighter text-foreground">
-                        ${(project.totalInvoice || 0).toLocaleString()}
-                      </p>
-                      <div className="flex justify-end items-center gap-1 opacity-60">
-                          <span className="text-[9px] font-bold uppercase">{project.tasks?.length || 0} Tasks Logged</span>
-                      </div>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-</tbody>
-          </table>
+      ) : (
+        <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-12 text-center">
+          <Briefcase className="w-10 h-10 text-zinc-600 mx-auto mb-3" />
+          <h3 className="text-zinc-200 font-medium">No projects found</h3>
+          <p className="text-sm text-zinc-500 mt-1">
+            {status || search || clientId
+              ? "Try adjusting your filters."
+              : "Create a project from a contract or start from a template."}
+          </p>
         </div>
-      </div>
-    </div>
-  );
-}
-
-// Sub-component for clean stats
-function StatCard({ label, value, icon, color = "gray" }: any) {
-  const colors: any = {
-    blue: "border-blue-500/20 bg-blue-500/5 text-blue-600",
-    emerald: "border-emerald-500/20 bg-emerald-500/5 text-emerald-600",
-    purple: "border-purple-500/20 bg-purple-500/5 text-purple-600",
-    gray: "text-muted-foreground"
-  };
-
-  return (
-    <div className={`bg-card border p-6 rounded-[2rem] ${colors[color] || ""}`}>
-      <div className="flex justify-between items-start">
-        <p className="text-[10px] font-black uppercase tracking-widest opacity-70">{label}</p>
-        <div className="opacity-70">{icon}</div>
-      </div>
-      <p className="text-3xl font-black italic mt-1 text-foreground">{value}</p>
+      )}
     </div>
   );
 }

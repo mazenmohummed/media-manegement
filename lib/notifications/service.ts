@@ -1,3 +1,4 @@
+// @/lib/notifications/service.ts
 import { default as prisma } from "@/lib/prisma";
 import { NotificationType } from "@prisma/client";
 import { dispatchWebhookEvent } from "@/lib/webhooks/dispatcher";
@@ -24,11 +25,11 @@ export async function createNotification(params: CreateNotificationParams) {
       },
     });
 
-    // Optional: Dispatch webhook if subscribers listen for task/notification events
     if (params.type === "DEADLINE" || params.type === "ALERT") {
       await dispatchWebhookEvent({
         agencyId: params.agencyId,
-        event: "task.completed", // replace with specific webhook event if needed
+        // Use a valid WebhookEventType supported by your dispatcher (e.g., "task.updated")
+        event: "task.updated", 
         payload: {
           notificationId: notification.id,
           title: notification.title,
@@ -41,5 +42,6 @@ export async function createNotification(params: CreateNotificationParams) {
     return notification;
   } catch (error) {
     console.error("[CREATE_NOTIFICATION_ERROR]", error);
+    throw error;
   }
 }
