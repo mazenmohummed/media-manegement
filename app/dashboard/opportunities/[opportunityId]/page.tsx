@@ -1,6 +1,8 @@
 // app/dashboard/opportunities/[opportunityId]/page.tsx
 import { db } from "@/lib/db";
 import { notFound } from "next/navigation";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/authOptions";
 import Link from "next/link";
 import { UserRole } from "@prisma/client";
 import {
@@ -55,15 +57,30 @@ const ELIGIBLE_EMPLOYEE_ROLES: UserRole[] = [
   UserRole.CREATIVE,
 ];
 
-export default async function OpportunityDetailPage({
-  params,
-}: {
+interface PageProps {
   params: Promise<{ opportunityId: string }>;
-}) {
-  const { opportunityId } = await params;
+}
 
-  const opportunity = await db.opportunity.findUnique({
-    where: { id: opportunityId },
+export default async function OpportunityDetailPage({ params }: PageProps) {
+  // ✅ Get session for authentication
+  const session = await getServerSession(authOptions);
+  if (!session?.user?.agencyId) return notFound();
+
+  // ✅ Validate the parameter exists
+  const { opportunityId } = await params;
+  
+  // ✅ If no opportunityId is provided, return 404
+  if (!opportunityId) {
+    console.error("[OpportunityDetailPage] No opportunityId provided in URL");
+    return notFound();
+  }
+
+  // ✅ Use findFirst with agencyId for security
+  const opportunity = await db.opportunity.findFirst({
+    where: {
+      id: opportunityId,
+      agencyId: session.user.agencyId,
+    },
     include: {
       user: { select: { id: true, name: true, email: true, role: true } },
       lead: {
@@ -93,15 +110,16 @@ export default async function OpportunityDetailPage({
 
   if (!opportunity) return notFound();
 
+  // ✅ Fetch clients and employees for the edit form
   const clients = await db.client.findMany({
-    where: { agencyId: opportunity.agencyId },
+    where: { agencyId: session.user.agencyId },
     select: { id: true, clientName: true, clientNo: true },
     orderBy: { clientName: "asc" },
   });
 
   const employees = await db.user.findMany({
     where: {
-      agencyId: opportunity.agencyId,
+      agencyId: session.user.agencyId,
       role: { in: ELIGIBLE_EMPLOYEE_ROLES },
       isActive: true,
     },
@@ -277,7 +295,11 @@ export default async function OpportunityDetailPage({
             <span>Strategy & Direction</span>
           </div>
           <div className="flex items-center gap-2">
-            <CreateBriefButton opportunityId={opportunity.id} />
+            <CreateBriefButton 
+              opportunityId={opportunity.id}
+              opportunityName={opportunity.name}
+              agencyId={opportunity.agencyId}
+            />
             <OpportunityStrategyForm
               opportunityId={opportunity.id}
               initialData={{
@@ -297,7 +319,7 @@ export default async function OpportunityDetailPage({
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
           {STRATEGY_FIELDS.map(({ key, label }) => {
-            const value = opportunity[key];
+            const value = opportunity[key as keyof StrategyFields];
             if (!value) return null;
             return (
               <div key={key} className="bg-zinc-950/60 p-3.5 rounded-lg border border-zinc-800/80">
@@ -308,7 +330,7 @@ export default async function OpportunityDetailPage({
           })}
         </div>
 
-        {STRATEGY_FIELDS.every(({ key }) => !opportunity[key]) && (
+        {STRATEGY_FIELDS.every(({ key }) => !opportunity[key as keyof StrategyFields]) && (
           <p className="text-xs text-zinc-500 italic">
             No strategic direction captured yet. Click "Edit" to add mission, values, research notes, and channel strategies.
           </p>
@@ -328,7 +350,6 @@ export default async function OpportunityDetailPage({
         )}
       </div>
 
-  
       {/* Associated Proposals */}
       <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 space-y-4">
         <h3 className="text-sm font-semibold text-zinc-200 border-b border-zinc-800 pb-2 flex items-center justify-between">

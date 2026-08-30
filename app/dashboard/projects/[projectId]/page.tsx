@@ -1,3 +1,4 @@
+// app/dashboard/projects/[projectId]/page.tsx
 import { db } from "@/lib/db";
 import { notFound } from "next/navigation";
 import { getServerSession } from "next-auth";
@@ -8,262 +9,631 @@ import {
   Building,
   Calendar,
   DollarSign,
-  FileText,
   Briefcase,
-  UserCog,
+  Clock,
   CheckCircle2,
+  AlertCircle,
   ExternalLink,
+  BarChart3,
+  LayoutDashboard,
+  ListChecks,
+  GitBranch,
+  MessageSquare,
+  Tag,
+  ClipboardList,
+  Users,
+  FileText,
+  PlusCircle,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { ContractStatus } from "@prisma/client";
+import { Button } from "@/components/ui/button";
+import { ProjectStatus } from "@prisma/client";
+import { ProjectReportingDashboard } from "@/components/projects/ProjectReportingDashboard";
+import { TasksTab } from "@/components/projects/tabs/TasksTab";
+import { MilestonesTab } from "@/components/projects/tabs/MilestonesTab";
+import { CommentsTab } from "@/components/projects/tabs/CommentsTab";
+import { TagsTab } from "@/components/projects/tabs/TagsTab";
+import { ProcurementChainStatus } from "@/components/procurement/ProcurementChainStatus";
+import { ProcurementChainWidget } from "@/components/procurement/ProcurementChainWidget";
 
 interface PageProps {
-  params: Promise<{ contractId: string }>;
+  params: Promise<{ projectId: string }>;
+  searchParams: Promise<{ tab?: string }>;
 }
 
-export default async function ContractDetailPage({ params }: PageProps) {
+export default async function ProjectDetailPage({ params, searchParams }: PageProps) {
+  // ✅ Get session for authentication
   const session = await getServerSession(authOptions);
   if (!session?.user?.agencyId) return notFound();
 
-  const { contractId } = await params;
+  // ✅ Get projectId from params
+  const { projectId } = await params;
+  const { tab = "overview" } = await searchParams;
+  
+  // ✅ Validate the parameter exists
+  if (!projectId) {
+    console.error("[ProjectDetailPage] No projectId provided in URL");
+    return notFound();
+  }
 
-  const contract = await db.contract.findUnique({
-    where: { id: contractId },
+  // ✅ Fetch project with security check
+  const project = await db.project.findFirst({
+    where: {
+      id: projectId,
+      agencyId: session.user.agencyId,
+    },
     include: {
-      client: { select: { id: true, clientName: true, email: true, phoneNumber: true } },
-      user: { select: { id: true, name: true, email: true, role: true } },
-      agency: { select: { agencyName: true, defaultCurrency: true } },
-      projects: {
+      client: { 
+        select: { 
+          id: true, 
+          clientName: true, 
+          email: true, 
+          phoneNumber: true 
+        } 
+      },
+      contract: {
+        select: {
+          id: true,
+          contractNo: true,
+          name: true,
+          status: true,
+          monthlyValue: true,
+          currency: true,
+        }
+      },
+      agency: { 
+        select: { 
+          agencyName: true, 
+          defaultCurrency: true 
+        } 
+      },
+      milestones: {
         select: {
           id: true,
           name: true,
           status: true,
-          totalValue: true,
-          currency: true,
-          targetDeadline: true,
+          deadline: true,
+          budget: true,
+          description: true,
+          order: true,
         },
-        orderBy: { createdAt: "desc" },
+        orderBy: { order: "asc" },
+        take: 5,
       },
-      proposal: {
+      tasks: {
         select: {
           id: true,
-          proposalNo: true,
-          totalAmount: true,
-          currency: true,
-          scope: true,
+          title: true,
+          status: true,
+          priority: true,
+          taskType: true,
+          createdAt: true,
+          dueDate: true,
+          plannedExpenses: {
+            select: {
+              id: true,
+              itemName: true,
+              status: true,
+              totalEstimated: true,
+            },
+          },
+          quotations: {
+            select: {
+              id: true,
+              quotationNo: true,
+              status: true,
+              amount: true,
+            },
+          },
+          assignees: {
+            select: { id: true, name: true }
+          }
+        },
+        orderBy: { createdAt: "desc" },
+        take: 10,
+      },
+      tags: {
+        select: {
+          id: true,
+          name: true,
+          color: true,
         },
       },
-      recurringInvoiceSchedules: {
-        select: { id: true, name: true, amount: true, frequency: true, isActive: true },
+      _count: {
+        select: {
+          tasks: true,
+          milestones: true,
+          attachments: true,
+        },
       },
     },
   });
 
-  if (!contract || contract.agencyId !== session.user.agencyId) {
+  // ✅ If project doesn't exist, return 404
+  if (!project) {
     return notFound();
   }
 
-  const isActive = contract.status === ContractStatus.ACTIVE;
+  // ✅ Calculate progress
+  const totalTasks = project._count.tasks;
+  const completedTasks = project.tasks.filter(t => t.status === "COMPLETED").length;
+  const progress = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
+
+  // ✅ Filter tasks with procurement activity
+  const procurementTasks = project.tasks.filter(
+    task => task.plannedExpenses.length > 0 || task.quotations.length > 0
+  );
+  
+  // ✅ Get task IDs for procurement widget
+  const procurementTaskIds = procurementTasks.map(t => t.id);
+
+  // ✅ Tab configuration
+  const tabs = [
+    {
+      key: "overview",
+      label: "Overview",
+      icon: LayoutDashboard,
+    },
+    {
+      key: "tasks",
+      label: `Tasks (${project._count.tasks})`,
+      icon: ListChecks,
+    },
+    {
+      key: "milestones",
+      label: `Milestones (${project._count.milestones})`,
+      icon: GitBranch,
+    },
+    {
+      key: "reporting",
+      label: "Reporting",
+      icon: BarChart3,
+    },
+    {
+      key: "comments",
+      label: "Comments",
+      icon: MessageSquare,
+    },
+    {
+      key: "tags",
+      label: `Tags (${project.tags.length})`,
+      icon: Tag,
+    },
+  ];
 
   return (
-    <div className="max-w-5xl mx-auto p-6 space-y-6">
+    <div className="max-w-7xl mx-auto p-6 space-y-6">
+      {/* ─── Back Button ───────────────────────────────────────────────────────── */}
       <Link
-        href="/dashboard/contracts"
+        href="/dashboard/projects"
         className="inline-flex items-center gap-2 text-sm text-zinc-400 hover:text-zinc-200 transition-colors"
       >
-        <ArrowLeft className="w-4 h-4" /> Back to Contracts
+        <ArrowLeft className="w-4 h-4" /> Back to Projects
       </Link>
 
-      {/* Header */}
+      {/* ─── Header ───────────────────────────────────────────────────────────── */}
       <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 shadow-sm space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <div className="flex items-center gap-3 flex-wrap">
               <h1 className="text-3xl font-bold text-zinc-100">
-                {contract.contractNo || `Contract #${contract.id.slice(0, 8)}`}
+                {project.projectName || project.name}
               </h1>
               <Badge
                 className={
-                  isActive
+                  project.status === "ACTIVE"
                     ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20 font-mono"
+                    : project.status === "COMPLETED"
+                    ? "bg-blue-500/10 text-blue-400 border-blue-500/20 font-mono"
                     : "bg-zinc-800 text-zinc-400 border-zinc-700 font-mono"
                 }
               >
-                {contract.status}
+                {project.status}
               </Badge>
             </div>
             <p className="text-sm text-zinc-400 mt-1 flex items-center gap-1.5">
               <Building className="w-4 h-4 text-zinc-500" />
-              {contract.agency.agencyName}
-              {contract.client?.clientName && (
-                <span> → {contract.client.clientName}</span>
+              {project.agency.agencyName}
+              {project.client?.clientName && (
+                <span> → {project.client.clientName}</span>
               )}
             </p>
           </div>
-
-          {contract.termsUrl && (
-            <a
-              href={contract.termsUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 text-xs font-medium text-zinc-300 hover:text-zinc-100 border border-zinc-800 rounded-md px-3 py-2 hover:bg-zinc-800/60 transition-colors"
-            >
-              <FileText className="w-3.5 h-3.5" /> View Terms
-            </a>
-          )}
+          
+          {/* Quick Actions */}
+          <div className="flex items-center gap-2">
+            <Link href={`/dashboard/tasks/new?projectId=${project.id}`}>
+              <Button size="sm" className="bg-blue-600 hover:bg-blue-700 text-white">
+                <PlusCircle className="w-4 h-4 mr-1.5" />
+                New Task
+              </Button>
+            </Link>
+          </div>
         </div>
 
-        {/* Quick Metrics */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-4 border-t border-zinc-800">
+        {/* ─── Quick Metrics ─────────────────────────────────────────────────── */}
+        <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 pt-4 border-t border-zinc-800">
           <div className="bg-zinc-950/60 rounded-lg p-3.5 border border-zinc-800/80">
             <span className="text-xs text-zinc-400 flex items-center gap-1">
-              <DollarSign className="w-3.5 h-3.5 text-emerald-400" /> Monthly Value
+              <DollarSign className="w-3.5 h-3.5 text-emerald-400" /> Total Value
             </span>
             <p className="text-xl font-bold text-zinc-100 mt-1">
-              {contract.currency} {contract.monthlyValue?.toLocaleString() ?? "0"}
+              {project.currency} {project.totalValue?.toLocaleString() ?? "0"}
             </p>
           </div>
 
           <div className="bg-zinc-950/60 rounded-lg p-3.5 border border-zinc-800/80">
             <span className="text-xs text-zinc-400 flex items-center gap-1">
-              <Calendar className="w-3.5 h-3.5 text-amber-400" /> Duration
+              <Calendar className="w-3.5 h-3.5 text-amber-400" /> Target Deadline
             </span>
             <p className="text-base font-semibold text-zinc-200 mt-1">
-              {contract.startDate
-                ? new Date(contract.startDate).toLocaleDateString()
-                : "Not started"}{" "}
-              →{" "}
-              {contract.endDate
-                ? new Date(contract.endDate).toLocaleDateString()
-                : "Ongoing"}
+              {project.targetDeadline
+                ? new Date(project.targetDeadline).toLocaleDateString()
+                : "Not set"}
             </p>
           </div>
 
           <div className="bg-zinc-950/60 rounded-lg p-3.5 border border-zinc-800/80">
             <span className="text-xs text-zinc-400 flex items-center gap-1">
-              <UserCog className="w-3.5 h-3.5 text-purple-400" /> Account Manager
+              <Briefcase className="w-3.5 h-3.5 text-purple-400" /> Tasks
             </span>
-            <p className="text-base font-semibold text-zinc-200 mt-1 truncate">
-              {contract.user?.name || "Unassigned"}
+            <p className="text-base font-semibold text-zinc-200 mt-1">
+              {project._count.tasks} total
+            </p>
+          </div>
+
+          <div className="bg-zinc-950/60 rounded-lg p-3.5 border border-zinc-800/80">
+            <span className="text-xs text-zinc-400 flex items-center gap-1">
+              <Clock className="w-3.5 h-3.5 text-blue-400" /> Progress
+            </span>
+            <p className="text-base font-semibold text-zinc-200 mt-1">
+              {progress}%
             </p>
           </div>
         </div>
-      </div>
 
-      {/* Source Proposal */}
-      {contract.proposal && (
-        <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 space-y-3">
-          <h3 className="text-sm font-semibold text-zinc-200 border-b border-zinc-800 pb-2 flex items-center gap-2">
-            <FileText className="w-4 h-4 text-purple-400" />
-            Source Proposal
-          </h3>
-          <div className="flex items-center justify-between text-sm">
-            <div>
-              <Link
-                href={`/dashboard/proposals/${contract.proposal.id}`}
-                className="font-medium text-purple-400 hover:underline inline-flex items-center gap-1"
+        {/* Tags */}
+        {project.tags.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 pt-2 border-t border-zinc-800/60">
+            {project.tags.map((tag) => (
+              <span
+                key={tag.id}
+                className="inline-flex items-center gap-1.5 text-[10px] px-2 py-0.5 rounded-full font-medium"
+                style={{
+                  backgroundColor: `${tag.color}25`,
+                  color: tag.color,
+                  border: `1px solid ${tag.color}40`,
+                }}
               >
-                {contract.proposal.proposalNo ||
-                  `Proposal #${contract.proposal.id.slice(0, 8)}`}
-                <ExternalLink className="w-3 h-3" />
-              </Link>
-              <p className="text-xs text-zinc-500 mt-0.5">
-                Value: {contract.proposal.currency}{" "}
-                {contract.proposal.totalAmount.toLocaleString()}
-              </p>
-            </div>
-            <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20">
-              <CheckCircle2 className="w-3 h-3 mr-1" /> Accepted
-            </Badge>
-          </div>
-          {contract.proposal.scope && (
-            <div className="bg-zinc-950/60 p-3 rounded-lg border border-zinc-800/80 text-xs text-zinc-300 whitespace-pre-wrap">
-              {contract.proposal.scope}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Linked Projects */}
-      <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 space-y-4">
-        <h3 className="text-sm font-semibold text-zinc-200 border-b border-zinc-800 pb-2 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Briefcase className="w-4 h-4 text-emerald-400" />
-            <span>Generated Projects</span>
-          </div>
-          <span className="text-xs text-zinc-500 font-normal">
-            {contract.projects.length} project
-            {contract.projects.length !== 1 ? "s" : ""}
-          </span>
-        </h3>
-
-        {contract.projects.length > 0 ? (
-          <div className="divide-y divide-zinc-800">
-            {contract.projects.map((project) => (
-              <Link
-                key={project.id}
-                href={`/dashboard/projects/${project.id}`}
-                className="py-3 first:pt-0 last:pb-0 flex items-center justify-between text-xs hover:bg-zinc-800/40 px-2 rounded-lg transition-colors block"
-              >
-                <div>
-                  <span className="font-semibold text-zinc-200 block">
-                    {project.name}
-                  </span>
-                  <span className="text-zinc-500">
-                    Deadline:{" "}
-                    {project.targetDeadline
-                      ? new Date(project.targetDeadline).toLocaleDateString()
-                      : "Not set"}
-                  </span>
-                </div>
-                <div className="flex items-center gap-4">
-                  <span className="font-mono text-zinc-200">
-                    {project.currency} {project.totalValue.toLocaleString()}
-                  </span>
-                  <Badge className="bg-zinc-800 text-zinc-300 border-zinc-700">
-                    {project.status}
-                  </Badge>
-                </div>
-              </Link>
+                <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: tag.color }} />
+                {tag.name}
+              </span>
             ))}
           </div>
-        ) : (
-          <p className="text-xs text-zinc-500 italic">
-            No projects linked to this contract yet.
-          </p>
         )}
       </div>
 
-      {/* Recurring Schedules */}
-      {contract.recurringInvoiceSchedules.length > 0 && (
-        <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 space-y-4">
-          <h3 className="text-sm font-semibold text-zinc-200 border-b border-zinc-800 pb-2">
-            Recurring Invoice Schedules
-          </h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {contract.recurringInvoiceSchedules.map((schedule) => (
-              <div
-                key={schedule.id}
-                className="bg-zinc-950/60 p-3 rounded-lg border border-zinc-800/80 text-xs"
-              >
-                <div className="flex items-center justify-between mb-1">
-                  <span className="font-medium text-zinc-200">
-                    {schedule.name}
-                  </span>
-                  {schedule.isActive ? (
-                    <span className="text-emerald-400">Active</span>
-                  ) : (
-                    <span className="text-zinc-500">Inactive</span>
-                  )}
-                </div>
-                <p className="text-zinc-400">
-                  {contract.currency} {schedule.amount.toLocaleString()} / {schedule.frequency}
-                </p>
+      {/* ─── Tabs Navigation ────────────────────────────────────────────────── */}
+      <div className="flex flex-wrap gap-1 bg-zinc-900 border border-zinc-800 rounded-lg p-1 overflow-x-auto">
+        {tabs.map((tabItem) => {
+          const isActive = tab === tabItem.key;
+          return (
+            <Link
+              key={tabItem.key}
+              href={`/dashboard/projects/${projectId}?tab=${tabItem.key}`}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap ${
+                isActive
+                  ? "bg-zinc-800 text-zinc-100"
+                  : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50"
+              }`}
+            >
+              <tabItem.icon className="w-3.5 h-3.5" />
+              {tabItem.label}
+            </Link>
+          );
+        })}
+      </div>
+
+      {/* ─── Main Content Grid ──────────────────────────────────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* ─── Main Content ──────────────────────────────────────────────────── */}
+        <div className="lg:col-span-2">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 min-h-[400px]">
+            {tab === "overview" && (
+              <div className="space-y-6">
+                {/* ─── PROCUREMENT CHAIN STATUS ─── */}
+                {procurementTasks.length > 0 && (
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
+                      <h3 className="text-sm font-semibold text-zinc-200 flex items-center gap-2">
+                        <ClipboardList className="w-4 h-4 text-blue-400" />
+                        Procurement Chains
+                        <Badge className="bg-blue-500/10 text-blue-400 border-blue-500/20 text-[9px] ml-2">
+                          {procurementTasks.length}
+                        </Badge>
+                      </h3>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {procurementTasks.map((task) => (
+                        <div key={task.id} className="bg-zinc-950/60 p-4 rounded-lg border border-zinc-800/80">
+                          <div className="flex items-center justify-between mb-3">
+                            <p className="text-xs font-bold text-zinc-200">
+                              {task.title || task.taskType || 'Untitled Task'}
+                            </p>
+                            <Link
+                              href={`/dashboard/tasks/${task.id}`}
+                              className="text-[10px] text-blue-400 hover:text-blue-300 font-medium uppercase tracking-wider"
+                            >
+                              View Task →
+                            </Link>
+                          </div>
+                          <div className="space-y-1 mb-3">
+                            {task.plannedExpenses.length > 0 && (
+                              <p className="text-[10px] text-zinc-400">
+                                Planned Expenses: {task.plannedExpenses.length} item(s)
+                              </p>
+                            )}
+                            {task.quotations.length > 0 && (
+                              <p className="text-[10px] text-zinc-400">
+                                Quotations: {task.quotations.length}
+                              </p>
+                            )}
+                          </div>
+                          <ProcurementChainStatus taskId={task.id} />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Contract Info */}
+                {project.contract && (
+                  <div className="space-y-3">
+                    <h3 className="text-sm font-semibold text-zinc-200 border-b border-zinc-800 pb-2 flex items-center gap-2">
+                      Linked Contract
+                    </h3>
+                    <div className="flex items-center justify-between text-sm">
+                      <div>
+                        <Link
+                          href={`/dashboard/contracts/${project.contract.id}`}
+                          className="font-medium text-blue-400 hover:underline inline-flex items-center gap-1"
+                        >
+                          {project.contract.contractNo || `Contract #${project.contract.id.slice(0, 8)}`}
+                          <ExternalLink className="w-3 h-3" />
+                        </Link>
+                        <p className="text-xs text-zinc-500 mt-0.5">
+                          {project.contract.name} • {project.contract.status}
+                        </p>
+                      </div>
+                      <Badge className="bg-blue-500/10 text-blue-400 border-blue-500/20">
+                        {project.contract.currency} {project.contract.monthlyValue?.toLocaleString() ?? "0"}/mo
+                      </Badge>
+                    </div>
+                  </div>
+                )}
+
+                {/* Milestones */}
+                {project.milestones.length > 0 && (
+                  <div className="space-y-4">
+                    <h3 className="text-sm font-semibold text-zinc-200 border-b border-zinc-800 pb-2 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                        <span>Milestones</span>
+                      </div>
+                      <span className="text-xs text-zinc-500 font-normal">
+                        {project.milestones.length} total
+                      </span>
+                    </h3>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {project.milestones.map((milestone) => (
+                        <div
+                          key={milestone.id}
+                          className="bg-zinc-950/60 p-3 rounded-lg border border-zinc-800/80 text-xs"
+                        >
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="font-medium text-zinc-200">
+                              {milestone.name}
+                            </span>
+                            <Badge className="bg-zinc-800 text-zinc-300 border-zinc-700">
+                              {milestone.status}
+                            </Badge>
+                          </div>
+                          {milestone.description && (
+                            <p className="text-zinc-400 text-[10px] mt-0.5">{milestone.description}</p>
+                          )}
+                          <p className="text-zinc-400 mt-1">
+                            {milestone.deadline
+                              ? `Due: ${new Date(milestone.deadline).toLocaleDateString()}`
+                              : "No deadline set"}
+                          </p>
+                          {milestone.budget && (
+                            <p className="text-zinc-400 mt-0.5">
+                              Budget: {project.currency} {milestone.budget.toLocaleString()}
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Recent Tasks */}
+                {project.tasks.length > 0 && (
+                  <div className="space-y-4">
+                    <h3 className="text-sm font-semibold text-zinc-200 border-b border-zinc-800 pb-2 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <AlertCircle className="w-4 h-4 text-orange-400" />
+                        <span>Recent Tasks</span>
+                      </div>
+                      <Link 
+                        href={`/dashboard/projects/${project.id}/tasks`}
+                        className="text-xs text-purple-400 hover:text-purple-300 font-medium"
+                      >
+                        View All →
+                      </Link>
+                    </h3>
+                    <div className="divide-y divide-zinc-800">
+                      {project.tasks.map((task) => (
+                        <Link
+                          key={task.id}
+                          href={`/dashboard/tasks/${task.id}`}
+                          className="py-3 first:pt-0 last:pb-0 flex items-center justify-between text-xs hover:bg-zinc-800/40 px-2 rounded-lg transition-colors block"
+                        >
+                          <div className="flex-1 min-w-0">
+                            <span className="font-semibold text-zinc-200 block truncate">
+                              {task.title}
+                            </span>
+                            <span className="text-zinc-500 text-[10px]">
+                              {task.assignees.length > 0 
+                                ? `Assignee${task.assignees.length > 1 ? 's' : ''}: ${task.assignees.map(a => a.name).join(", ")}`
+                                : "Unassigned"
+                              }
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-3 ml-4 shrink-0">
+                            <Badge 
+                              className={
+                                task.priority === "HIGH" || task.priority === "URGENT"
+                                  ? "bg-red-500/10 text-red-400 border-red-500/20"
+                                  : task.priority === "MEDIUM"
+                                  ? "bg-yellow-500/10 text-yellow-400 border-yellow-500/20"
+                                  : "bg-zinc-800 text-zinc-300 border-zinc-700"
+                              }
+                            >
+                              {task.priority}
+                            </Badge>
+                            <Badge className="bg-zinc-800 text-zinc-300 border-zinc-700">
+                              {task.status}
+                            </Badge>
+                          </div>
+                        </Link>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* No Procurement Tasks Message */}
+                {procurementTasks.length === 0 && (
+                  <div className="bg-zinc-950/40 border border-zinc-800/60 rounded-lg p-6 text-center">
+                    <ClipboardList className="w-8 h-8 text-zinc-600 mx-auto mb-2" />
+                    <p className="text-xs text-zinc-500">
+                      No procurement chains active in this project.
+                    </p>
+                    <p className="text-[10px] text-zinc-600 mt-1">
+                      Procurement chains start when tasks have planned expenses or quotations.
+                    </p>
+                  </div>
+                )}
               </div>
-            ))}
+            )}
+
+            {tab === "reporting" && (
+              <ProjectReportingDashboard projectId={projectId} />
+            )}
+
+            {tab === "tasks" && <TasksTab projectId={projectId} />}
+            
+            {tab === "milestones" && (
+              <MilestonesTab projectId={projectId} currency={project.currency} />
+            )}
+            
+            {tab === "comments" && <CommentsTab projectId={projectId} />}
+            
+            {tab === "tags" && <TagsTab projectId={projectId} />}
           </div>
         </div>
-      )}
+
+        {/* ─── Sidebar ────────────────────────────────────────────────────────── */}
+        <div className="lg:col-span-1 space-y-4">
+          {/* ─── Procurement Chain Widget ──────────────────────────────────── */}
+          {procurementTaskIds.length > 0 && (
+            <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
+              <ProcurementChainWidget taskIds={procurementTaskIds.slice(0, 5)} />
+            </div>
+          )}
+
+          {/* ─── Project Stats ────────────────────────────────────────────────── */}
+          <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
+            <h3 className="text-[10px] font-black uppercase tracking-widest text-zinc-400 mb-3">
+              Project Stats
+            </h3>
+            <div className="space-y-2">
+              <div className="flex justify-between text-xs">
+                <span className="text-zinc-400">Total Tasks</span>
+                <span className="font-bold text-zinc-200">{project._count.tasks}</span>
+              </div>
+              <div className="flex justify-between text-xs">
+                <span className="text-zinc-400">Completed</span>
+                <span className="font-bold text-emerald-500">{completedTasks}</span>
+              </div>
+              <div className="flex justify-between text-xs">
+                <span className="text-zinc-400">Milestones</span>
+                <span className="font-bold text-zinc-200">{project._count.milestones}</span>
+              </div>
+              <div className="flex justify-between text-xs">
+                <span className="text-zinc-400">Attachments</span>
+                <span className="font-bold text-zinc-200">{project._count.attachments}</span>
+              </div>
+              <div className="flex justify-between text-xs pt-2 border-t border-zinc-800">
+                <span className="text-zinc-400">Progress</span>
+                <span className="font-bold text-blue-400">{progress}%</span>
+              </div>
+            </div>
+          </div>
+
+          {/* ─── Client Info ──────────────────────────────────────────────────── */}
+          {project.client && (
+            <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
+              <h3 className="text-[10px] font-black uppercase tracking-widest text-zinc-400 mb-3">
+                Client
+              </h3>
+              <div className="space-y-1">
+                <p className="text-sm font-bold text-zinc-200">{project.client.clientName}</p>
+                {project.client.email && (
+                  <p className="text-xs text-zinc-400">{project.client.email}</p>
+                )}
+                {project.client.phoneNumber && (
+                  <p className="text-xs text-zinc-400">{project.client.phoneNumber}</p>
+                )}
+                <Link
+                  href={`/dashboard/clients/${project.client.id}`}
+                  className="text-xs text-blue-400 hover:text-blue-300 font-medium inline-flex items-center gap-1 mt-1"
+                >
+                  View Client
+                  <ExternalLink className="w-3 h-3" />
+                </Link>
+              </div>
+            </div>
+          )}
+
+          {/* ─── Quick Actions ────────────────────────────────────────────────── */}
+          <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
+            <h3 className="text-[10px] font-black uppercase tracking-widest text-zinc-400 mb-3">
+              Quick Actions
+            </h3>
+            <div className="space-y-2">
+              <Link href={`/dashboard/tasks/new?projectId=${project.id}`}>
+                <Button variant="outline" size="sm" className="w-full justify-start text-xs border-zinc-700 text-zinc-300 hover:bg-zinc-800">
+                  <PlusCircle className="w-3.5 h-3.5 mr-2" />
+                  New Task
+                </Button>
+              </Link>
+              <Link href={`/dashboard/projects/${project.id}/edit`}>
+                <Button variant="outline" size="sm" className="w-full justify-start text-xs border-zinc-700 text-zinc-300 hover:bg-zinc-800">
+                  <FileText className="w-3.5 h-3.5 mr-2" />
+                  Edit Project
+                </Button>
+              </Link>
+              <Link href={`/dashboard/projects/${project.id}/milestones/new`}>
+                <Button variant="outline" size="sm" className="w-full justify-start text-xs border-zinc-700 text-zinc-300 hover:bg-zinc-800">
+                  <GitBranch className="w-3.5 h-3.5 mr-2" />
+                  Add Milestone
+                </Button>
+              </Link>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

@@ -1,45 +1,134 @@
-// app/api/purchase-orders/[purchase-orderId]/pdf/route.ts
-import { db } from "@/lib/db";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/authOptions";
-import { notFound } from "next/navigation";
+// app/api/purchase-orders/[poId]/pdf/route.ts
+import { NextRequest, NextResponse } from "next/server";
+import { withAuthGuard } from "@/lib/auth/guard";
+import { getScopedPrisma } from "@/lib/prisma";
 import { generatePurchaseOrderPdf } from "@/lib/pdf/purchase-order-generator";
+import { InvoiceGenerator } from "@/lib/pdf/invoice-generator";
 
-interface RouteParams {
-  params: Promise<{ "purchase-orderId": string }>;
-}
+// ─── GET /api/purchase-orders/[poId]/pdf ──────────────────────────────────────
+export const GET = withAuthGuard("purchase:read", async (req: NextRequest, { agencyId }, context) => {
+  try {
+    const params = await context.params;
+    const poId = params.poId;
 
-export async function GET(req: Request, { params }: RouteParams) {
-  const session = await getServerSession(authOptions);
-  if (!session?.user?.agencyId) return notFound();
+    const db = getScopedPrisma(agencyId);
 
-  // Destructure using the exact folder name matching your route path
-  const resolvedParams = await params;
-  const id = resolvedParams["purchase-orderId"];
-  const agencyId = session.user.agencyId;
+    // ── Fetch purchase order with all required relations ────────────────────
+    const purchaseOrder = await db.purchaseOrder.findFirst({
+      where: {
+        id: poId,
+        agencyId,
+      },
+      include: {
+        vendor: {
+          select: {
+            name: true,
+            email: true,
+            phoneNumber: true,
+            taxNumber: true,
+            address: {
+              select: {
+                line1: true,
+                line2: true,
+                city: true,
+                state: true,
+                postalCode: true,
+                country: true,
+              },
+            },
+          },
+        },
+        items: {
+          orderBy: { createdAt: "asc" },
+        },
+        project: {
+          select: {
+            id: true,
+            name: true,
+            projectName: true,
+          },
+        },
+        quotation: {
+          select: {
+            id: true,
+            quotationNo: true,
+            amount: true,
+            status: true,
+          },
+        },
+        agency: {
+          select: {
+            id: true,
+            agencyName: true,
+            email: true,
+            phoneNumber: true,
+            address: true,
+          },
+        },
+      },
+    });
 
-  if (!id) return notFound();
+    if (!purchaseOrder) {
+      return NextResponse.json(
+        { error: "Purchase order not found" },
+        { status: 404 }
+      );
+    }
 
-  const purchaseOrder = await db.purchaseOrder.findUnique({
-    where: { id },
-    include: {
-      agency: true,
-      project: true,
-      quotation: true,
-      items: true,
-    },
-  });
+    // ── Generate PDF ──────────────────────────────────────────────────────────
+    // Try using the dedicated purchase order generator first
+    try {
+      const pdfBytes = await generatePurchaseOrderPdf(purchaseOrder);
+      
+      return new NextResponse(pdfBytes, {
+        status: 200,
+        headers: {
+          "Content-Type": "application/pdf",
+          "Content-Disposition": `attachment; filename="PO-${purchaseOrder.poNo || purchaseOrder.id.slice(0, 8)}.pdf"`,
+        },
+      });
+    } catch (pdfError) {
+      console.warn("[PDF_GENERATOR_FALLBACK]:", pdfError);
+      
+      // ── Fallback: Use InvoiceGenerator if dedicated generator fails ──────
+      const pdfData = {
+        docType: "PURCHASE ORDER",
+        docNumber: purchaseOrder.poNo || purchaseOrder.id.slice(0, 8),
+        agencyName: purchaseOrder.agency?.agencyName || "Agency OS",
+        clientName: purchaseOrder.vendor?.name || "Vendor",
+        issueDate: new Date(purchaseOrder.createdAt),
+        validUntil: purchaseOrder.expectedDeliveryDate || null,
+        currency: purchaseOrder.currency || "EGP",
+        lineItems: purchaseOrder.items.map((item) => ({
+          description: item.description,
+          quantity: item.quantity,
+          unitPrice: item.unitCost,
+          total: item.total,
+        })),
+        totalAmount: purchaseOrder.totalAmount,
+        notes: [
+          purchaseOrder.notes || "Thank you for your order!",
+          ...(purchaseOrder.project?.name ? [`Project: ${purchaseOrder.project.name}`] : []),
+          ...(purchaseOrder.quotation?.quotationNo ? [`Quotation: ${purchaseOrder.quotation.quotationNo}`] : []),
+        ],
+      };
 
-  if (!purchaseOrder || purchaseOrder.agencyId !== agencyId) {
-    return notFound();
+      const generator = new InvoiceGenerator(pdfData as any);
+      const pdfBytes = generator.getUint8Array();
+
+      return new NextResponse(pdfBytes, {
+        status: 200,
+        headers: {
+          "Content-Type": "application/pdf",
+          "Content-Disposition": `attachment; filename="PO-${purchaseOrder.poNo || purchaseOrder.id.slice(0, 8)}.pdf"`,
+        },
+      });
+    }
+  } catch (error: any) {
+    console.error("[GENERATE_PO_PDF_ERROR]:", error);
+    return NextResponse.json(
+      { error: error.message || "Failed to generate PDF" },
+      { status: 500 }
+    );
   }
-
-  const pdfBuffer = await generatePurchaseOrderPdf(purchaseOrder);
-
-  return new Response(new Uint8Array(pdfBuffer), {
-    headers: {
-      "Content-Type": "application/pdf",
-      "Content-Disposition": `attachment; filename="PO-${purchaseOrder.poNo || purchaseOrder.id.slice(0, 8)}.pdf"`,
-    },
-  });
-}
+});

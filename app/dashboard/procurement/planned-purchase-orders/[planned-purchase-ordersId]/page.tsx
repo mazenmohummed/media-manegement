@@ -1,3 +1,4 @@
+// app/dashboard/procurement/planned-purchase-orders/[orderId]/page.tsx
 import { db } from "@/lib/db";
 import { notFound } from "next/navigation";
 import { getServerSession } from "next-auth";
@@ -6,6 +7,7 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import PlannedOrderActions from "@/components/quotations/PlannedOrderActions";
+import { ProcurementChainStatus } from "@/components/procurement/ProcurementChainStatus";
 
 interface PageProps {
   params: Promise<{ "planned-purchase-ordersId": string }>;
@@ -23,8 +25,34 @@ export default async function PlannedOrderDetailPage({ params }: PageProps) {
     include: {
       vendors: { include: { vendor: true } },
       vendor: true, // Included legacy single vendor relation if used
-      project: true,
-      quotation: true,
+      project: {
+        include: {
+          tasks: {
+            select: {
+              id: true,
+              title: true,
+              taskType: true,
+            },
+            take: 1, // Get the first task associated with the project
+          }
+        }
+      },
+      quotation: {
+        include: {
+          project: {
+            include: {
+              tasks: {
+                select: {
+                  id: true,
+                  title: true,
+                  taskType: true,
+                },
+                take: 1,
+              }
+            }
+          }
+        }
+      },
       items: true,
     },
   });
@@ -32,6 +60,11 @@ export default async function PlannedOrderDetailPage({ params }: PageProps) {
   if (!plannedOrder || plannedOrder.agencyId !== session.user.agencyId) {
     return notFound();
   }
+
+  // Find the task ID - first try from the quotation's project, then from the planned order's project
+  const taskId = plannedOrder.quotation?.project?.tasks?.[0]?.id || 
+                 plannedOrder.project?.tasks?.[0]?.id || 
+                 null;
 
   // Combine multi-vendors and single vendor fallback for display names
   const vendorNames = plannedOrder.vendors.length > 0 
@@ -135,6 +168,24 @@ export default async function PlannedOrderDetailPage({ params }: PageProps) {
             </p>
           </div>
         </div>
+
+        {/* ─── PROCUREMENT CHAIN STATUS ─── */}
+        {taskId && (
+          <div className="pt-4 border-t border-zinc-800">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-semibold text-zinc-200 flex items-center gap-2">
+                <span className="text-blue-400">◆</span>
+                Procurement Chain
+              </h3>
+              <span className="text-xs text-zinc-500">
+                Task: {plannedOrder.quotation?.project?.tasks?.[0]?.title || 
+                       plannedOrder.project?.tasks?.[0]?.title || 
+                       taskId.slice(0, 8)}
+              </span>
+            </div>
+            <ProcurementChainStatus taskId={taskId} />
+          </div>
+        )}
 
         {/* Notes Section (if available) */}
         {plannedOrder.notes && (

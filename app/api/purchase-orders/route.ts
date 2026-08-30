@@ -1,7 +1,9 @@
-import { NextResponse } from 'next/server';
-import { PrismaClient } from '@prisma/client';
-
-const prisma = new PrismaClient();
+// app/api/purchase-orders/route.ts
+import { NextRequest, NextResponse } from "next/server";
+import { withAuthGuard } from "@/lib/auth/guard";
+import { getScopedPrisma } from "@/lib/prisma";
+import { PurchaseOrderService } from "@/lib/services/purchase-order.service";
+import { PurchaseOrderStatus } from "@prisma/client";
 
 // Helper function to generate a sequential purchase order number per agency
 async function generatePoNo(tx: any, agencyId: string): Promise<string> {
@@ -23,107 +25,195 @@ async function generatePoNo(tx: any, agencyId: string): Promise<string> {
   return `${prefix}${String(nextSeq).padStart(4, '0')}`;
 }
 
-// GET: Fetch all purchase orders for an agency (optionally filter by ?vendorId=... or ?projectId=...)
-export async function GET(request: Request) {
+// ─── GET /api/purchase-orders ──────────────────────────────────────────────
+export const GET = withAuthGuard("purchase:read", async (req: NextRequest, { agencyId }) => {
   try {
-    const { searchParams } = new URL(request.url);
-    const agencyId = searchParams.get('agencyId');
-    const vendorId = searchParams.get('vendorId');
-    const projectId = searchParams.get('projectId');
+    const db = getScopedPrisma(agencyId);
+    const { searchParams } = new URL(req.url);
+    
+    const status = searchParams.get("status") as PurchaseOrderStatus | null;
+    const vendorId = searchParams.get("vendorId");
+    const projectId = searchParams.get("projectId");
+    const q = searchParams.get("q");
 
-    if (!agencyId) {
-      return NextResponse.json(
-        { error: 'Missing required query parameter: agencyId' },
-        { status: 400 }
-      );
+    const whereClause: any = {
+      agencyId: agencyId,
+    };
+
+    if (status) whereClause.status = status;
+    if (vendorId) whereClause.vendorId = vendorId;
+    if (projectId) whereClause.projectId = projectId;
+    
+    if (q) {
+      whereClause.OR = [
+        { poNo: { contains: q, mode: "insensitive" } },
+        { vendor: { name: { contains: q, mode: "insensitive" } } },
+        { project: { name: { contains: q, mode: "insensitive" } } },
+        { notes: { contains: q, mode: "insensitive" } },
+      ];
     }
 
-    const purchaseOrders = await prisma.purchaseOrder.findMany({
-      where: {
-        agencyId,
-        ...(vendorId ? { vendorId } : {}),
-        ...(projectId ? { projectId } : {}),
-      },
+    const purchaseOrders = await db.purchaseOrder.findMany({
+      where: whereClause,
       include: {
-        vendor: true,
-        project: true,
-        quotation: true,
-        items: true,
+        vendor: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            phoneNumber: true,
+          },
+        },
+        project: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+        quotation: {
+          select: {
+            id: true,
+            quotationNo: true,
+          },
+        },
+        items: {
+          select: {
+            id: true,
+            description: true,
+            quantity: true,
+            unitCost: true,
+            total: true,
+          },
+        },
+        _count: {
+          select: {
+            items: true,
+          },
+        },
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { createdAt: "desc" },
     });
 
-    return NextResponse.json(purchaseOrders, { status: 200 });
+    // Get stats
+    const stats = await db.purchaseOrder.groupBy({
+      by: ["status"],
+      where: { agencyId },
+      _count: true,
+    });
+
+    const statusStats = stats.reduce((acc, s) => {
+      acc[s.status] = s._count;
+      return acc;
+    }, {} as Record<string, number>);
+
+    return NextResponse.json({
+      success: true,
+      purchaseOrders,
+      stats: {
+        total: purchaseOrders.length,
+        byStatus: statusStats,
+      },
+    });
   } catch (error: any) {
+    console.error("[GET_PURCHASE_ORDERS_ERROR]:", error);
     return NextResponse.json(
-      { error: 'Failed to fetch purchase orders', details: error.message },
+      { error: error.message || "Failed to fetch purchase orders" },
       { status: 500 }
     );
   }
-}
+});
 
-// POST: Create a new purchase order
-export async function POST(request: Request) {
+// ─── POST /api/purchase-orders ─────────────────────────────────────────────
+// app/api/purchase-orders/route.ts (updated POST section)
+export const POST = withAuthGuard("purchase:create", async (req: NextRequest, { agencyId, userId }) => {
   try {
-    const body = await request.json();
-    const { 
-      agencyId, 
-      vendorId, 
-      projectId, 
-      quotationId, 
-      currency, 
-      expectedDeliveryDate, 
-      notes, 
-      items 
+    const db = getScopedPrisma(agencyId);
+    const body = await req.json();
+    
+    const {
+      vendorId,
+      projectId,
+      quotationId,
+      currency,
+      expectedDeliveryDate,
+      notes,
+      items,
     } = body;
 
-    // Validation
-    if (!agencyId || !vendorId) {
+    // ── Validation ──────────────────────────────────────────────────────────
+    if (!vendorId) {
       return NextResponse.json(
-        { error: 'Missing required fields: agencyId and vendorId are required.' },
+        { error: "Vendor is required" },
         { status: 400 }
       );
     }
 
-    // Process and calculate line items totals
+    if (!items || items.length === 0) {
+      return NextResponse.json(
+        { error: "At least one item is required" },
+        { status: 400 }
+      );
+    }
+
+    const vendor = await db.vendor.findFirst({
+      where: { id: vendorId, agencyId },
+    });
+
+    if (!vendor) {
+      return NextResponse.json(
+        { error: "Vendor not found" },
+        { status: 404 }
+      );
+    }
+
+    // ── Process items ──────────────────────────────────────────────────────
     let calculatedTotal = 0;
-    const processedItems = (items || []).map((item: any) => {
-      const quantity = parseFloat(item.quantity) || 1.0;
-      const unitCost = parseFloat(item.unitCost) || 0.0;
+    const processedItems = items.map((item: any) => {
+      const quantity = Number(item.quantity) || 0;
+      const unitCost = Number(item.unitCost) || 0;
       const total = quantity * unitCost;
       calculatedTotal += total;
-
       return {
-        description: item.description,
+        description: item.description || "Item",
         quantity,
         unitCost,
         total,
       };
     });
 
-    // Use a transaction to create the purchase order and update the quotation amount if linked
-    const newPurchaseOrder = await prisma.$transaction(async (tx) => {
+    // ── Create purchase order in transaction ──────────────────────────────
+    const purchaseOrder = await db.$transaction(async (tx) => {
       const poNo = await generatePoNo(tx, agencyId);
 
       const createdOrder = await tx.purchaseOrder.create({
         data: {
           poNo,
-          agencyId,
           vendorId,
           projectId: projectId || null,
           quotationId: quotationId || null,
-          status: 'DRAFT',
-          totalAmount: calculatedTotal,
-          currency: currency || 'EGP',
+          agencyId,
+          currency: currency || "EGP",
           expectedDeliveryDate: expectedDeliveryDate ? new Date(expectedDeliveryDate) : null,
-          notes,
-          items: processedItems.length > 0 ? {
+          notes: notes || null,
+          status: "DRAFT",
+          totalAmount: calculatedTotal,
+          items: {
             create: processedItems,
-          } : undefined,
+          },
         },
         include: {
-          vendor: true,
-          project: true,
+          vendor: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+          project: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
           items: true,
         },
       });
@@ -145,11 +235,42 @@ export async function POST(request: Request) {
       return createdOrder;
     });
 
-    return NextResponse.json(newPurchaseOrder, { status: 201 });
+    // ── ✅ TRIGGER: Handle create triggers ──────────────────────────────
+    const { PurchaseOrderTriggers } = await import("@/lib/triggers/purchase-order.triggers");
+    
+    await PurchaseOrderTriggers.handleTrigger(
+      purchaseOrder.id,
+      "CREATE",
+      {
+        agencyId,
+        userId,
+        triggerType: "CREATE",
+        currentState: purchaseOrder,
+      }
+    );
+
+    // ── Create notification ──────────────────────────────────────────────────
+    await db.notification.create({
+      data: {
+        userId: userId,
+        agencyId,
+        title: "Purchase Order Created",
+        message: `Purchase Order ${purchaseOrder.poNo} has been created for ${vendor.name}`,
+        type: "SYSTEM",
+        actionUrl: `/dashboard/vendors/purchase-orders/${purchaseOrder.id}`,
+      },
+    });
+
+    return NextResponse.json({
+      success: true,
+      purchaseOrder,
+      message: "Purchase order created successfully",
+    }, { status: 201 });
   } catch (error: any) {
+    console.error("[CREATE_PURCHASE_ORDER_ERROR]:", error);
     return NextResponse.json(
-      { error: 'Failed to create purchase order', details: error.message },
+      { error: error.message || "Failed to create purchase order" },
       { status: 500 }
     );
   }
-}
+});

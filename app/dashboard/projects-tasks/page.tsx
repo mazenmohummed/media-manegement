@@ -1,18 +1,30 @@
+// app/dashboard/projects-tasks/page.tsx
 import { db } from "@/lib/db";
 import { ProjectStatus, TaskStatus, MilestoneStatus } from "@prisma/client";
 import Link from "next/link";
 import { Briefcase, Flag, CheckSquare, Layers, LayoutTemplate } from "lucide-react";
 
-export default async function ProjectsTasksDashboard({ searchParams }: { searchParams: { agencyId?: string } }) {
+interface SearchParams {
+  agencyId?: string;
+}
+
+export default async function ProjectsTasksDashboard({
+  searchParams,
+}: {
+  searchParams: Promise<SearchParams>;
+}) {
+  const { agencyId } = await searchParams;
+
   // Assuming a default or context-based agency ID for multi-tenancy
-  const agencyId = searchParams.agencyId || "default_agency_id";
+  // In a real app, you'd get this from the session
+  const defaultAgencyId = agencyId || "default_agency_id";
 
   // Fetch aggregate counts and metrics
   const [activeProjectsCount, pendingMilestonesCount, completedTasksCount, activeTasksCount] = await Promise.all([
-    db.project.count({ where: { agencyId, status: ProjectStatus.ACTIVE } }),
-    db.milestone.count({ where: { agencyId, status: { in: [MilestoneStatus.PENDING, MilestoneStatus.IN_PROGRESS] } } }),
-    db.task.count({ where: { agencyId, status: TaskStatus.COMPLETED } }),
-    db.task.count({ where: { agencyId, status: TaskStatus.ACTIVE } }),
+    db.project.count({ where: { agencyId: defaultAgencyId, status: ProjectStatus.ACTIVE } }),
+    db.milestone.count({ where: { agencyId: defaultAgencyId, status: { in: [MilestoneStatus.PENDING, MilestoneStatus.IN_PROGRESS] } } }),
+    db.task.count({ where: { agencyId: defaultAgencyId, status: TaskStatus.COMPLETED } }),
+    db.task.count({ where: { agencyId: defaultAgencyId, status: TaskStatus.ACTIVE } }),
   ]);
 
   return (
@@ -24,11 +36,11 @@ export default async function ProjectsTasksDashboard({ searchParams }: { searchP
           <p className="text-sm text-slate-500">Manage workflows, deliverables, categories, and templates.</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <NavLink href="/projects" icon={<Briefcase className="w-4 h-4" />} label="Projects" />
-          <NavLink href="/milestones" icon={<Flag className="w-4 h-4" />} label="Milestones" />
-          <NavLink href="/tasks" icon={<CheckSquare className="w-4 h-4" />} label="Tasks" />
-          <NavLink href="/task-categories" icon={<Layers className="w-4 h-4" />} label="Categories" />
-          <NavLink href="/templates" icon={<LayoutTemplate className="w-4 h-4" />} label="Templates" />
+          <NavLink href="/dashboard/projects" icon={<Briefcase className="w-4 h-4" />} label="Projects" />
+          <NavLink href="/dashboard/milestones" icon={<Flag className="w-4 h-4" />} label="Milestones" />
+          <NavLink href="/dashboard/tasks" icon={<CheckSquare className="w-4 h-4" />} label="Tasks" />
+          <NavLink href="/dashboard/task-categories" icon={<Layers className="w-4 h-4" />} label="Categories" />
+          <NavLink href="/dashboard/templates" icon={<LayoutTemplate className="w-4 h-4" />} label="Templates" />
         </div>
       </div>
 
@@ -51,15 +63,21 @@ export default async function ProjectsTasksDashboard({ searchParams }: { searchP
         <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
           <h3 className="text-lg font-semibold text-slate-800 mb-4">Quick Actions</h3>
           <div className="flex flex-col gap-3">
-            <button className="w-full py-2 px-4 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition">
-              + Create New Project
-            </button>
-            <button className="w-full py-2 px-4 bg-white border border-slate-300 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-50 transition">
-              + Add Task Definition
-            </button>
-            <button className="w-full py-2 px-4 bg-white border border-slate-300 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-50 transition">
-              Manage Task Categories
-            </button>
+            <Link href="/dashboard/projects/new">
+              <button className="w-full py-2 px-4 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition">
+                + Create New Project
+              </button>
+            </Link>
+            <Link href="/dashboard/tasks/new">
+              <button className="w-full py-2 px-4 bg-white border border-slate-300 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-50 transition">
+                + Add Task Definition
+              </button>
+            </Link>
+            <Link href="/dashboard/task-categories">
+              <button className="w-full py-2 px-4 bg-white border border-slate-300 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-50 transition">
+                Manage Task Categories
+              </button>
+            </Link>
           </div>
         </div>
       </div>

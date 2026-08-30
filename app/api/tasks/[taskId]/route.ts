@@ -1,3 +1,4 @@
+// app/api/tasks/[taskId]/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { withAuthGuard } from "@/lib/auth/guard";
 import { getScopedPrisma } from "@/lib/prisma";
@@ -39,10 +40,20 @@ const taskInclude = {
     },
     orderBy: [{ completed: "asc" as const }, { order: "asc" as const }],
   },
+  assets: {
+    where: { deletedAt: null },
+    select: {
+      id: true,
+      assetName: true,
+      assetNo: true,
+      availabilityStatus: true,
+    },
+  },
   plannedExpenses: true,
   taskExpenses: true,
   _count: { select: { comments: true, todos: true, plannedExpenses: true, taskExpenses: true } },
 };
+
 function serializeTask(task: any) {
   let milestoneProgress = 0;
   if (task.milestone) {
@@ -83,15 +94,13 @@ function serializeTask(task: any) {
       : null,
   };
 }
-function getTaskId(req: NextRequest): string {
-  const segments = req.nextUrl.pathname.split("/").filter(Boolean);
-  return segments[2]; // /api/tasks/[taskId]
-}
 
 // ─── GET ───────────────────────────────────────────────────────────────────
-export const GET = withAuthGuard("task:read", async (req: NextRequest, { agencyId }) => {
+export const GET = withAuthGuard("task:read", async (req: NextRequest, { agencyId }, context) => {
   const db = getScopedPrisma(agencyId);
-  const taskId = getTaskId(req);
+  // ✅ Fix: await params before accessing properties
+  const params = await context.params;
+  const taskId = params.taskId;
 
   const task = await db.task.findFirst({
     where: { id: taskId, agencyId, deletedAt: null },
@@ -103,51 +112,100 @@ export const GET = withAuthGuard("task:read", async (req: NextRequest, { agencyI
 });
 
 // ─── PATCH ─────────────────────────────────────────────────────────────────
-export const PATCH = withAuthGuard("task:update", async (req: NextRequest, { agencyId }) => {
-  const db = getScopedPrisma(agencyId);
-  const taskId = getTaskId(req);
-  const body = await req.json();
+export const PATCH = withAuthGuard("task:update", async (req: NextRequest, { agencyId }, context) => {
+  try {
+    const db = getScopedPrisma(agencyId);
+    // ✅ Fix: await params before accessing properties
+    const params = await context.params;
+    const taskId = params.taskId;
+    const body = await req.json();
 
-  const allowedScalars = [
-    "title", "description", "status", "priority", "progress",
-    "dueDate", "startDate", "endDate",
-    "milestoneId", "categoryId", "projectId",
-    "estimatedHours", "actualHours",
-  ];
+    // ── Completion validation: check dependencies if status is COMPLETED ──
+    if (body.status === "COMPLETED") {
+      const task = await db.task.findFirst({
+        where: { id: taskId, agencyId, deletedAt: null },
+        include: {
+          dependsOn: {
+            select: { id: true, status: true, title: true, taskNo: true }
+          }
+        }
+      });
 
-  const data: any = {};
-  for (const key of allowedScalars) {
-    if (body[key] !== undefined) {
-      data[key] = ["dueDate", "startDate", "endDate"].includes(key) && body[key]
-        ? new Date(body[key])
-        : body[key];
+      if (!task) {
+        return NextResponse.json({ error: "Task not found" }, { status: 404 });
+      }
+
+      const blockingDependencies = task.dependsOn.filter(
+        dep => dep.status !== "COMPLETED" && dep.status !== "CANCELLED"
+      );
+
+      if (blockingDependencies.length > 0) {
+        return NextResponse.json(
+          { 
+            error: "Cannot complete task: blocking dependencies are still open",
+            blockingDependencies: blockingDependencies.map(dep => ({
+              id: dep.id,
+              title: dep.title,
+              taskNo: dep.taskNo,
+              status: dep.status
+            }))
+          },
+          { status: 400 }
+        );
+      }
     }
+
+    // ── Prepare update data ──────────────────────────────────────────────────
+    const allowedScalars = [
+      "title", "description", "status", "priority", "progress",
+      "dueDate", "startDate", "endDate",
+      "milestoneId", "categoryId", "projectId",
+      "estimatedHours", "actualHours",
+    ];
+
+    const data: any = {};
+    for (const key of allowedScalars) {
+      if (body[key] !== undefined) {
+        data[key] = ["dueDate", "startDate", "endDate"].includes(key) && body[key]
+          ? new Date(body[key])
+          : body[key];
+      }
+    }
+
+    // Auto completedAt
+    if (body.status === "COMPLETED" && !body.completedAt) data.completedAt = new Date();
+    if (body.status && body.status !== "COMPLETED") data.completedAt = null;
+
+    // ── assigneeIds: replace all assignees ──────────────────────────────────
+    if (Array.isArray(body.assigneeIds)) {
+      data.assignees = {
+        set: body.assigneeIds.map((id: string) => ({ id })),
+      };
+    }
+
+    // ── Execute update ──────────────────────────────────────────────────────
+    const task = await db.task.update({
+      where: { id: taskId, agencyId },
+      data,
+      include: taskInclude,
+    });
+
+    return NextResponse.json(serializeTask(task));
+  } catch (error: any) {
+    console.error("[TASK_UPDATE_ERROR]", error);
+    return NextResponse.json(
+      { error: error.message || "Failed to update task" },
+      { status: 500 }
+    );
   }
-
-  // Auto completedAt
-  if (body.status === "COMPLETED" && !body.completedAt) data.completedAt = new Date();
-  if (body.status && body.status !== "COMPLETED") data.completedAt = null;
-
-  // ── assigneeIds: replace all assignees ──────────────────────────────────
-  if (Array.isArray(body.assigneeIds)) {
-    data.assignees = {
-      set: body.assigneeIds.map((id: string) => ({ id })),
-    };
-  }
-
-  const task = await db.task.update({
-    where: { id: taskId, agencyId },
-    data,
-    include: taskInclude,
-  });
-
-  return NextResponse.json(serializeTask(task));
 });
 
 // ─── DELETE (soft) ─────────────────────────────────────────────────────────
-export const DELETE = withAuthGuard("task:delete", async (req: NextRequest, { agencyId }) => {
+export const DELETE = withAuthGuard("task:delete", async (req: NextRequest, { agencyId }, context) => {
   const db = getScopedPrisma(agencyId);
-  const taskId = getTaskId(req);
+  // ✅ Fix: await params before accessing properties
+  const params = await context.params;
+  const taskId = params.taskId;
 
   await db.task.update({
     where: { id: taskId, agencyId },

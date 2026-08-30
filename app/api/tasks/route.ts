@@ -1,3 +1,4 @@
+// app/api/tasks/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getServerSession } from "next-auth";
@@ -16,6 +17,7 @@ export async function GET(req: NextRequest) {
   const milestoneId = searchParams.get("milestoneId");
   const q = searchParams.get("q");
   const exclude = searchParams.get("exclude");
+  const tagId = searchParams.get("tagId"); // ✅ Added tag filter
 
   const where: any = {
     agencyId: session.user.agencyId,
@@ -27,6 +29,14 @@ export async function GET(req: NextRequest) {
   if (priority && priority !== "ALL") where.priority = priority;
   if (milestoneId && milestoneId !== "ALL") where.milestoneId = milestoneId;
   if (exclude) where.id = { not: exclude };
+  
+  // ✅ Tag filtering
+  if (tagId && tagId !== "ALL") {
+    where.tags = {
+      some: { id: tagId }
+    };
+  }
+  
   if (q) {
     where.OR = [
       { title: { contains: q, mode: "insensitive" } },
@@ -42,6 +52,7 @@ export async function GET(req: NextRequest) {
       category: { select: { id: true, name: true } },
       milestone: { select: { id: true, name: true, order: true, projectId: true } },
       project: { select: { id: true, name: true, projectName: true } },
+      tags: { select: { id: true, name: true, color: true } }, // ✅ Include tags
       _count: { select: { comments: true, todos: true } },
     },
     orderBy: [{ milestone: { order: "asc" } }, { createdAt: "desc" }],
@@ -57,7 +68,10 @@ export async function GET(req: NextRequest) {
   });
 
   const allMilestones = await db.milestone.findMany({
-    where: { agencyId: session.user.agencyId, ...(projectId && projectId !== "ALL" ? { projectId } : {}) },
+    where: { 
+      agencyId: session.user.agencyId, 
+      ...(projectId && projectId !== "ALL" ? { projectId } : {}) 
+    },
     include: {
       tasks: {
         where: { deletedAt: null },
@@ -106,7 +120,11 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  return NextResponse.json({ tasks, projects: structuredProjects, rawProjects: projects });
+  return NextResponse.json({ 
+    tasks, 
+    projects: structuredProjects, 
+    rawProjects: projects 
+  });
 }
 
 export async function POST(req: NextRequest) {
@@ -117,7 +135,17 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { title, description, projectId, milestoneId, categoryId, priority, dueDate, assigneeIds } = body;
+    const { 
+      title, 
+      description, 
+      projectId, 
+      milestoneId, 
+      categoryId, 
+      priority, 
+      dueDate, 
+      assigneeIds,
+      tagIds // ✅ Added tagIds
+    } = body;
 
     if (!title?.trim() || !projectId) {
       return NextResponse.json({ error: "Title and project are required" }, { status: 400 });
@@ -142,10 +170,15 @@ export async function POST(req: NextRequest) {
         assignees: assigneeIds?.length
           ? { connect: assigneeIds.map((id: string) => ({ id })) }
           : undefined,
+        // ✅ Add tags if provided
+        tags: tagIds?.length
+          ? { connect: tagIds.map((id: string) => ({ id })) }
+          : undefined,
       },
       include: {
         assignees: { select: { id: true, name: true } },
         milestone: { select: { id: true, name: true } },
+        tags: { select: { id: true, name: true, color: true } }, // ✅ Include tags
       },
     });
 

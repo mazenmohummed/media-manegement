@@ -1,59 +1,47 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/authOptions";
+import { withAuthGuard } from "@/lib/auth/guard";
+import { getScopedPrisma } from "@/lib/prisma";
 
-export async function GET(
-  req: NextRequest,
-  { params }: { params: Promise<{ projectId: string }> }
-) {
-  const session = await getServerSession(authOptions);
-  if (!session?.user?.agencyId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const { projectId } = await params;
+export const GET = withAuthGuard("project:read", async (req: NextRequest, { agencyId }, context) => {
+  const { projectId } = await context.params;
+  const db = getScopedPrisma(agencyId);
 
   const milestones = await db.milestone.findMany({
-    where: {
-      projectId,
-      agencyId: session.user.agencyId,
-    },
-    select: {
-      id: true,
-      name: true,
-      order: true,
-      status: true,
-      deadline: true,
-      budget: true,
-      tasks: {
-        select: {
-          id: true,
-          status: true,
-          progress: true,
-        },
-      },
-    },
+    where: { projectId },
     orderBy: { order: "asc" },
   });
 
-  // Compute progress rollup for each milestone
-  const milestonesWithProgress = milestones.map((m) => {
-    const totalTasks = m.tasks.length;
-    const progress =
-      totalTasks > 0
-        ? Math.round(
-            m.tasks.reduce((sum, task) => sum + (task.progress || (task.status === "COMPLETED" ? 100 : 0)), 0) /
-              totalTasks
-          )
-        : 0;
+  return NextResponse.json({ success: true, milestones });
+});
 
-    return {
-      ...m,
-      totalTasks,
-      progress,
-    };
+export const POST = withAuthGuard("project:update", async (req: NextRequest, { agencyId }, context) => {
+  const { projectId } = await context.params;
+  const body = await req.json();
+  const { name, description, budget, deadline, status } = body;
+
+  if (!name?.trim()) {
+    return NextResponse.json({ error: "Milestone name is required" }, { status: 400 });
+  }
+
+  const db = getScopedPrisma(agencyId);
+
+  const project = await db.project.findFirst({ where: { id: projectId, deletedAt: null } });
+  if (!project) return NextResponse.json({ error: "Project not found" }, { status: 404 });
+
+  const count = await db.milestone.count({ where: { projectId } });
+
+  const milestone = await db.milestone.create({
+    data: {
+      name: name.trim(),
+      description: description ?? null,
+      budget: budget ? Number(budget) : 0,
+      deadline: deadline ? new Date(deadline) : null,
+      status: status ?? "PENDING",
+      order: count,
+      projectId,
+      agencyId,
+    },
   });
 
-  return NextResponse.json({ milestones: milestonesWithProgress });
-}
+  return NextResponse.json({ success: true, milestone }, { status: 201 });
+});

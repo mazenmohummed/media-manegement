@@ -1,114 +1,165 @@
 // lib/pdf/quotation-generator.ts
-import { jsPDF } from "jspdf";
+import { DocumentBuilder, DocumentOptions, DocumentSection } from "./document-builder";
 
-export async function generateQuotationPdf(quotation: any): Promise<Buffer> {
-  const doc = new jsPDF();
-  let currentY = 20;
+export interface QuotationData {
+  quotationNo: string;
+  clientName: string;
+  clientEmail: string;
+  clientCompany?: string;
+  issueDate: string;
+  validUntil: string;
+  items: Array<{
+    description: string;
+    quantity: number;
+    unitPrice: number;
+    total: number;
+  }>;
+  subtotal: number;
+  taxRate: number;
+  taxAmount: number;
+  total: number;
+  terms?: string[];
+  notes?: string;
+  currency?: string;
+  agencyName?: string;
+}
 
-  // Header / Agency Name
-  doc.setFontSize(20);
-  doc.text(quotation.agency?.agencyName || "Agency Quotation", 14, currentY);
-  currentY += 10;
+export class QuotationGenerator {
+  private data: QuotationData;
 
-  // Quotation Meta Details
-  doc.setFontSize(11);
-  doc.text(`Quotation No: ${quotation.quotationNo || quotation.id.slice(0, 8)}`, 14, currentY);
-  currentY += 7;
-  doc.text(`Status: ${quotation.status}`, 14, currentY);
-  currentY += 7;
-  doc.text(`Date: ${new Date(quotation.createdAt).toLocaleDateString()}`, 14, currentY);
-  currentY += 7;
-
-  if (quotation.validUntil) {
-    doc.text(`Valid Until: ${new Date(quotation.validUntil).toLocaleDateString()}`, 14, currentY);
-    currentY += 7;
+  constructor(data: QuotationData) {
+    this.data = data;
   }
 
-  // Linked Project Info (if any)
-  if (quotation.project) {
-    doc.text(`Project: ${quotation.project.name} (${quotation.project.projectNo || ''})`, 14, currentY);
-    currentY += 7;
+  private formatCurrency(value: number): string {
+    const currency = this.data.currency || "USD";
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: currency,
+      minimumFractionDigits: 2,
+    }).format(value);
   }
 
-  currentY += 4;
+  public generate(): DocumentBuilder {
+    const { data } = this;
+    const currency = data.currency || "USD";
 
-  // Description & Scope Section
-  if (quotation.description) {
-    doc.setFontSize(12);
-    doc.text("Scope & Description:", 14, currentY);
-    currentY += 6;
-    doc.setFontSize(10);
-    const splitDesc = doc.splitTextToSize(quotation.description, 180);
-    doc.text(splitDesc, 14, currentY);
-    currentY += splitDesc.length * 5 + 6;
-  }
+    const sections: DocumentSection[] = [
+      {
+        title: "Quotation Details",
+        content: "",
+        type: "table",
+        tableData: {
+          headers: ["Item", "Quantity", "Unit Price", "Total"],
+          rows: data.items.map((item) => [
+            item.description,
+            item.quantity,
+            this.formatCurrency(item.unitPrice),
+            this.formatCurrency(item.total),
+          ]),
+        },
+      },
+      {
+        title: "Summary",
+        content: "",
+        type: "table",
+        tableData: {
+          headers: ["Description", "Amount"],
+          rows: [
+            ["Subtotal", this.formatCurrency(data.subtotal)],
+            [`Tax (${(data.taxRate * 100).toFixed(0)}%)`, this.formatCurrency(data.taxAmount)],
+            ["Total", this.formatCurrency(data.total)],
+          ],
+        },
+      },
+    ];
 
-  // Track calculated total from items
-  let calculatedTotal = 0;
+    if (data.terms && data.terms.length > 0) {
+      sections.push({
+        title: "Terms & Conditions",
+        type: "list",
+        content: data.terms,
+      });
+    }
 
-  // Planned Purchase Orders & Items Section (Client-facing breakdown)
-  if (quotation.plannedOrders && quotation.plannedOrders.length > 0) {
-    doc.setFontSize(13);
-    doc.text("Quotation Items & Breakdown", 14, currentY);
-    currentY += 8;
+    if (data.notes) {
+      sections.push({
+        title: "Notes",
+        type: "text",
+        content: data.notes,
+      });
+    }
 
-    quotation.plannedOrders.forEach((ppo: any, index: number) => {
-      doc.setFontSize(11);
-      doc.text(`Package / Order #${index + 1} (${ppo.plannedPoNo || ppo.id.slice(0, 8)})`, 14, currentY);
-      currentY += 6;
+    // Client information
+    const clientInfo = [
+      `Client: ${data.clientName}`,
+      ...(data.clientCompany ? [`Company: ${data.clientCompany}`] : []),
+      `Email: ${data.clientEmail}`,
+    ];
 
-      if (ppo.items && ppo.items.length > 0) {
-        doc.setFontSize(9);
-        doc.text("Description", 16, currentY);
-        doc.text("Qty", 125, currentY, { align: "right" });
-        doc.text("Unit Price", 155, currentY, { align: "right" });
-        doc.text("Total", 190, currentY, { align: "right" });
-        currentY += 4;
-
-        doc.setLineWidth(0.2);
-        doc.line(14, currentY, 196, currentY);
-        currentY += 5;
-
-        ppo.items.forEach((item: any) => {
-          const itemTotal = item.total || (item.quantity * item.unitCost);
-          calculatedTotal += itemTotal;
-
-          const descLines = doc.splitTextToSize(item.description, 95);
-          doc.text(descLines, 16, currentY);
-          doc.text(String(item.quantity), 125, currentY, { align: "right" });
-          doc.text(item.unitCost.toLocaleString(), 155, currentY, { align: "right" });
-          doc.text(itemTotal.toLocaleString(), 190, currentY, { align: "right" });
-          
-          currentY += Math.max(descLines.length * 4, 6);
-
-          if (currentY > 270) {
-            doc.addPage();
-            currentY = 20;
-          }
-        });
-      }
-      currentY += 4;
+    sections.unshift({
+      title: "Client Information",
+      type: "text",
+      content: clientInfo,
     });
+
+    const documentOptions: DocumentOptions = {
+      title: "QUOTATION",
+      subtitle: `Quotation #${data.quotationNo}`,
+      companyName: data.agencyName || "Agency OS",
+      footer: "This quotation is valid until the specified date.",
+      sections,
+      metadata: {
+        "Quotation": data.quotationNo,
+        "Client": data.clientName,
+        "Issue Date": data.issueDate,
+        "Valid Until": data.validUntil,
+        "Currency": currency,
+      },
+    };
+
+    return new DocumentBuilder(documentOptions);
   }
 
-  // Fallback to quotation.amount if no line items exist
-  const finalAmount = calculatedTotal > 0 ? calculatedTotal : (quotation.amount || 0);
-
-  // Total Amount Footer Summary
-  currentY += 6;
-  if (currentY > 250) {
-    doc.addPage();
-    currentY = 20;
+  public save(filename: string): void {
+    this.generate().save(filename);
   }
 
-  doc.setFontSize(14);
-  doc.text(
-    `Total Amount: ${quotation.currency} ${finalAmount.toLocaleString()}`,
-    14,
-    currentY
-  );
+  public getBlob(): Blob {
+    return this.generate().getBlob();
+  }
 
-  // Output as Buffer for server download route
-  const pdfOutput = Buffer.from(doc.output("arraybuffer"));
-  return pdfOutput;
+  public getUint8Array(): Uint8Array {
+    return this.generate().getUint8Array();
+  }
+}
+
+export async function generateQuotationPdf(quotation: any): Promise<Uint8Array> {
+  const data: QuotationData = {
+    quotationNo: String(quotation.quotationNo || quotation.id),
+    clientName: quotation.client?.clientName || quotation.client?.name || "Valued Client",
+    clientEmail: quotation.client?.email || "",
+    clientCompany: quotation.client?.companyName || quotation.client?.clientName,
+    issueDate: new Date(quotation.createdAt || Date.now()).toLocaleDateString(),
+    validUntil: quotation.validUntil 
+      ? new Date(quotation.validUntil).toLocaleDateString() 
+      : new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toLocaleDateString(),
+    items: (quotation.lineItems || quotation.items || []).map((item: any) => ({
+      description: item.description || item.name,
+      quantity: item.quantity || 1,
+      unitPrice: item.unitPrice || 0,
+      total: (item.quantity || 1) * (item.unitPrice || 0),
+    })),
+    subtotal: quotation.subtotal || quotation.totalAmount || 0,
+    taxRate: quotation.taxRate || 0,
+    taxAmount: quotation.taxAmount || 0,
+    total: quotation.totalAmount || 0,
+    terms: quotation.terms || quotation.termsAndConditions || [],
+    notes: quotation.notes || undefined,
+    currency: quotation.currency || "USD",
+    agencyName: quotation.agency?.agencyName || "Agency OS",
+  };
+
+  const generator = new QuotationGenerator(data);
+  return generator.getUint8Array();
 }

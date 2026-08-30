@@ -1,3 +1,4 @@
+// app/dashboard/procurement/quotations/[quotationId]/page.tsx
 import { db } from "@/lib/db";
 import { notFound, redirect } from "next/navigation";
 import { getServerSession } from "next-auth";
@@ -21,7 +22,8 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import QuotationDetailClientWrapper from "@/components/quotations/QuotationDetailClientWrapper";
-import {QuotationStatusButtons} from "@/components/quotations/QuotationDetailPage";
+import { QuotationStatusButtons } from "@/components/quotations/QuotationDetailPage";
+import { ProcurementChainStatus } from "@/components/procurement/ProcurementChainStatus";
 
 interface PageProps {
   params: Promise<{ quotationId: string }>;
@@ -44,7 +46,24 @@ export default async function QuotationDetailPage({ params }: PageProps) {
           vendor: { select: { id: true, name: true } },
         },
       },
-      project: { select: { id: true, name: true, projectNo: true, status: true, totalValue: true, currency: true } },
+      project: { 
+        select: { 
+          id: true, 
+          name: true, 
+          projectNo: true, 
+          status: true, 
+          totalValue: true, 
+          currency: true,
+          tasks: {
+            select: {
+              id: true,
+              title: true,
+              taskType: true,
+            },
+            take: 1, // Get the first task associated with the project
+          }
+        } 
+      },
       purchaseOrders: {
         include: {
           vendor: { select: { id: true, name: true } },
@@ -67,6 +86,10 @@ export default async function QuotationDetailPage({ params }: PageProps) {
   if (!quotation || quotation.agencyId !== agencyId) {
     return notFound();
   }
+
+  // Find the task ID from the project's tasks or from planned expenses
+  // Since quotation doesn't have direct taskId, we need to find it through the project
+  const taskId = quotation.project?.tasks?.[0]?.id || null;
 
   // Fetch all active vendors and projects for the agency to power the Edit Form dropdowns
   const [vendors, projects] = await Promise.all([
@@ -140,8 +163,6 @@ export default async function QuotationDetailPage({ params }: PageProps) {
 
         {/* Action Buttons wrapped with Client Component Modal Trigger */}
         <div className="flex items-center gap-2 flex-wrap">
-          {/* PDF Download Button */}
-          
           <Button asChild variant="outline" className="border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-zinc-200">
             <a href={`/api/quotations/${quotation.id}/pdf`} target="_blank" rel="noopener noreferrer">
               <Download className="w-4 h-4 mr-2 text-purple-400" /> Download PDF
@@ -251,6 +272,22 @@ export default async function QuotationDetailPage({ params }: PageProps) {
           </div>
         </div>
       </div>
+
+      {/* ─── PROCUREMENT CHAIN STATUS ─── */}
+      {taskId && (
+        <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-semibold text-zinc-200 flex items-center gap-2">
+              <ClipboardList className="w-4 h-4 text-blue-400" />
+              Procurement Chain
+            </h3>
+            <span className="text-xs text-zinc-500">
+              Task: {quotation.project?.tasks?.[0]?.title || taskId.slice(0, 8)}
+            </span>
+          </div>
+          <ProcurementChainStatus taskId={taskId} />
+        </div>
+      )}
 
       {/* Linked Planned Purchase Orders Section */}
       <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 space-y-4">
@@ -407,6 +444,11 @@ export default async function QuotationDetailPage({ params }: PageProps) {
               <p className="text-xs text-zinc-500 mt-0.5">
                 Project Value: {quotation.project.currency} {quotation.project.totalValue.toLocaleString()}
               </p>
+              {quotation.project.tasks && quotation.project.tasks.length > 0 && (
+                <p className="text-xs text-zinc-500 mt-0.5">
+                  Related Task: <span className="text-zinc-300">{quotation.project.tasks[0].title}</span>
+                </p>
+              )}
             </div>
             <Badge className="bg-zinc-800 text-zinc-300 border-zinc-700">
               {quotation.project.status}

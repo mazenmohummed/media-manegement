@@ -30,14 +30,44 @@ export default async function ContractDetailPage({ params }: PageProps) {
   const session = await getServerSession(authOptions);
   if (!session?.user?.agencyId) return notFound();
 
+  // ✅ CRITICAL FIX: Validate the parameter exists before using it
   const { contractId } = await params;
+  
+  // ✅ If no contractId is provided, return 404
+  if (!contractId) {
+    console.error("[ContractDetailPage] No contractId provided in URL");
+    return notFound();
+  }
 
-  const contract = await db.contract.findUnique({
-    where: { id: contractId },
+  // ✅ Use findFirst with agencyId for security (prevents cross-agency access)
+  const contract = await db.contract.findFirst({
+    where: {
+      id: contractId,
+      agencyId: session.user.agencyId, // Security: ensure contract belongs to agency
+    },
     include: {
-      client: { select: { id: true, clientName: true, email: true, phoneNumber: true } },
-      user: { select: { id: true, name: true, email: true, role: true } },
-      agency: { select: { agencyName: true, defaultCurrency: true } },
+      client: { 
+        select: { 
+          id: true, 
+          clientName: true, 
+          email: true, 
+          phoneNumber: true 
+        } 
+      },
+      user: { 
+        select: { 
+          id: true, 
+          name: true, 
+          email: true, 
+          role: true 
+        } 
+      },
+      agency: { 
+        select: { 
+          agencyName: true, 
+          defaultCurrency: true 
+        } 
+      },
       projects: {
         select: {
           id: true,
@@ -59,12 +89,19 @@ export default async function ContractDetailPage({ params }: PageProps) {
         },
       },
       recurringInvoiceSchedules: {
-        select: { id: true, name: true, amount: true, frequency: true, isActive: true },
+        select: { 
+          id: true, 
+          name: true, 
+          amount: true, 
+          frequency: true, 
+          isActive: true 
+        },
       },
     },
   });
 
-  if (!contract || contract.agencyId !== session.user.agencyId) {
+  // ✅ If contract doesn't exist or doesn't belong to agency, return 404
+  if (!contract) {
     return notFound();
   }
 
@@ -246,7 +283,7 @@ export default async function ContractDetailPage({ params }: PageProps) {
         )}
       </div>
 
-     {/* Recurring Schedules */}
+      {/* Recurring Schedules */}
       <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 pb-3">
           <h3 className="text-sm font-semibold text-zinc-200 flex items-center gap-2">

@@ -289,6 +289,7 @@ enum NotificationType {
     SYSTEM
     WARNING
     ALERT
+    ATTENDANCE
 }
 
 enum AuditAction {
@@ -541,8 +542,31 @@ enum PlannedOrderStatus {
     CONVERTED
 }
 
+// ─── Attendance & Payroll Enums ──────────────────────────────────────────────
+enum PayrollStatus {
+    PENDING
+    PROCESSED
+    PAID
+    CANCELLED
+}
+
+enum PayrollPeriodType {
+    MONTHLY
+    BI_WEEKLY
+    WEEKLY
+    CUSTOM
+}
+
+enum DeductionType {
+    LATE_ARRIVAL
+    EARLY_DEPARTURE
+    ABSENT
+    UNAUTHORIZED_LEAVE
+    OTHER
+}
+
 // --------------------------------------
-// PostgreSQL Converted Models from Mongo Types
+// 2. Core Models
 // --------------------------------------
 
 model WorkingDay {
@@ -630,7 +654,727 @@ model DiscoveryProduct {
 }
 
 // --------------------------------------
-// 2. Identity & SaaS Multi-Tenancy
+// 3. Identity & SaaS Multi-Tenancy
+// --------------------------------------
+
+model Agency {
+    id              String   @id @default(cuid())
+    agencyNo        String?
+    agencyName      String
+    operatorName    String?
+    email           String?  @unique
+    phoneNumber     String?
+    field           String?
+    website         String?
+    logoUrl         String?
+    timezone        String   @default("Africa/Cairo")
+    defaultCurrency String   @default("EGP")
+    billingAddress  String?
+    address         String?
+    addressDetails  Address?
+
+    stripeCustomerId String?
+    hasPaymentMethod Boolean @default(false)
+
+    latitude     Float?
+    longitude    Float?
+    radius       Int          @default(100)
+    workingHours WorkingDay[]
+
+    subscription       Subscription?
+    agencyInvoices     AgencyInvoice[]
+    users              User[]
+    departments        Department[]
+    clients            Client[]
+    clientContacts     ClientContact[]
+    projects           Project[]
+    campaigns          Campaign[]
+    contracts          Contract[]
+    taskCategories     TaskCategory[]
+    tasks              Task[]
+    plannedExpenses    TaskPlannedExpense[]
+    taskExpenses       TaskExpense[]
+    assets             Asset[]
+    expenses           Expense[]
+    payments           Payment[]
+    paymentAllocations PaymentAllocation[]
+    clientInvoices     ClientInvoice[]
+    clientStatements   ClientStatement[]
+    reportingPeriods   ReportingPeriod[]
+    vendors            Vendor[]
+    payouts            Payout[]
+    attendanceLogs     AttendanceLog[]
+    comments           Comment[]
+    notifications      Notification[]
+    todos              Todo[]
+    attachments        Attachment[]
+    auditLogs          AuditLog[]
+    invitations        Invitation[]
+    apiKeys            ApiKey[]
+
+    createdAt     DateTime       @default(now())
+    updatedAt     DateTime       @updatedAt
+    deletedAt     DateTime?
+    webhooks      Webhook[]
+    clientBudgets ClientBudget[]
+
+    exchangeRates             ExchangeRate[]
+    creditNotes               CreditNote[]
+    recurringInvoiceSchedules RecurringInvoiceSchedule[]
+    holidays                  Holiday[]
+    performanceReviews        PerformanceReview[]
+    tags                      Tag[]
+    announcements             Announcement[]
+    emailLogs                 EmailLog[]
+    clientFeedback            ClientFeedback[]
+    approvalRequests          ApprovalRequest[]
+    coupons                   Coupon[]
+    leads                     Lead[]
+    leadInteractions          LeadInteraction[]
+    opportunities             Opportunity[]
+    proposals                 Proposal[]
+
+    milestones               Milestone[]
+    projectTemplates         ProjectTemplate[]
+    quotations               Quotation[]
+    purchaseOrders           PurchaseOrder[]
+    vendorPerformanceReviews VendorPerformanceReview[]
+    concepts                 Concept[]
+    creativeAssets           CreativeAsset[]
+    creativeAssetVersions    CreativeAssetVersion[]
+    digitalAdCampaigns       DigitalAdCampaign[]
+    adMetricSnapshots        AdMetricSnapshot[]
+    knowledgeArticles        KnowledgeArticle[]
+    reports                  Report[]
+    resourceAllocations      ResourceAllocation[]
+    leaves                   Leave[]
+    vendorCategories         VendorCategory[]
+    plannedPurchaseOrders    PlannedPurchaseOrder[]
+    commentMentions          CommentMention[]
+
+    // ─── Payroll Models ──────────────────────────────────────────────────────
+    payrollRecords     PayrollRecord[]
+    payrollSettings    PayrollSetting?
+    payrollPeriods     PayrollPeriod[]
+    deductionRules     DeductionRule[]
+    employeeDeductions EmployeeDeduction[]
+    payslips           Payslip[]
+
+    @@index([agencyName])
+}
+
+model Subscription {
+    id       String             @id @default(cuid())
+    agencyId String             @unique
+    agency   Agency             @relation(fields: [agencyId], references: [id])
+    plan     SubscriptionPlan   @default(FREE)
+    status   SubscriptionStatus @default(TRIALING)
+
+    stripeSubscriptionId String?
+    stripePriceId        String?
+    currentPeriodStart   DateTime?
+    currentPeriodEnd     DateTime?
+    cancelAtPeriodEnd    Boolean   @default(false)
+
+    couponId String?
+    coupon   Coupon? @relation(fields: [couponId], references: [id])
+
+    maxUsers          Int     @default(5)
+    maxProjects       Int     @default(50)
+    hasAssetAccess    Boolean @default(false)
+    geoFencingEnabled Boolean @default(false)
+    advancedReporting Boolean @default(false)
+    hasGeoTracking    Boolean @default(false)
+    hasNotifications  Boolean @default(true)
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+}
+
+model AgencyInvoice {
+    id              String              @id @default(cuid())
+    agencyId        String
+    agency          Agency              @relation(fields: [agencyId], references: [id])
+    type            AgencyInvoiceType   @default(SUBSCRIPTION)
+    amount          Float
+    currency        String              @default("EGP")
+    status          AgencyInvoiceStatus @default(PENDING)
+    stripeInvoiceId String?             @unique
+    pdfUrl          String?
+    plan            SubscriptionPlan
+    periodStart     DateTime
+    periodEnd       DateTime
+    createdAt       DateTime            @default(now())
+
+    @@index([agencyId, createdAt])
+}
+
+model Coupon {
+    id             String             @id @default(cuid())
+    code           String             @unique
+    description    String?
+    discountType   CouponDiscountType @default(PERCENTAGE)
+    discountValue  Float
+    appliesToPlan  SubscriptionPlan?
+    maxRedemptions Int?
+    timesRedeemed  Int                @default(0)
+    validFrom      DateTime           @default(now())
+    validUntil     DateTime?
+    isActive       Boolean            @default(true)
+
+    agencyId      String?
+    agency        Agency?        @relation(fields: [agencyId], references: [id])
+    subscriptions Subscription[]
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@index([isActive, validUntil])
+}
+
+model Invitation {
+    id         String    @id @default(cuid())
+    email      String
+    role       UserRole  @default(CREATIVE)
+    tokenHash  String    @unique
+    expiresAt  DateTime
+    acceptedAt DateTime?
+    agencyId   String
+    sentById   String?
+    sentBy     User?     @relation("InvitationsSent", fields: [sentById], references: [id])
+    agency     Agency    @relation(fields: [agencyId], references: [id])
+    createdAt  DateTime  @default(now())
+    user       User?     @relation("InvitationsAccepted", fields: [userId], references: [id])
+    userId     String?
+
+    @@unique([agencyId, email])
+}
+
+model ApiKey {
+    id      String @id @default(cuid())
+    name    String
+    keyHash String @unique
+
+    scopes    String[] @default(["read:tasks"])
+    rateLimit Int      @default(100)
+
+    lastUsedAt    DateTime?
+    expiresAt     DateTime?
+    revokedAt     DateTime?
+    revokedReason String?
+
+    agencyId  String
+    agency    Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+    createdAt DateTime @default(now())
+
+    @@index([agencyId])
+}
+
+model RefreshToken {
+    id        String    @id @default(cuid())
+    tokenHash String    @unique
+    userId    String
+    user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+    isRevoked Boolean   @default(false)
+    revokedAt DateTime?
+    ipAddress String?
+    userAgent String?
+    createdAt DateTime  @default(now())
+    expiresAt DateTime
+
+    @@index([userId])
+}
+
+model PasswordResetToken {
+    id        String    @id @default(cuid())
+    tokenHash String    @unique
+    userId    String
+    user      User      @relation(fields: [userId], references: [id])
+    expiresAt DateTime
+    usedAt    DateTime?
+    createdAt DateTime  @default(now())
+
+    @@index([userId])
+}
+
+// --------------------------------------
+// 4. Users & HR
+// --------------------------------------
+
+model Department {
+    id             String         @id @default(cuid())
+    name           String
+    agencyId       String
+    agency         Agency         @relation(fields: [agencyId], references: [id])
+    users          User[]
+    createdAt      DateTime       @default(now())
+    updatedAt      DateTime       @updatedAt
+    taskCategories TaskCategory[]
+
+    @@unique([agencyId, name])
+}
+
+model User {
+    id             String    @id @default(cuid())
+    userNo         String?
+    name           String
+    email          String    @unique
+    password       String?
+    avatarUrl      String?
+    phoneNumber    String?
+    userType       UserType  @default(FULL_TIME)
+    role           UserRole  @default(CREATIVE)
+    baseSalary     Float?    @default(0.0)
+    walletBalance  Float     @default(0.0)
+    verifiedSkills String[]
+    efficiencyRate Float?    @default(1.0)
+    leaves         Leave[]
+    isActive       Boolean   @default(true)
+    lastLoginAt    DateTime?
+
+    twoFactorEnabled Boolean @default(false)
+    twoFactorSecret  String?
+
+    clientId String?
+    client   Client? @relation("ClientPortalUsers", fields: [clientId], references: [id])
+
+    agencyId     String
+    agency       Agency      @relation(fields: [agencyId], references: [id])
+    departmentId String?
+    department   Department? @relation(fields: [departmentId], references: [id])
+
+    tasks Task[] @relation("TaskAssignees")
+
+    attendanceLogs  AttendanceLog[]
+    comments        Comment[]
+    financialLedger FinancialTransaction[]
+    payouts         Payout[]
+    expenses        Expense[]
+    notifications   Notification[]
+    taskSessions    TaskSession[]
+    createdTodos    Todo[]                 @relation("TodoCreator")
+    attachments     Attachment[]
+    auditLogs       AuditLog[]
+
+    createdAt           DateTime     @default(now())
+    updatedAt           DateTime     @updatedAt
+    deletedAt           DateTime?
+    invitationsSent     Invitation[] @relation("InvitationsSent")
+    invitationsAccepted Invitation[] @relation("InvitationsAccepted")
+
+    refreshTokens         RefreshToken[]
+    passwordResetTokens   PasswordResetToken[]
+    reviewsReceived       PerformanceReview[]    @relation("ReviewedUser")
+    reviewsGiven          PerformanceReview[]    @relation("ReviewerUser")
+    announcementsAuthored Announcement[]
+    approvalRequestsMade  ApprovalRequest[]      @relation("ApprovalRequester")
+    approvalDecisionsMade ApprovalRequest[]      @relation("ApprovalDecider")
+    leads                 Lead[]                 @relation("LeadOwner")
+    leadInteractions      LeadInteraction[]      @relation("InteractionCreator")
+    milestonesOwned       Milestone[]            @relation("MilestoneOwner")
+    creativeAssetReviews  CreativeAssetVersion[] @relation("CreativeAssetReviewer")
+    resourceAllocations   ResourceAllocation[]
+
+    assignedOpportunities Opportunity[]    @relation("UserOpportunities")
+    proposals             Proposal[]       @relation("ProposalUser")
+    contracts             Contract[]       @relation("ContractUser")
+    commentMentions       CommentMention[]
+
+    // ─── Payroll Relations ──────────────────────────────────────────────────
+    payrollRecords     PayrollRecord[]
+    employeeDeductions EmployeeDeduction[]
+    payslips           Payslip[]
+
+    @@index([agencyId, role])
+    @@index([agencyId, isActive])
+    @@index([clientId])
+}
+
+model FinancialTransaction {
+    id          String            @id @default(cuid())
+    type        TransactionType
+    status      TransactionStatus @default(PENDING)
+    amount      Float
+    currency    String            @default("EGP")
+    description String?
+
+    userId String
+    user   User    @relation(fields: [userId], references: [id])
+    taskId String?
+    task   Task?   @relation(fields: [taskId], references: [id])
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@index([userId, status])
+    @@index([taskId])
+}
+
+model AttendanceLog {
+    id           String              @id @default(cuid())
+    date         DateTime
+    checkInTime  DateTime
+    checkOutTime DateTime?
+    isLate       Boolean             @default(false)
+    isEarlyOut   Boolean             @default(false)
+    totalHours   Float?
+    status       AttendanceLogStatus @default(PRESENT)
+    type         AttendanceLogType   @default(OFFICE)
+
+    // Location tracking fields
+    checkInLatitude   Float?
+    checkInLongitude  Float?
+    checkOutLatitude  Float?
+    checkOutLongitude Float?
+
+    userId   String
+    user     User    @relation(fields: [userId], references: [id])
+    agencyId String
+    agency   Agency  @relation(fields: [agencyId], references: [id])
+    taskId   String?
+    task     Task?   @relation(fields: [taskId], references: [id])
+
+    taskSessions       TaskSession[]
+    createdAt          DateTime            @default(now())
+    updatedAt          DateTime            @updatedAt
+    employeeDeductions EmployeeDeduction[]
+
+    @@unique([userId, date])
+    @@index([agencyId, date])
+}
+
+model TaskSession {
+    id            String          @id @default(cuid())
+    startTime     DateTime
+    endTime       DateTime?
+    totalDuration Float?
+    sessionType   TaskSessionType @default(STANDARD)
+
+    taskId          String
+    task            Task           @relation(fields: [taskId], references: [id])
+    userId          String
+    user            User           @relation(fields: [userId], references: [id])
+    attendanceLogId String?
+    attendanceLog   AttendanceLog? @relation(fields: [attendanceLogId], references: [id])
+
+    isBillable Boolean @default(true)
+    hourlyRate Float?
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@index([taskId, userId])
+}
+
+model Payout {
+    id          String   @id @default(cuid())
+    payoutNo    String?
+    amount      Float
+    currency    String   @default("EGP")
+    category    String
+    status      String   @default("PAID")
+    date        DateTime @default(now())
+    description String?
+
+    userId   String
+    user     User   @relation(fields: [userId], references: [id])
+    agencyId String
+    agency   Agency @relation(fields: [agencyId], references: [id])
+
+    createdAt DateTime @default(now())
+
+    @@index([agencyId, date])
+    @@index([userId])
+}
+
+model Holiday {
+    id                String   @id @default(cuid())
+    name              String
+    date              DateTime
+    isRecurringYearly Boolean  @default(false)
+    isPaid            Boolean  @default(true)
+
+    agencyId String
+    agency   Agency @relation(fields: [agencyId], references: [id])
+
+    createdAt DateTime @default(now())
+
+    @@unique([agencyId, name, date])
+    @@index([agencyId, date])
+}
+
+model PerformanceReview {
+    id           String                  @id @default(cuid())
+    periodStart  DateTime
+    periodEnd    DateTime
+    overallScore Float?
+    strengths    String?
+    improvements String?
+    goals        String?
+    status       PerformanceReviewStatus @default(DRAFT)
+
+    userId     String
+    user       User    @relation("ReviewedUser", fields: [userId], references: [id])
+    reviewerId String?
+    reviewer   User?   @relation("ReviewerUser", fields: [reviewerId], references: [id])
+    agencyId   String
+    agency     Agency  @relation(fields: [agencyId], references: [id])
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@index([userId, periodStart])
+    @@index([agencyId])
+}
+
+// ─── Payroll Models ──────────────────────────────────────────────────────────
+
+model PayrollSetting {
+    id       String @id @default(cuid())
+    agencyId String @unique
+    agency   Agency @relation(fields: [agencyId], references: [id])
+
+    // Default settings
+    payPeriodType               PayrollPeriodType @default(MONTHLY)
+    payDay                      Int               @default(25) // Day of month
+    currency                    String            @default("EGP")
+    overtimeRateMultiplier      Float             @default(1.5)
+    lateArrivalDeductionRate    Float             @default(0.0) // Per minute
+    earlyDepartureDeductionRate Float             @default(0.0) // Per minute
+    absentDayDeductionRate      Float             @default(1.0) // Full day
+
+    // Tax & compliance
+    taxRate             Float? @default(0.0)
+    socialSecurityRate  Float? @default(0.0)
+    healthInsuranceRate Float? @default(0.0)
+
+    // Auto-checkout settings
+    autoCheckoutEnabled Boolean @default(true)
+    autoCheckoutHours   Float   @default(12.0)
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+}
+
+model PayrollPeriod {
+    id       String @id @default(cuid())
+    agencyId String
+    agency   Agency @relation(fields: [agencyId], references: [id])
+
+    name        String
+    periodType  PayrollPeriodType @default(MONTHLY)
+    periodStart DateTime
+    periodEnd   DateTime
+    paymentDate DateTime?
+    status      PayrollStatus     @default(PENDING)
+
+    // Totals
+    totalRegularHours  Float @default(0.0)
+    totalOvertimeHours Float @default(0.0)
+    totalGrossPay      Float @default(0.0)
+    totalDeductions    Float @default(0.0)
+    totalNetPay        Float @default(0.0)
+
+    processedAt DateTime?
+    notes       String?
+
+    payrollRecords PayrollRecord[]
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@unique([agencyId, periodStart, periodEnd])
+    @@index([agencyId, status])
+}
+
+model PayrollRecord {
+    id         String  @id @default(cuid())
+    employeeId String
+    agencyId   String
+    periodId   String?
+
+    // Period info
+    periodStart DateTime
+    periodEnd   DateTime
+    payPeriod   String? // e.g., "January 2024"
+
+    // Attendance metrics
+    totalHours    Float @default(0.0)
+    regularHours  Float @default(0.0)
+    overtimeHours Float @default(0.0)
+
+    // Attendance breakdown
+    presentDays     Int @default(0)
+    absentDays      Int @default(0)
+    lateDays        Int @default(0)
+    lateMinutes     Int @default(0)
+    earlyDepartures Int @default(0)
+
+    // Financial breakdown
+    baseSalary    Float @default(0.0)
+    regularPay    Float @default(0.0)
+    overtimePay   Float @default(0.0)
+    bonusPay      Float @default(0.0)
+    commissionPay Float @default(0.0)
+
+    // Deductions
+    lateDeduction    Float @default(0.0)
+    absenceDeduction Float @default(0.0)
+    taxDeduction     Float @default(0.0)
+    socialSecurity   Float @default(0.0)
+    healthInsurance  Float @default(0.0)
+    otherDeductions  Float @default(0.0)
+    totalDeductions  Float @default(0.0)
+
+    // Final amounts
+    grossPay Float @default(0.0)
+    netPay   Float @default(0.0)
+
+    // Status
+    status PayrollStatus @default(PENDING)
+
+    // Metadata
+    attendanceSummary Json? // Detailed attendance data
+    notes             String?
+    processedAt       DateTime?
+    paidAt            DateTime?
+
+    // Relations
+    employee   User                @relation(fields: [employeeId], references: [id])
+    agency     Agency              @relation(fields: [agencyId], references: [id])
+    period     PayrollPeriod?      @relation(fields: [periodId], references: [id])
+    deductions EmployeeDeduction[] @relation("PayrollDeductions")
+
+    // One-to-One relation with Payslip - fields defined HERE
+    payslipId String?  @unique
+    payslip   Payslip? @relation(fields: [payslipId], references: [id])
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@index([employeeId, periodStart])
+    @@index([agencyId, status])
+    @@index([periodId])
+}
+
+model DeductionRule {
+    id       String @id @default(cuid())
+    agencyId String
+    agency   Agency @relation(fields: [agencyId], references: [id])
+
+    name        String
+    description String?
+    type        DeductionType
+    isActive    Boolean       @default(true)
+
+    // Deduction calculation
+    calculationType String @default("FIXED") // FIXED, PERCENTAGE, PER_UNIT
+    value           Float  @default(0.0)
+    maxAmount       Float? // Maximum deduction cap
+    minAmount       Float? // Minimum deduction
+
+    // Applicability
+    appliesToUserTypes UserType[]
+    appliesToRoles     UserRole[]
+
+    // Grace period (minutes)
+    gracePeriod Int @default(15)
+
+    createdAt          DateTime            @default(now())
+    updatedAt          DateTime            @updatedAt
+    employeeDeductions EmployeeDeduction[]
+
+    @@index([agencyId, isActive])
+}
+
+model EmployeeDeduction {
+    id         String @id @default(cuid())
+    employeeId String
+    agencyId   String
+
+    // Reference
+    ruleId          String?
+    rule            DeductionRule? @relation(fields: [ruleId], references: [id])
+    payrollRecordId String?
+    payrollRecord   PayrollRecord? @relation("PayrollDeductions", fields: [payrollRecordId], references: [id])
+
+    // Details
+    type        DeductionType
+    amount      Float
+    currency    String        @default("EGP")
+    description String?
+    date        DateTime      @default(now())
+
+    // Attendance reference (if applicable)
+    attendanceLogId String?
+    attendanceLog   AttendanceLog? @relation(fields: [attendanceLogId], references: [id])
+
+    // Relations
+    employee User   @relation(fields: [employeeId], references: [id])
+    agency   Agency @relation(fields: [agencyId], references: [id])
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@index([employeeId, date])
+    @@index([agencyId])
+}
+
+model Payslip {
+    id         String @id @default(cuid())
+    payslipNo  String @unique
+    employeeId String
+    agencyId   String
+
+    // Period
+    periodStart DateTime
+    periodEnd   DateTime
+    payPeriod   String
+
+    // Earnings
+    baseSalary    Float @default(0.0)
+    regularPay    Float @default(0.0)
+    overtimePay   Float @default(0.0)
+    bonusPay      Float @default(0.0)
+    commissionPay Float @default(0.0)
+    otherEarnings Float @default(0.0)
+    totalEarnings Float @default(0.0)
+
+    // Deductions
+    lateDeduction    Float @default(0.0)
+    absenceDeduction Float @default(0.0)
+    taxDeduction     Float @default(0.0)
+    socialSecurity   Float @default(0.0)
+    healthInsurance  Float @default(0.0)
+    otherDeductions  Float @default(0.0)
+    totalDeductions  Float @default(0.0)
+
+    // Net pay
+    netPay Float @default(0.0)
+
+    // Status
+    status PayrollStatus @default(PENDING)
+
+    // File
+    pdfUrl  String?
+    fileUrl String?
+
+    // Relations - Reverse side with NO fields/references arguments
+    payrollRecordId String?        @unique
+    payrollRecord   PayrollRecord? @relation
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+    agency    Agency   @relation(fields: [agencyId], references: [id])
+    user      User?    @relation(fields: [userId], references: [id])
+    userId    String?
+
+    @@index([employeeId, payPeriod])
+    @@index([agencyId, periodStart])
+}
+
+// --------------------------------------
+// 5. Clients, Projects, Campaigns & Contracts
 // --------------------------------------
 
 model Lead {
@@ -766,7 +1510,7 @@ model ProposalLineItem {
     description String
     quantity    Float  @default(1.0)
     unitPrice   Float  @default(0.0)
-    total       Float  @default(0.0) // Computed as quantity * unitPrice
+    total       Float  @default(0.0)
 
     proposalId String
     proposal   Proposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
@@ -774,459 +1518,6 @@ model ProposalLineItem {
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
 }
-
-model Agency {
-    id              String   @id @default(cuid())
-    agencyNo        String?
-    agencyName      String
-    operatorName    String?
-    email           String?  @unique
-    phoneNumber     String?
-    field           String?
-    website         String?
-    logoUrl         String?
-    timezone        String   @default("Africa/Cairo")
-    defaultCurrency String   @default("EGP")
-    billingAddress  String?
-    address         String?
-    addressDetails  Address?
-
-    stripeCustomerId String?
-    hasPaymentMethod Boolean @default(false)
-
-    latitude     Float?
-    longitude    Float?
-    radius       Int          @default(100)
-    workingHours WorkingDay[]
-
-    subscription       Subscription?
-    agencyInvoices     AgencyInvoice[]
-    users              User[]
-    departments        Department[]
-    clients            Client[]
-    clientContacts     ClientContact[]
-    projects           Project[]
-    campaigns          Campaign[]
-    contracts          Contract[]
-    taskCategories     TaskCategory[]
-    tasks              Task[]
-    plannedExpenses    TaskPlannedExpense[]
-    taskExpenses       TaskExpense[]
-    assets             Asset[]
-    expenses           Expense[]
-    payments           Payment[]
-    paymentAllocations PaymentAllocation[]
-    clientInvoices     ClientInvoice[]
-    clientStatements   ClientStatement[]
-    reportingPeriods   ReportingPeriod[]
-    vendors            Vendor[]
-    payouts            Payout[]
-    attendanceLogs     AttendanceLog[]
-    comments           Comment[]
-    notifications      Notification[]
-    todos              Todo[]
-    attachments        Attachment[]
-    auditLogs          AuditLog[]
-    invitations        Invitation[]
-    apiKeys            ApiKey[]
-
-    createdAt     DateTime       @default(now())
-    updatedAt     DateTime       @updatedAt
-    deletedAt     DateTime?
-    webhooks      Webhook[]
-    clientBudgets ClientBudget[]
-
-    exchangeRates             ExchangeRate[]
-    creditNotes               CreditNote[]
-    recurringInvoiceSchedules RecurringInvoiceSchedule[]
-    holidays                  Holiday[]
-    performanceReviews        PerformanceReview[]
-    tags                      Tag[]
-    announcements             Announcement[]
-    emailLogs                 EmailLog[]
-    clientFeedback            ClientFeedback[]
-    approvalRequests          ApprovalRequest[]
-    coupons                   Coupon[]
-    leads                     Lead[]
-    leadInteractions          LeadInteraction[]
-    opportunities             Opportunity[]
-    proposals                 Proposal[]
-
-    milestones               Milestone[]
-    projectTemplates         ProjectTemplate[]
-    quotations               Quotation[]
-    purchaseOrders           PurchaseOrder[]
-    vendorPerformanceReviews VendorPerformanceReview[]
-    concepts                 Concept[]
-    creativeAssets           CreativeAsset[]
-    creativeAssetVersions    CreativeAssetVersion[]
-    digitalAdCampaigns       DigitalAdCampaign[]
-    adMetricSnapshots        AdMetricSnapshot[]
-    knowledgeArticles        KnowledgeArticle[]
-    reports                  Report[]
-    resourceAllocations      ResourceAllocation[]
-    leaves                   Leave[]
-    vendorCategories         VendorCategory[]
-    plannedPurchaseOrders    PlannedPurchaseOrder[]
-
-    @@index([agencyName])
-}
-
-model Subscription {
-    id       String             @id @default(cuid())
-    agencyId String             @unique
-    agency   Agency             @relation(fields: [agencyId], references: [id])
-    plan     SubscriptionPlan   @default(FREE)
-    status   SubscriptionStatus @default(TRIALING)
-
-    stripeSubscriptionId String?
-    stripePriceId        String?
-    currentPeriodStart   DateTime?
-    currentPeriodEnd     DateTime?
-    cancelAtPeriodEnd    Boolean   @default(false)
-
-    couponId String?
-    coupon   Coupon? @relation(fields: [couponId], references: [id])
-
-    maxUsers          Int     @default(5)
-    maxProjects       Int     @default(50)
-    hasAssetAccess    Boolean @default(false)
-    geoFencingEnabled Boolean @default(false)
-    advancedReporting Boolean @default(false)
-    hasGeoTracking    Boolean @default(false)
-    hasNotifications  Boolean @default(true)
-
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
-}
-
-model AgencyInvoice {
-    id              String              @id @default(cuid())
-    agencyId        String
-    agency          Agency              @relation(fields: [agencyId], references: [id])
-    type            AgencyInvoiceType   @default(SUBSCRIPTION)
-    amount          Float
-    currency        String              @default("EGP")
-    status          AgencyInvoiceStatus @default(PENDING)
-    stripeInvoiceId String?             @unique
-    pdfUrl          String?
-    plan            SubscriptionPlan
-    periodStart     DateTime
-    periodEnd       DateTime
-    createdAt       DateTime            @default(now())
-
-    @@index([agencyId, createdAt])
-}
-
-model Coupon {
-    id             String             @id @default(cuid())
-    code           String             @unique
-    description    String?
-    discountType   CouponDiscountType @default(PERCENTAGE)
-    discountValue  Float
-    appliesToPlan  SubscriptionPlan?
-    maxRedemptions Int?
-    timesRedeemed  Int                @default(0)
-    validFrom      DateTime           @default(now())
-    validUntil     DateTime?
-    isActive       Boolean            @default(true)
-
-    agencyId      String?
-    agency        Agency?        @relation(fields: [agencyId], references: [id])
-    subscriptions Subscription[]
-
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
-
-    @@index([isActive, validUntil])
-}
-
-model Invitation {
-    id         String    @id @default(cuid())
-    email      String
-    role       UserRole  @default(CREATIVE)
-    tokenHash  String    @unique
-    expiresAt  DateTime
-    acceptedAt DateTime?
-    agencyId   String
-    sentById   String?
-    sentBy     User?     @relation("InvitationsSent", fields: [sentById], references: [id])
-    agency     Agency    @relation(fields: [agencyId], references: [id])
-    createdAt  DateTime  @default(now())
-    user       User?     @relation("InvitationsAccepted", fields: [userId], references: [id])
-    userId     String?
-
-    @@unique([agencyId, email])
-}
-
-model ApiKey {
-    id      String @id @default(cuid())
-    name    String
-    keyHash String @unique
-
-    scopes    String[] @default(["read:tasks"])
-    rateLimit Int      @default(100)
-
-    lastUsedAt    DateTime?
-    expiresAt     DateTime?
-    revokedAt     DateTime?
-    revokedReason String?
-
-    agencyId  String
-    agency    Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-    createdAt DateTime @default(now())
-
-    // Fast lookups when listing agency keys or verifying active keys
-    @@index([agencyId])
-}
-
-model RefreshToken {
-    id        String    @id @default(cuid())
-    tokenHash String    @unique
-    userId    String
-    user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-    isRevoked Boolean   @default(false)
-    revokedAt DateTime?
-    ipAddress String?
-    userAgent String?
-    createdAt DateTime  @default(now())
-    expiresAt DateTime
-
-    @@index([userId])
-}
-
-model PasswordResetToken {
-    id        String    @id @default(cuid())
-    tokenHash String    @unique
-    userId    String
-    user      User      @relation(fields: [userId], references: [id])
-    expiresAt DateTime
-    usedAt    DateTime?
-    createdAt DateTime  @default(now())
-
-    @@index([userId])
-}
-
-// --------------------------------------
-// 3. Users & HR
-// --------------------------------------
-
-model Department {
-    id             String         @id @default(cuid())
-    name           String
-    agencyId       String
-    agency         Agency         @relation(fields: [agencyId], references: [id])
-    users          User[]
-    createdAt      DateTime       @default(now())
-    updatedAt      DateTime       @updatedAt
-    taskCategories TaskCategory[]
-
-    @@unique([agencyId, name])
-}
-
-model User {
-    id             String    @id @default(cuid())
-    userNo         String?
-    name           String
-    email          String    @unique
-    password       String?
-    avatarUrl      String?
-    phoneNumber    String?
-    userType       UserType  @default(FULL_TIME)
-    role           UserRole  @default(CREATIVE)
-    baseSalary     Float?    @default(0.0)
-    walletBalance  Float     @default(0.0)
-    verifiedSkills String[]
-    efficiencyRate Float?    @default(1.0)
-    leaves         Leave[]
-    isActive       Boolean   @default(true)
-    lastLoginAt    DateTime?
-
-    twoFactorEnabled Boolean @default(false)
-    twoFactorSecret  String?
-
-    clientId String?
-    client   Client? @relation("ClientPortalUsers", fields: [clientId], references: [id])
-
-    agencyId     String
-    agency       Agency      @relation(fields: [agencyId], references: [id])
-    departmentId String?
-    department   Department? @relation(fields: [departmentId], references: [id])
-
-    tasks Task[] @relation("TaskAssignees")
-
-    attendanceLogs  AttendanceLog[]
-    comments        Comment[]
-    financialLedger FinancialTransaction[]
-    payouts         Payout[]
-    expenses        Expense[]
-    notifications   Notification[]
-    taskSessions    TaskSession[]
-    createdTodos    Todo[]                 @relation("TodoCreator")
-    attachments     Attachment[]
-    auditLogs       AuditLog[]
-
-    createdAt           DateTime     @default(now())
-    updatedAt           DateTime     @updatedAt
-    deletedAt           DateTime?
-    invitationsSent     Invitation[] @relation("InvitationsSent")
-    invitationsAccepted Invitation[] @relation("InvitationsAccepted")
-
-    refreshTokens         RefreshToken[]
-    passwordResetTokens   PasswordResetToken[]
-    reviewsReceived       PerformanceReview[]    @relation("ReviewedUser")
-    reviewsGiven          PerformanceReview[]    @relation("ReviewerUser")
-    announcementsAuthored Announcement[]
-    approvalRequestsMade  ApprovalRequest[]      @relation("ApprovalRequester")
-    approvalDecisionsMade ApprovalRequest[]      @relation("ApprovalDecider")
-    leads                 Lead[]                 @relation("LeadOwner")
-    leadInteractions      LeadInteraction[]      @relation("InteractionCreator")
-    milestonesOwned       Milestone[]            @relation("MilestoneOwner")
-    creativeAssetReviews  CreativeAssetVersion[] @relation("CreativeAssetReviewer")
-    resourceAllocations   ResourceAllocation[]
-
-    assignedOpportunities Opportunity[] @relation("UserOpportunities")
-    proposals             Proposal[]    @relation("ProposalUser")
-    contracts             Contract[]    @relation("ContractUser")
-
-    @@index([agencyId, role])
-    @@index([agencyId, isActive])
-    @@index([clientId])
-}
-
-model FinancialTransaction {
-    id          String            @id @default(cuid())
-    type        TransactionType
-    status      TransactionStatus @default(PENDING)
-    amount      Float
-    currency    String            @default("EGP")
-    description String?
-
-    userId String
-    user   User    @relation(fields: [userId], references: [id])
-    taskId String?
-    task   Task?   @relation(fields: [taskId], references: [id])
-
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
-
-    @@index([userId, status])
-    @@index([taskId])
-}
-
-model AttendanceLog {
-    id           String              @id @default(cuid())
-    date         DateTime
-    checkInTime  DateTime
-    checkOutTime DateTime?
-    isLate       Boolean             @default(false)
-    isEarlyOut   Boolean             @default(false)
-    totalHours   Float?
-    status       AttendanceLogStatus @default(PRESENT)
-    type         AttendanceLogType   @default(OFFICE)
-
-    userId   String
-    user     User    @relation(fields: [userId], references: [id])
-    agencyId String
-    agency   Agency  @relation(fields: [agencyId], references: [id])
-    taskId   String?
-    task     Task?   @relation(fields: [taskId], references: [id])
-
-    taskSessions TaskSession[]
-    createdAt    DateTime      @default(now())
-    updatedAt    DateTime      @updatedAt
-
-    @@unique([userId, date])
-    @@index([agencyId, date])
-}
-
-model TaskSession {
-    id            String          @id @default(cuid())
-    startTime     DateTime
-    endTime       DateTime?
-    totalDuration Float?
-    sessionType   TaskSessionType @default(STANDARD)
-
-    taskId          String
-    task            Task           @relation(fields: [taskId], references: [id])
-    userId          String
-    user            User           @relation(fields: [userId], references: [id])
-    attendanceLogId String?
-    attendanceLog   AttendanceLog? @relation(fields: [attendanceLogId], references: [id])
-
-    isBillable Boolean @default(true)
-    hourlyRate Float?
-
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
-
-    @@index([taskId, userId])
-}
-
-model Payout {
-    id          String   @id @default(cuid())
-    payoutNo    String?
-    amount      Float
-    currency    String   @default("EGP")
-    category    String
-    status      String   @default("PAID")
-    date        DateTime @default(now())
-    description String?
-
-    userId   String
-    user     User   @relation(fields: [userId], references: [id])
-    agencyId String
-    agency   Agency @relation(fields: [agencyId], references: [id])
-
-    createdAt DateTime @default(now())
-
-    @@index([agencyId, date])
-    @@index([userId])
-}
-
-model Holiday {
-    id                String   @id @default(cuid())
-    name              String
-    date              DateTime
-    isRecurringYearly Boolean  @default(false)
-    isPaid            Boolean  @default(true)
-
-    agencyId String
-    agency   Agency @relation(fields: [agencyId], references: [id])
-
-    createdAt DateTime @default(now())
-
-    @@unique([agencyId, name, date])
-    @@index([agencyId, date])
-}
-
-model PerformanceReview {
-    id           String                  @id @default(cuid())
-    periodStart  DateTime
-    periodEnd    DateTime
-    overallScore Float?
-    strengths    String?
-    improvements String?
-    goals        String?
-    status       PerformanceReviewStatus @default(DRAFT)
-
-    userId     String
-    user       User    @relation("ReviewedUser", fields: [userId], references: [id])
-    reviewerId String?
-    reviewer   User?   @relation("ReviewerUser", fields: [reviewerId], references: [id])
-    agencyId   String
-    agency     Agency  @relation(fields: [agencyId], references: [id])
-
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
-
-    @@index([userId, periodStart])
-    @@index([agencyId])
-}
-
-// --------------------------------------
-// 4. Clients, Projects, Campaigns & Contracts
-// --------------------------------------
 
 model Client {
     id               String           @id @default(cuid())
@@ -1460,6 +1751,7 @@ model Project {
     updatedAt             DateTime               @updatedAt
     deletedAt             DateTime?
     plannedPurchaseOrders PlannedPurchaseOrder[]
+    comments              Comment[]
 
     @@index([agencyId, projectNo])
     @@index([agencyId, status])
@@ -1551,7 +1843,7 @@ model ProjectTemplateItem {
 }
 
 // --------------------------------------
-// 5. Production, Tasks & Expenses
+// 6. Production, Tasks & Expenses
 // --------------------------------------
 
 model TaskCategory {
@@ -1719,19 +2011,37 @@ model TaskExpense {
     @@index([vendorId])
 }
 
-model Comment {
+model CommentMention {
     id        String   @id @default(cuid())
-    text      String
-    authorId  String?
-    author    User?    @relation(fields: [authorId], references: [id])
-    taskId    String
-    task      Task     @relation(fields: [taskId], references: [id])
+    commentId String
+    comment   Comment  @relation(fields: [commentId], references: [id], onDelete: Cascade)
+    userId    String
+    user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
     agencyId  String
     agency    Agency   @relation(fields: [agencyId], references: [id])
     createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
 
-    @@index([taskId, createdAt])
+    @@unique([commentId, userId])
+    @@index([userId])
+    @@index([agencyId])
+}
+
+model Comment {
+    id              String           @id @default(cuid())
+    text            String
+    taskId          String?
+    task            Task?            @relation(fields: [taskId], references: [id], onDelete: Cascade)
+    projectId       String?
+    project         Project?         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+    authorId        String?
+    author          User?            @relation(fields: [authorId], references: [id])
+    agencyId        String
+    agency          Agency           @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+    createdAt       DateTime         @default(now())
+    commentMentions CommentMention[]
+
+    @@index([taskId])
+    @@index([projectId])
 }
 
 model Todo {
@@ -1953,7 +2263,7 @@ model ResourceAllocation {
 }
 
 // --------------------------------------
-// 6. Invoicing, Payments, Vendors & Assets
+// 7. Invoicing, Payments, Vendors & Assets
 // --------------------------------------
 
 model ClientInvoice {
@@ -2199,14 +2509,15 @@ model ExchangeRate {
 }
 
 model Vendor {
-    id          String       @id @default(cuid())
-    vendorNo    String?
-    name        String
-    email       String?
-    phoneNumber String?
-    status      VendorStatus @default(ACTIVE)
+    id            String       @id @default(cuid())
+    vendorNo      String?
+    name          String
+    email         String?
+    phoneNumber   String?
+    status        VendorStatus @default(ACTIVE)
+    averageRating Float?       @default(0.0)
+    reviewCount   Int          @default(0)
 
-    // Updated category relation fields:
     categoryId String?
     category   VendorCategory? @relation("VendorCategoryRelation", fields: [categoryId], references: [id], onDelete: SetNull)
 
@@ -2236,7 +2547,7 @@ model VendorCategory {
     id          String   @id @default(cuid())
     name        String
     description String?
-    color       String? // Optional: for UI badge coloring (e.g., "#3b82f6")
+    color       String?
     agencyId    String
     agency      Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
     vendors     Vendor[] @relation("VendorCategoryRelation")
@@ -2244,7 +2555,7 @@ model VendorCategory {
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
 
-    @@unique([agencyId, name]) // Ensures category names are unique per agency
+    @@unique([agencyId, name])
     @@index([agencyId])
 }
 
@@ -2252,8 +2563,8 @@ model Quotation {
     id            String          @id @default(cuid())
     quotationNo   String?
     description   String?
-    amount        Float? // Final or approved amount
-    plannedAmount Float?          @default(0.0) // Initial planned amount
+    amount        Float?
+    plannedAmount Float?          @default(0.0)
     currency      String          @default("EGP")
     status        QuotationStatus @default(REQUESTED)
     validUntil    DateTime?
@@ -2268,7 +2579,7 @@ model Quotation {
 
     vendors        QuotationVendor[]      @relation("QuotationVendors")
     purchaseOrders PurchaseOrder[]
-    plannedOrders  PlannedPurchaseOrder[] // Linked planned orders
+    plannedOrders  PlannedPurchaseOrder[]
 
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
@@ -2289,11 +2600,10 @@ model QuotationVendor {
     @@unique([quotationId, vendorId])
 }
 
-// Planned purchase orders stage with many-to-many vendors support
 model PlannedPurchaseOrder {
     id                   String             @id @default(cuid())
     plannedPoNo          String?
-    status               PlannedOrderStatus @default(PLANNED) // PLANNED, APPROVED, REJECTED
+    status               PlannedOrderStatus @default(PLANNED)
     totalAmount          Float              @default(0.0)
     currency             String             @default("EGP")
     expectedDeliveryDate DateTime?
@@ -2302,7 +2612,6 @@ model PlannedPurchaseOrder {
     quotationId String?
     quotation   Quotation? @relation(fields: [quotationId], references: [id])
 
-    // Kept single vendor field as optional if needed, or manage via vendors relation below
     vendorId String?
     vendor   Vendor? @relation(fields: [vendorId], references: [id])
 
@@ -2348,8 +2657,12 @@ model PurchaseOrder {
     id                   String              @id @default(cuid())
     poNo                 String?
     status               PurchaseOrderStatus @default(DRAFT)
+    subtotal             Float               @default(0.0)
+    taxRate              Float               @default(0.0)
+    taxAmount            Float               @default(0.0)
     totalAmount          Float               @default(0.0)
     currency             String              @default("EGP")
+    sentAt               DateTime?
     expectedDeliveryDate DateTime?
     deliveredAt          DateTime?
     notes                String?
@@ -2365,8 +2678,9 @@ model PurchaseOrder {
 
     items PurchaseOrderItem[]
 
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+    createdAt                DateTime                  @default(now())
+    updatedAt                DateTime                  @updatedAt
+    vendorPerformanceReviews VendorPerformanceReview[]
 
     @@unique([agencyId, poNo])
     @@index([vendorId, status])
@@ -2399,6 +2713,9 @@ model VendorPerformanceReview {
     project   Project? @relation(fields: [projectId], references: [id])
     agencyId  String
     agency    Agency   @relation(fields: [agencyId], references: [id])
+
+    purchaseOrderId String?
+    purchaseOrder   PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id])
 
     createdAt DateTime @default(now())
 
@@ -2453,7 +2770,7 @@ model Expense {
 }
 
 // --------------------------------------
-// 7. Collaboration, Files & Audit
+// 8. Collaboration, Files & Audit
 // --------------------------------------
 
 model Notification {

@@ -1,3 +1,4 @@
+// components/layout/Sidebar.tsx
 "use client";
 
 import { useEffect, useState } from "react";
@@ -6,7 +7,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useSession, signOut } from "next-auth/react";
 import { motion, AnimatePresence } from "framer-motion";
 import nextDynamic from "next/dynamic";
-import { useAttendance } from "@/components/main/attendance/Attendancecontext";
+import { useAttendance } from "@/components/main/attendance/AttendanceContext";
 import { 
   Users, 
   Briefcase, 
@@ -34,9 +35,14 @@ import {
   CreditCard,
   PieChart,
   Repeat,
-  FileSpreadsheet, 
+  FileSpreadsheet,
+  Send,
+  CalendarDays,
+  ClipboardList,
+  ShoppingCart,
 } from "lucide-react";
-import { NotificationDrawer } from "./EmployeeDashboard";
+import { NotificationDrawer } from "../main/EmployeeDashboard";
+import { ProcurementChainWidget } from "@/components/procurement/ProcurementChainWidget";
 
 // Define the interface for navigation items
 interface NavItem {
@@ -68,12 +74,14 @@ export default function Sidebar() {
   const [unreadCount, setUnreadCount] = useState(0);
   const [notifOpen, setNotifOpen] = useState(false);
   const [notifications, setNotifications] = useState<any[]>([]);
+  const [procurementTaskIds, setProcurementTaskIds] = useState<string[]>([]);
 
   // Shared attendance state
   const { attendance, loading, error, performAction } = useAttendance();
   const isCheckedIn = !!attendance && !attendance.checkOutTime;
 
-  // Grouped navigation categories with fixed nested vendor sub-pages
+  // ─── Navigation Sections ──────────────────────────────────────────────────────
+
   const navSections: NavSection[] = [
     {
       title: "Overview",
@@ -132,9 +140,13 @@ export default function Sidebar() {
       mainLink: { name: "Organization & HR", href: "/dashboard/organization-hr", icon: <Target size={18} /> },
       items: [
         { name: "Clients Directory", href: "/dashboard/clients", icon: <Users size={18} /> },
-        { name: "Employees Directory", href: "/dashboard/employees", icon: <UserCircle size={18} /> },
+        { name: "Employees Directory", href: "/dashboard/employees", icon: <UserCircle size={18} />, children: [
+            { name: "Invitations", href: "/dashboard/employees/invitations", icon: <Send size={18} /> },
+            { name: "Leave Requests", href: "/dashboard/employees/leaves", icon: <CalendarDays size={18} /> },
+          ] 
+        },
         { name: "Departments", href: "/dashboard/departments", icon: <Building2 size={18} /> },
-        { name: "Equipment Directory", href: "/dashboard/equipment", icon: <Wrench size={18} /> },
+        { name: "Equipment Directory", href: "/dashboard/assets", icon: <Wrench size={18} /> },
         { 
           name: "Vendors", 
           href: "/dashboard/vendors", 
@@ -142,7 +154,9 @@ export default function Sidebar() {
           children: [
             { name: "Quotations", href: "/dashboard/procurement/quotations", icon: <FileSpreadsheet size={18} /> },
             { name: "Planned Orders", href: "/dashboard/procurement/planned-purchase-orders", icon: <Receipt size={18} /> },
-            { name: "Purchase Orders", href: "/dashboard/vendors/purchase-orders", icon: <Receipt size={18} /> }
+            { name: "Purchase Orders", href: "/dashboard/vendors/purchase-orders", icon: <Receipt size={18} /> },
+            // ─── NEW: Procurement Dashboard ───
+            { name: "Procurement Dashboard", href: "/dashboard/procurement", icon: <ClipboardList size={18} /> },
           ]
         },
       ],
@@ -161,10 +175,11 @@ export default function Sidebar() {
     return initial;
   });
 
-  // Track independent open states for specific nested parent items (like Vendors)
+  // Track independent open states for specific nested parent items
   const [openSubMenus, setOpenSubMenus] = useState<{ [key: string]: boolean }>({
     "Vendors": pathname.startsWith("/dashboard/vendors") || pathname.startsWith("/dashboard/procurement"),
-    "Contracts": pathname.startsWith("/dashboard/contracts")
+    "Contracts": pathname.startsWith("/dashboard/contracts"),
+    "Employees Directory": pathname.startsWith("/dashboard/employees")
   });
 
   const toggleSection = (title: string) => {
@@ -179,6 +194,8 @@ export default function Sidebar() {
     setOpenSubMenus((prev) => ({ ...prev, [name]: !prev[name] }));
   };
 
+  // ─── Fetch Notifications ──────────────────────────────────────────────────────
+
   useEffect(() => {
     const fetchNotifs = async () => {
       try {
@@ -187,13 +204,39 @@ export default function Sidebar() {
           const data = await res.json();
           setNotifications(data.notifications ?? []);
           setUnreadCount(data.unreadCount ?? 0);
+        } else {
+          setNotifications([]);
+          setUnreadCount(0);
         }
-      } catch {}
+      } catch (error) {
+        console.error("Error fetching notifications:", error);
+        setNotifications([]);
+        setUnreadCount(0);
+      }
     };
     fetchNotifs();
     const interval = setInterval(fetchNotifs, 30000);
     return () => clearInterval(interval);
   }, []);
+
+  // ─── Fetch Procurement Tasks ──────────────────────────────────────────────────
+
+  useEffect(() => {
+    async function fetchProcurementTasks() {
+      try {
+        const res = await fetch('/api/tasks/procurement');
+        if (res.ok) {
+          const data = await res.json();
+          setProcurementTaskIds(data.map((t: any) => t.id));
+        }
+      } catch (error) {
+        console.error("Error fetching procurement tasks:", error);
+      }
+    }
+    fetchProcurementTasks();
+  }, []);
+
+  // ─── Handle Logout ───────────────────────────────────────────────────────────
 
   const handlePurgeSession = async () => {
     try {
@@ -292,6 +335,13 @@ export default function Sidebar() {
           <p className="text-[9px] font-bold text-rose-500 mt-2 px-1">{error}</p>
         )}
       </div>
+
+      {/* ─── PROCUREMENT CHAIN WIDGET ─── */}
+      {!isCollapsed && procurementTaskIds.length > 0 && (
+        <div className="px-4 pb-2">
+          <ProcurementChainWidget taskIds={procurementTaskIds.slice(0, 5)} />
+        </div>
+      )}
 
       {/* NAVIGATION SECTIONS */}
       <div className="flex-1 overflow-y-auto py-2 px-4 space-y-3 no-scrollbar">

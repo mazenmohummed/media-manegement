@@ -1,17 +1,23 @@
-"use client";
+// components/main/EmployeeDashboard.tsx
+'use client';
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import {
   Users, Briefcase, CheckSquare, TrendingUp,
   DollarSign, MapPin, Bell, Edit3, ShieldCheck,
   Clock, Zap, ArrowUpRight, ArrowDownRight,
   AlertCircle, CheckCircle2, X, Save, Loader2,
-  CreditCard, UserCheck, Calendar, Search
+  CreditCard, UserCheck, Calendar, Search,
+  MessageCircle, ClipboardList
 } from "lucide-react";
 import PerformanceTable from "./employees/PerformanceTable";
 import { AttendanceControl } from "./attendance/AttendanceControl";
 import AttendanceCard from "./attendance/AttendanceCard";
 import { TaskSessionList } from "./attendance/TaskSessionCard";
+import { ProcurementChainWidget } from "@/components/procurement/ProcurementChainWidget";
+
+// ─── Types ──────────────────────────────────────────────────────────────────────
 
 interface Employee {
   id: string;
@@ -28,7 +34,7 @@ interface Employee {
   profitContribution: number;
   commissions: number;
   overtime: number;
-  deductions?: number; // Added to map correctly from backend/state schemas
+  deductions?: number;
   totalWorkingHours: number;
   lateCount: number;
   totalPayouts: number;
@@ -36,7 +42,7 @@ interface Employee {
   tasksCount: number;
   completedTasksCount: number;
   activeTasksCount: number;
-  leaves?: Array<{ status: string }>; // Added to resolve template condition
+  leaves?: Array<{ status: string }>;
   attendanceLogs?: Array<{ type: string }>;
 }
 
@@ -49,9 +55,11 @@ export interface Notification {
   title: string;
   message: string;
   type: string;
-  isRead: boolean; // <--- ADD THIS LINE
+  isRead: boolean;
   userId: string;
   createdAt: Date;
+  actionUrl?: string | null;
+  readAt?: Date | null;
 }
 
 interface RecentPayout {
@@ -59,11 +67,19 @@ interface RecentPayout {
   date: string; description: string | null; userName: string; userRole: string; userId: string;
 }
 
-interface RecentAttendance {
-  id: string; checkInTime: string; checkOutTime: string | null;
-  totalHours: number | null; isLate: boolean; status: string; type: string;
-  userName: string; userRole: string; userId: string;
-  taskType: string | null; taskId: string | null;
+interface AttendanceLog {
+  id: string;
+  checkInTime: string;
+  checkOutTime: string | null;
+  totalHours: number | null;
+  isLate: boolean;
+  status: string;
+  type: string;
+  userName: string;
+  userRole: string;
+  userId: string;
+  taskType: string | null;
+  taskId: string | null;
 }
 
 interface DashboardStats {
@@ -81,12 +97,11 @@ interface DashboardData {
   stats: DashboardStats;
   notifications: Notification[];
   recentPayouts: RecentPayout[];
-  recentAttendance: RecentAttendance[];
+  recentAttendance: AttendanceLog[];
   userAttendance: {
     id: string;
     checkInTime: Date;
     checkOutTime: Date | null;
-    // add any other fields you expect from userAttendance
   } | null;
   todaysAttendance: Array<{
     id: string;
@@ -99,11 +114,212 @@ interface DashboardData {
   taskSessions: any[];
 }
 
+// ─── Constants ──────────────────────────────────────────────────────────────────
+
+const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+
+// ─── Notification Icon ──────────────────────────────────────────────────────
+
+export function NotifIcon({ type }: { type: string }) {
+  if (type === "DEADLINE") return <AlertCircle size={12} className="text-rose-500 shrink-0" />;
+  if (type === "ASSIGNMENT") return <CheckCircle2 size={12} className="text-emerald-500 shrink-0" />;
+  if (type === "COMMENT") return <MessageCircle size={12} className="text-blue-400 shrink-0" />;
+  return <Bell size={12} className="text-primary shrink-0" />;
+}
+
+// ─── Notification Drawer ──────────────────────────────────────────────────────
+
+export function NotificationDrawer({ 
+  notifications: initialNotifications, 
+  onClose 
+}: { 
+  notifications: Notification[]; 
+  onClose: () => void 
+}) {
+  const router = useRouter();
+  const [items, setItems] = useState<Notification[]>(initialNotifications);
+  const [loading, setLoading] = useState(false);
+
+  const handleAction = async (id: string, action: 'READ' | 'DELETE') => {
+    setLoading(true);
+    try {
+      if (action === 'READ') {
+        setItems(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
+        await fetch(`/api/notifications/${id}`, { method: 'PATCH' });
+      } else {
+        setItems(prev => prev.filter(n => n.id !== id));
+        await fetch(`/api/notifications/${id}`, { method: 'DELETE' });
+      }
+    } catch (error) {
+      console.error(`Failed to ${action} notification:`, error);
+      if (action === 'READ') {
+        setItems(prev => prev.map(n => n.id === id ? { ...n, isRead: false } : n));
+      } else {
+        const res = await fetch("/api/notifications");
+        if (res.ok) {
+          const data = await res.json();
+          setItems(data.notifications ?? []);
+        }
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleNotificationClick = async (notification: Notification) => {
+    console.log('Notification clicked:', notification.id);
+    console.log('Action URL:', notification.actionUrl);
+    
+    if (!notification.isRead) {
+      await handleAction(notification.id, 'READ');
+    }
+    
+    if (notification.actionUrl) {
+      console.log('Navigating to:', notification.actionUrl);
+      try {
+        router.push(notification.actionUrl);
+        onClose();
+      } catch (error) {
+        console.error('Router push failed:', error);
+        window.location.href = notification.actionUrl;
+      }
+    } else {
+      console.warn('No actionUrl for this notification');
+    }
+  };
+
+  const renderMessageWithLink = (notification: Notification) => {
+    const message = notification.message;
+    const taskMatch = message.match(/Task:\s*([^:\-]+)/i);
+    
+    if (taskMatch && notification.actionUrl) {
+      const taskName = taskMatch[1].trim();
+      const parts = message.split(taskMatch[0]);
+      return (
+        <>
+          {parts[0]}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              handleNotificationClick(notification);
+            }}
+            className="text-purple-400 hover:text-purple-300 hover:underline font-medium transition-colors"
+          >
+            {taskName}
+          </button>
+          {parts[1] || ''}
+        </>
+      );
+    }
+    return message;
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end">
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative w-full max-w-sm bg-background border-l border-border h-full overflow-y-auto shadow-2xl flex flex-col">
+        <div className="p-6 border-b border-border flex items-center justify-between sticky top-0 bg-background z-10">
+          <div>
+            <h2 className="text-sm font-black uppercase tracking-widest">Priority Briefing</h2>
+            <p className="text-[9px] opacity-40 font-bold uppercase mt-0.5">
+              {items.filter(n => !n.isRead).length} unread
+            </p>
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-muted rounded-xl transition-colors">
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="flex-1 p-4 space-y-3">
+          {loading && items.length === 0 ? (
+            <div className="flex items-center justify-center py-16">
+              <Loader2 className="w-6 h-6 animate-spin text-primary" />
+            </div>
+          ) : items.length === 0 ? (
+            <div className="text-center py-16 opacity-40">
+              <Bell size={32} className="mx-auto mb-3" />
+              <p className="text-xs font-bold uppercase">All clear</p>
+            </div>
+          ) : (
+            [...items]
+              .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+              .map((notif) => (
+                <div 
+                  key={notif.id} 
+                  className={`p-3 border border-border/50 rounded-xl transition-all cursor-pointer hover:bg-muted/30 ${
+                    notif.isRead ? 'opacity-60' : 'opacity-100 bg-muted/10'
+                  }`}
+                  onClick={() => {
+                    if (notif.actionUrl) {
+                      handleNotificationClick(notif);
+                    }
+                  }}
+                >
+                  <div className="flex items-start gap-2 mb-1">
+                    <NotifIcon type={notif.type} />
+                    <p className="text-sm font-bold flex-1">{notif.title}</p>
+                    {!notif.isRead && (
+                      <span className="w-2 h-2 bg-primary rounded-full animate-pulse shrink-0 mt-1" />
+                    )}
+                  </div>
+                  
+                  <p className="text-xs mt-1 text-muted-foreground">
+                    {renderMessageWithLink(notif)}
+                  </p>
+                  
+                  <div className="flex items-center gap-4 mt-3">
+                    <span className="text-[9px] text-muted-foreground">
+                      {new Date(notif.createdAt).toLocaleDateString('en-US', { 
+                        month: 'short', 
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                      })}
+                    </span>
+                    {notif.actionUrl && (
+                      <span className="text-[9px] text-purple-400 font-medium flex items-center gap-1">
+                        Click to view
+                        <ArrowUpRight size={10} />
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex gap-4 mt-3 pt-2 border-t border-border/40">
+                    {!notif.isRead && (
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleAction(notif.id, 'READ');
+                        }}
+                        disabled={loading}
+                        className="text-[10px] font-bold text-emerald-600 hover:text-emerald-500 uppercase tracking-wider transition-colors disabled:opacity-50"
+                      >
+                        Mark as Read
+                      </button>
+                    )}
+                    <button 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleAction(notif.id, 'DELETE');
+                      }}
+                      disabled={loading}
+                      className="text-[10px] font-bold text-rose-600 hover:text-rose-500 uppercase tracking-wider transition-colors disabled:opacity-50"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Edit Agency Modal ────────────────────────────────────────────────────────
-const DAYS = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
 
-
-function EditAgencyModal({
+export function EditAgencyModal({
   data, onClose, onSaved,
 }: {
   data: DashboardData;
@@ -111,16 +327,16 @@ function EditAgencyModal({
   onSaved: () => void;
 }) {
   const [saving, setSaving] = useState(false);
-  const [error, setError]   = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const [form, setForm] = useState({
-    agencyName:   data.agencyName   ?? "",
+    agencyName: data.agencyName ?? "",
     operatorName: data.operatorName ?? "",
-    email:        data.email        ?? "",
-    address:      data.address      ?? "",
-    latitude:     data.latitude     ? String(data.latitude)  : "",
-    longitude:    data.longitude    ? String(data.longitude) : "",
-    radius:       String(data.radius ?? 100),
+    email: data.email ?? "",
+    address: data.address ?? "",
+    latitude: data.latitude ? String(data.latitude) : "",
+    longitude: data.longitude ? String(data.longitude) : "",
+    radius: String(data.radius ?? 100),
   });
 
   const defaultWH = DAYS.map((day) => {
@@ -143,9 +359,9 @@ function EditAgencyModal({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...form,
-          latitude:  form.latitude  ? parseFloat(form.latitude)  : null,
+          latitude: form.latitude ? parseFloat(form.latitude) : null,
           longitude: form.longitude ? parseFloat(form.longitude) : null,
-          radius:    parseInt(form.radius),
+          radius: parseInt(form.radius),
           workingHours,
         }),
       });
@@ -203,9 +419,9 @@ function EditAgencyModal({
             <p className="text-[9px] font-black uppercase tracking-widest opacity-40 mb-3">Geofence</p>
             <div className="grid grid-cols-3 gap-3">
               {[
-                { label: "Latitude",  key: "latitude",  type: "number", step: "any" },
+                { label: "Latitude", key: "latitude", type: "number", step: "any" },
                 { label: "Longitude", key: "longitude", type: "number", step: "any" },
-                { label: "Radius (m)", key: "radius",   type: "number", step: "1" },
+                { label: "Radius (m)", key: "radius", type: "number", step: "1" },
               ].map(({ label, key, type, step }) => (
                 <div key={key}>
                   <label className="text-[8px] font-black uppercase tracking-widest opacity-50 block mb-1">{label}</label>
@@ -269,94 +485,9 @@ function EditAgencyModal({
   );
 }
 
-// ─── Notification Drawer ──────────────────────────────────────────────────────
-function NotifIcon({ type }: { type: string }) {
-  if (type === "DEADLINE") return <AlertCircle size={12} className="text-rose-500 shrink-0" />;
-  if (type === "ASSIGNMENT") return <CheckCircle2 size={12} className="text-emerald-500 shrink-0" />;
-  return <Bell size={12} className="text-primary shrink-0" />;
-}
-
-export function NotificationDrawer({ 
-  notifications: initialNotifications, 
-  onClose 
-}: { 
-  notifications: Notification[]; 
-  onClose: () => void 
-}) {
-  // 1. Manage state locally so the UI updates immediately
-  const [items, setItems] = useState<Notification[]>(initialNotifications);
-
-  const handleAction = async (id: string, action: 'READ' | 'DELETE') => {
-    // 2. Optimistic Update: Update UI before the server even responds
-    if (action === 'READ') {
-      setItems(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
-      await fetch(`/api/notifications/${id}`, { method: 'PATCH' });
-    } else {
-      setItems(prev => prev.filter(n => n.id !== id));
-      await fetch(`/api/notifications/${id}`, { method: 'DELETE' });
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex justify-end">
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-full max-w-sm bg-background border-l border-border h-full overflow-y-auto shadow-2xl flex flex-col">
-        <div className="p-6 border-b border-border flex items-center justify-between sticky top-0 bg-background z-10">
-          <div>
-            <h2 className="text-sm font-black uppercase tracking-widest">Priority Briefing</h2>
-            {/* Show count of items still in the list */}
-            <p className="text-[9px] opacity-40 font-bold uppercase mt-0.5">
-              {items.filter(n => !n.isRead).length} unread
-            </p>
-          </div>
-          <button onClick={onClose} className="p-2 hover:bg-muted rounded-xl transition-colors">
-            <X size={16} />
-          </button>
-        </div>
-
-        
-
-        <div className="flex-1 p-4 space-y-3">
-          {items.length === 0 ? (
-            <div className="text-center py-16 opacity-40">
-              <Bell size={32} className="mx-auto mb-3" />
-              <p className="text-xs font-bold uppercase">All clear</p>
-            </div>
-          ) : (
-            // We spread items into a new array to avoid mutating state, then sort
-            [...items]
-              .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-              .map((notif) => (
-                <div key={notif.id} className={`p-3 border-b transition-opacity ${notif.isRead ? 'opacity-40' : 'opacity-100'}`}>
-                  <p className="text-sm font-bold">{notif.title}</p>
-                  <p className="text-xs mt-1">{notif.message}</p>
-                  
-                  <div className="flex gap-4 mt-3">
-                    {!notif.isRead && (
-                      <button 
-                        onClick={() => handleAction(notif.id, 'READ')}
-                        className="text-[10px] font-bold text-emerald-600 hover:text-emerald-500 uppercase tracking-wider"
-                      >
-                        Mark as Read
-                      </button>
-                    )}
-                    <button 
-                      onClick={() => handleAction(notif.id, 'DELETE')}
-                      className="text-[10px] font-bold text-rose-600 hover:text-rose-500 uppercase tracking-wider"
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </div>
-              ))
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
 // ─── Stat Card ────────────────────────────────────────────────────────────────
-function StatCard({
+
+export function StatCard({
   icon,
   label,
   value,
@@ -393,6 +524,8 @@ function StatCard({
   );
 }
 
+// ─── Mini Finance ─────────────────────────────────────────────────────────────
+
 function MiniFinance({ label, value, color = "text-foreground" }: { label: string; value: string; color?: string }) {
   return (
     <div className="p-4 rounded-2xl bg-muted/40 hover:bg-muted/70 transition-colors">
@@ -403,7 +536,8 @@ function MiniFinance({ label, value, color = "text-foreground" }: { label: strin
 }
 
 // ─── Recent Payouts Feed ──────────────────────────────────────────────────────
-function RecentPayoutsFeed({ payouts }: { payouts: RecentPayout[] }) {
+
+export function RecentPayoutsFeed({ payouts }: { payouts: RecentPayout[] }) {
   if (!payouts || payouts.length === 0) {
     return (
       <div className="text-center py-8 opacity-30">
@@ -439,17 +573,6 @@ function RecentPayoutsFeed({ payouts }: { payouts: RecentPayout[] }) {
 }
 
 // ─── Recent Attendance Feed ───────────────────────────────────────────────────
-interface AttendanceLog {
-  id: string;
-  checkInTime: string;
-  checkOutTime: string | null;
-  totalHours: number | null;
-  isLate: boolean;
-  status: string;
-  type: string;
-  userName: string;
-  userRole: string;
-}
 
 export function RecentAttendanceFeed({ logs }: { logs: AttendanceLog[] }) {
   if (!logs || logs.length === 0) {
@@ -509,19 +632,27 @@ export function RecentAttendanceFeed({ logs }: { logs: AttendanceLog[] }) {
 }
 
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
-export default function EmployeeDashboard({ user }: { user: any }) {
+
+interface EmployeeDashboardProps {
+  user?: {
+    id: string;
+    name?: string | null;
+    email?: string | null;
+    role?: string | null;
+    agencyId?: string | null;
+    clientId?: string | null;
+  };
+}
+
+export default function EmployeeDashboard({ user }: EmployeeDashboardProps) {
+  const router = useRouter();
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [editOpen, setEditOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [employees, setEmployees] = useState<Employee[]>([]);
-  
-  // 1. Fixed Search State Implementation
   const [searchTerm, setSearchTerm] = useState("");
-
-  
-
-  
+  const [procurementTaskIds, setProcurementTaskIds] = useState<string[]>([]);
 
   if (!user) {
     return (
@@ -533,7 +664,6 @@ export default function EmployeeDashboard({ user }: { user: any }) {
 
   const isAdmin = user.role === "ADMIN" || user.role === "SUPERADMIN";
 
-  // 1. Create the fetch function
   const fetchDashboardData = useCallback(async () => {
     try {
       const response = await fetch("/api/dashboard/summary");
@@ -548,17 +678,25 @@ export default function EmployeeDashboard({ user }: { user: any }) {
     }
   }, []);
 
-  // 2. Initial load
- 
+  // Fetch procurement task IDs
+  const fetchProcurementTasks = useCallback(async () => {
+    try {
+      const response = await fetch("/api/tasks/procurement");
+      if (response.ok) {
+        const result = await response.json();
+        setProcurementTaskIds(result.map((t: any) => t.id));
+      }
+    } catch (err) {
+      console.error("Failed to fetch procurement tasks:", err);
+    }
+  }, []);
+
   useEffect(() => {
-    fetchDashboardData(); // Initial load
-
-    const interval = setInterval(() => {
-      fetchDashboardData();
-    }, 30000); // 30,000ms = 30 seconds
-
-    return () => clearInterval(interval); // Cleanup on unmount
-  }, [fetchDashboardData]);
+    fetchDashboardData();
+    fetchProcurementTasks();
+    const interval = setInterval(fetchDashboardData, 30000);
+    return () => clearInterval(interval);
+  }, [fetchDashboardData, fetchProcurementTasks]);
 
   useEffect(() => {
     (async () => {
@@ -574,12 +712,10 @@ export default function EmployeeDashboard({ user }: { user: any }) {
     })();
   }, []);
 
-  // 2. Fixed useMemo Filter and String matching Logic
   const filteredAndSorted = useMemo(() => {
     return employees.filter((e) => {
       if (!searchTerm.trim()) return true;
       const lowerSearch = searchTerm.toLowerCase();
-      
       return (
         e.name?.toLowerCase().includes(lowerSearch) ||
         e.role?.toLowerCase().includes(lowerSearch) ||
@@ -588,14 +724,6 @@ export default function EmployeeDashboard({ user }: { user: any }) {
       );
     });
   }, [employees, searchTerm]);
-
-  
-
-  // 3. Define the action handler
-// Inside EmployeeDashboard.tsx
-
-
-
 
   if (loading) {
     return (
@@ -615,8 +743,6 @@ export default function EmployeeDashboard({ user }: { user: any }) {
   }
 
   const unreadCount = data.notifications?.length ?? 0;
-
-  const todayTaskSessions = data.taskSessions || [];
 
   const isOnline = (() => {
     const now = new Date();
@@ -683,8 +809,8 @@ export default function EmployeeDashboard({ user }: { user: any }) {
 
       {/* ── STAT CARDS ───────────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatCard icon={<Users />}       label="Clients"      value={data.stats.totalClients ?? 0} />
-        <StatCard icon={<Briefcase />}   label="Projects"     value={data.stats.totalProjects ?? 0} />
+        <StatCard icon={<Users />} label="Clients" value={data.stats.totalClients ?? 0} />
+        <StatCard icon={<Briefcase />} label="Projects" value={data.stats.totalProjects ?? 0} />
         <StatCard icon={<CheckSquare />} label="Active Tasks" value={data.stats.totalTasks ?? 0} />
         {isAdmin ? (
           <StatCard icon={<TrendingUp />} label="Net Profit" value={`$${data.stats.netProfit}`}
@@ -704,12 +830,12 @@ export default function EmployeeDashboard({ user }: { user: any }) {
                 <DollarSign size={14} className="text-primary" /> Financial Performance
               </h3>
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-                <MiniFinance label="Revenue"        value={`$${data.stats.revenue}`}           color="text-emerald-500" />
-                <MiniFinance label="Total Payouts"  value={`$${data.stats.totalPayouts}`} />
-                <MiniFinance label="Task Expenses"  value={`$${data.stats.totalTaskExpenses}`} />
-                <MiniFinance label="Total Expenses" value={`$${data.stats.expenses}`}          color="text-rose-500" />
-                <MiniFinance label="Total Salary"   value={`$${data.stats.totalUserSalary}`}   color="text-rose-500" />
-                <MiniFinance label="Margin"         value={`${data.stats.avgMargin}%`} />
+                <MiniFinance label="Revenue" value={`$${data.stats.revenue}`} color="text-emerald-500" />
+                <MiniFinance label="Total Payouts" value={`$${data.stats.totalPayouts}`} />
+                <MiniFinance label="Task Expenses" value={`$${data.stats.totalTaskExpenses}`} />
+                <MiniFinance label="Total Expenses" value={`$${data.stats.expenses}`} color="text-rose-500" />
+                <MiniFinance label="Total Salary" value={`$${data.stats.totalUserSalary}`} color="text-rose-500" />
+                <MiniFinance label="Margin" value={`${data.stats.avgMargin}%`} />
               </div>
             </section>
           ) : (
@@ -795,6 +921,15 @@ export default function EmployeeDashboard({ user }: { user: any }) {
         </div>
 
         <div className="space-y-6">
+          {/* ─── PROCUREMENT CHAIN WIDGET ─── */}
+          {isAdmin && procurementTaskIds.length > 0 && (
+            <div className="bg-card border border-border rounded-[2.5rem] shadow-xl overflow-hidden">
+              <div className="p-6">
+                <ProcurementChainWidget taskIds={procurementTaskIds.slice(0, 5)} />
+              </div>
+            </div>
+          )}
+
           {isAdmin && data.subscription && (
             <section className="bg-foreground text-background p-8 rounded-[2.5rem] shadow-xl relative overflow-hidden group">
               <div className="absolute -top-10 -right-10 w-40 h-40 bg-primary/10 blur-3xl group-hover:bg-primary/20 transition-all" />
@@ -837,7 +972,7 @@ export default function EmployeeDashboard({ user }: { user: any }) {
             <RecentAttendanceFeed logs={data.recentAttendance} />
           </section>
 
-          <TaskSessionList sessions={todayTaskSessions} />
+          <TaskSessionList sessions={data.taskSessions} />
 
         </div>
       </div>

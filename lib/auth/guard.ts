@@ -1,4 +1,7 @@
+// lib/auth/guard.ts
 import { NextRequest, NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/authOptions";
 import { Action, hasPermission, UserRole } from "@/lib/auth/permissions";
 import { auditContextStore } from "@/lib/context/async-store";
 
@@ -16,16 +19,19 @@ export type GuardedHandler<T = any> = (
 
 export function withAuthGuard<T = any>(action: Action, handler: GuardedHandler<T>) {
   return async (req: NextRequest, routeProps: T) => {
-    const userId = req.headers.get("x-user-id");
-    const agencyId = req.headers.get("x-agency-id");
-    const role = req.headers.get("x-user-role") as UserRole;
+    // ✅ Get session instead of headers
+    const session = await getServerSession(authOptions);
+    
+    if (!session?.user) {
+      return NextResponse.json(
+        { error: "Unauthorized: Not authenticated" },
+        { status: 401 }
+      );
+    }
 
-    const ipAddress =
-      req.headers.get("x-forwarded-for")?.split(",")[0].trim() ||
-      req.headers.get("x-real-ip") ||
-      undefined;
-
-    const userAgent = req.headers.get("user-agent") || undefined;
+    const userId = session.user.id;
+    const agencyId = session.user.agencyId;
+    const role = session.user.role as UserRole;
 
     if (!userId || !agencyId || !role) {
       return NextResponse.json(
@@ -40,6 +46,13 @@ export function withAuthGuard<T = any>(action: Action, handler: GuardedHandler<T
         { status: 403 }
       );
     }
+
+    const ipAddress =
+      req.headers.get("x-forwarded-for")?.split(",")[0].trim() ||
+      req.headers.get("x-real-ip") ||
+      undefined;
+
+    const userAgent = req.headers.get("user-agent") || undefined;
 
     // Wrap the request context in AsyncLocalStorage for the Prisma Extension to pick up
     return auditContextStore.run(

@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { authOptions } from "@/lib/authOptions"; // Adjust path if using @/lib/auth
 import prisma from "@/lib/prisma";
 import Sidebar from "@/components/main/Sidebar";
-import { AttendanceProvider } from "@/components/main/attendance/Attendancecontext";
+import { AttendanceProvider } from "@/components/main/attendance/AttendanceContext";
 
 export default async function DashboardLayout({
   children,

@@ -12,7 +12,13 @@ export enum UserRole {
   TEAMLEADER = "TEAMLEADER",
   CREATIVE = "CREATIVE",
   FINANCE = "FINANCE",
-  CLIENT = "CLIENT",
+}
+
+interface InviteEmployeeModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onRefresh: () => void;
+  availableRoles?: UserRole[]; // Optional, defaults to all non-admin roles
 }
 
 interface Invitation {
@@ -143,6 +149,16 @@ export default function AgencyInvitationsPage() {
 
     return { total: invitations.length, pending, accepted, expired };
   }, [invitations]);
+
+  // Available roles for invitation (excluding SUPERADMIN and ADMIN for security)
+  const availableRoles = useMemo(() => {
+    return [
+      UserRole.OPERATOR,
+      UserRole.TEAMLEADER,
+      UserRole.CREATIVE,
+      UserRole.FINANCE,
+    ];
+  }, []);
 
   if (status === "loading" || loading) {
     return (
@@ -324,6 +340,7 @@ export default function AgencyInvitationsPage() {
         isOpen={isInviteModalOpen}
         onClose={() => setIsInviteModalOpen(false)}
         onRefresh={refreshInvitations}
+        availableRoles={availableRoles}
       />
     </div>
   );

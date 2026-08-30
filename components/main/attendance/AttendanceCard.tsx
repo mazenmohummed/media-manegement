@@ -15,7 +15,7 @@ export default function AttendanceCard({ todayLogs }: { todayLogs: any[] }) {
           todayLogs.map((log) => (
             <div key={log.id} className="flex justify-between items-center text-sm">
               <span className="font-medium">{log.user?.name || "Unknown"}</span>
-              <span className={`text-[10px] px-2 py-0.5 rounded-full ${log.checkOutTime ? 'bg-zinc-100' : 'bg-emerald-100 text-emerald-700'}`}>
+              <span className={`text-[10px] px-2 py-0.5 rounded-full ${log.checkOutTime ? 'bg-zinc-100 text-zinc-700' : 'bg-emerald-100 text-emerald-700'}`}>
                 {log.checkOutTime ? "Checked Out" : "Present"}
               </span>
             </div>

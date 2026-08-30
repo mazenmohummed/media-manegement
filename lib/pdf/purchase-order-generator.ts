@@ -1,108 +1,196 @@
-// lib/pdf/purchase-order-generator.ts
+// lib/pdf/document-builder.ts
 import { jsPDF } from "jspdf";
 
-export async function generatePurchaseOrderPdf(purchaseOrder: any): Promise<Buffer> {
-  const doc = new jsPDF();
-  let currentY = 20;
+export interface DocumentSection {
+  title: string;
+  content: string | string[];
+  type: "text" | "table";
+  tableData?: {
+    headers: string[];
+    rows: string[][];
+  };
+}
 
-  // Header / Agency Name
-  doc.setFontSize(20);
-  doc.text(purchaseOrder.agency?.agencyName || "Agency Receipt", 14, currentY);
-  currentY += 10;
+export interface DocumentOptions {
+  title: string;
+  subtitle?: string;
+  companyName?: string;
+  footer?: string;
+  sections: DocumentSection[];
+  metadata?: Record<string, string>;
+}
 
-  // Purchase Order Meta Details
-  doc.setFontSize(11);
-  doc.text(`Purchase Order No: ${purchaseOrder.poNo || purchaseOrder.id.slice(0, 8)}`, 14, currentY);
-  currentY += 7;
-  doc.text(`Status: ${purchaseOrder.status}`, 14, currentY);
-  currentY += 7;
-  doc.text(`Date: ${new Date(purchaseOrder.createdAt).toLocaleDateString()}`, 14, currentY);
-  currentY += 7;
+export class DocumentBuilder {
+  private doc: jsPDF;
+  private options: DocumentOptions;
+  private currentY: number = 20;
+  private pageMargin = 14;
+  private pageWidth = 210;
 
-  if (purchaseOrder.expectedDeliveryDate) {
-    doc.text(`Expected Delivery: ${new Date(purchaseOrder.expectedDeliveryDate).toLocaleDateString()}`, 14, currentY);
-    currentY += 7;
+  constructor(options: DocumentOptions) {
+    this.options = options;
+    this.doc = new jsPDF();
   }
 
-  // Linked Quotation or Project Info
-  if (purchaseOrder.quotation) {
-    doc.text(`Reference Quotation: ${purchaseOrder.quotation.quotationNo || purchaseOrder.quotation.id.slice(0, 8)}`, 14, currentY);
-    currentY += 7;
-  }
-  if (purchaseOrder.project) {
-    doc.text(`Project: ${purchaseOrder.project.name} (${purchaseOrder.project.projectNo || ''})`, 14, currentY);
-    currentY += 7;
+  private drawLine(y: number): void {
+    this.doc.setLineWidth(0.2);
+    this.doc.line(this.pageMargin, y, this.pageWidth - this.pageMargin, y);
   }
 
-  currentY += 6;
+  private checkPageBreak(requiredSpace: number): void {
+    if (this.currentY + requiredSpace > 280) {
+      this.doc.addPage();
+      this.currentY = 20;
+    }
+  }
 
-  // Items Table Header
-  doc.setFontSize(13);
-  doc.text("Order Items", 14, currentY);
-  currentY += 8;
+  private renderTextSection(section: DocumentSection): void {
+    this.checkPageBreak(10);
+    
+    // Title
+    this.doc.setFontSize(12);
+    this.doc.setFont("helvetica", "bold");
+    this.doc.text(section.title, this.pageMargin, this.currentY);
+    this.currentY += 6;
+    
+    // Content
+    this.doc.setFontSize(10);
+    this.doc.setFont("helvetica", "normal");
+    
+    const content = Array.isArray(section.content) ? section.content : [section.content];
+    content.forEach((line) => {
+      const splitLines = this.doc.splitTextToSize(line, this.pageWidth - this.pageMargin * 2);
+      splitLines.forEach((text: string) => {
+        this.doc.text(text, this.pageMargin, this.currentY);
+        this.currentY += 5;
+      });
+    });
+    
+    this.currentY += 4;
+  }
 
-  doc.setFontSize(9);
-  doc.text("Description", 16, currentY);
-  doc.text("Qty", 125, currentY, { align: "right" });
-  doc.text("Unit Price", 155, currentY, { align: "right" });
-  doc.text("Total", 190, currentY, { align: "right" });
-  currentY += 4;
+  private renderTableSection(section: DocumentSection): void {
+    const tableData = section.tableData!;
+    const requiredSpace = 20 + (tableData.rows.length * 10);
+    
+    this.checkPageBreak(requiredSpace);
+    
+    // Title
+    this.doc.setFontSize(12);
+    this.doc.setFont("helvetica", "bold");
+    this.doc.text(section.title, this.pageMargin, this.currentY);
+    this.currentY += 8;
+    
+    // Headers
+    this.doc.setFontSize(10);
+    this.doc.setFont("helvetica", "bold");
+    const colWidths = this.calculateColumnWidths(tableData);
+    
+    let x = this.pageMargin;
+    tableData.headers.forEach((header, index) => {
+      this.doc.text(header, x, this.currentY);
+      x += colWidths[index];
+    });
+    
+    this.currentY += 2;
+    this.drawLine(this.currentY);
+    this.currentY += 4;
+    
+    // Rows
+    this.doc.setFont("helvetica", "normal");
+    tableData.rows.forEach((row) => {
+      x = this.pageMargin;
+      row.forEach((cell, index) => {
+        const wrappedText = this.doc.splitTextToSize(cell, colWidths[index]);
+        this.doc.text(wrappedText, x, this.currentY);
+        x += colWidths[index];
+      });
+      this.currentY += Math.max(6, this.doc.getTextDimensions(row[0] || "").h + 2);
+    });
+    
+    this.currentY += 4;
+  }
 
-  doc.setLineWidth(0.2);
-  doc.line(14, currentY, 196, currentY);
-  currentY += 5;
+  private calculateColumnWidths(tableData: { headers: string[]; rows: string[][] }): number[] {
+    const totalWidth = this.pageWidth - this.pageMargin * 2;
+    const colCount = tableData.headers.length;
+    const baseWidth = totalWidth / colCount;
+    
+    return tableData.headers.map(() => baseWidth);
+  }
 
-  let calculatedTotal = 0;
+  private renderHeader(): void {
+    this.doc.setFontSize(16);
+    this.doc.setFont("helvetica", "bold");
+    this.doc.text(this.options.title, this.pageMargin, this.currentY);
+    this.currentY += 8;
+    
+    if (this.options.subtitle) {
+      this.doc.setFontSize(12);
+      this.doc.setFont("helvetica", "normal");
+      this.doc.text(this.options.subtitle, this.pageMargin, this.currentY);
+      this.currentY += 8;
+    }
+    
+    // Metadata
+    if (this.options.metadata) {
+      this.doc.setFontSize(9);
+      this.doc.setFont("helvetica", "normal");
+      Object.entries(this.options.metadata).forEach(([key, value]) => {
+        this.doc.text(`${key}: ${value}`, this.pageMargin, this.currentY);
+        this.currentY += 5;
+      });
+      this.currentY += 4;
+    }
+    
+    this.drawLine(this.currentY);
+    this.currentY += 8;
+    
+    if (this.options.companyName) {
+      this.doc.setFontSize(11);
+      this.doc.setFont("helvetica", "italic");
+      this.doc.text(this.options.companyName, this.pageWidth - this.pageMargin, this.pageMargin, { align: "right" });
+    }
+  }
 
-  // Items List
-  if (purchaseOrder.items && purchaseOrder.items.length > 0) {
-    purchaseOrder.items.forEach((item: any) => {
-      const itemTotal = item.total || (item.quantity * item.unitCost);
-      calculatedTotal += itemTotal;
+  private renderFooter(): void {
+    if (this.options.footer) {
+      this.doc.setFontSize(8);
+      this.doc.setFont("helvetica", "italic");
+      this.doc.text(
+        this.options.footer,
+        this.pageWidth / 2,
+        290,
+        { align: "center" }
+      );
+    }
+  }
 
-      const descLines = doc.splitTextToSize(item.description, 95);
-      doc.text(descLines, 16, currentY);
-      doc.text(String(item.quantity), 125, currentY, { align: "right" });
-      doc.text(item.unitCost.toLocaleString(), 155, currentY, { align: "right" });
-      doc.text(itemTotal.toLocaleString(), 190, currentY, { align: "right" });
-      
-      currentY += Math.max(descLines.length * 4, 6);
-
-      if (currentY > 270) {
-        doc.addPage();
-        currentY = 20;
+  public generate(): jsPDF {
+    this.renderHeader();
+    
+    this.options.sections.forEach((section) => {
+      if (section.type === "text") {
+        this.renderTextSection(section);
+      } else if (section.type === "table") {
+        this.renderTableSection(section);
       }
     });
+    
+    this.renderFooter();
+    return this.doc;
   }
 
-  // Notes Section (if any)
-  if (purchaseOrder.notes) {
-    currentY += 6;
-    doc.setFontSize(10);
-    doc.text("Notes:", 14, currentY);
-    currentY += 5;
-    const splitNotes = doc.splitTextToSize(purchaseOrder.notes, 180);
-    doc.text(splitNotes, 14, currentY);
-    currentY += splitNotes.length * 4 + 6;
+  public save(filename: string): void {
+    this.generate().save(filename);
   }
 
-  // Total Amount Footer Summary
-  currentY += 6;
-  if (currentY > 250) {
-    doc.addPage();
-    currentY = 20;
+  public getBlob(): Blob {
+    return this.generate().output("blob");
   }
 
-  const finalAmount = calculatedTotal > 0 ? calculatedTotal : (purchaseOrder.totalAmount || 0);
-
-  doc.setFontSize(14);
-  doc.text(
-    `Total Amount: ${purchaseOrder.currency} ${finalAmount.toLocaleString()}`,
-    14,
-    currentY
-  );
-
-  // Output as Buffer
-  const pdfOutput = Buffer.from(doc.output("arraybuffer"));
-  return pdfOutput;
+  public getUint8Array(): Uint8Array {
+    const pdfData = this.generate().output("arraybuffer");
+    return new Uint8Array(pdfData);
+  }
 }

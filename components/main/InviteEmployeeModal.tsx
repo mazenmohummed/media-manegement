@@ -1,11 +1,15 @@
 "use client";
 
+import { UserRole } from "@/app/dashboard/employees/invitations/page";
 import React, { useState } from "react";
+
+
 
 interface InviteEmployeeModalProps {
   isOpen: boolean;
   onClose: () => void;
   onRefresh: () => void;
+  availableRoles?: UserRole[]; // Optional, defaults to all non-admin roles
 }
 
 const AVAILABLE_ROLES = [
