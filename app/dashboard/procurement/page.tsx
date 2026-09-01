@@ -36,14 +36,13 @@ export default async function ProcurementDashboardPage() {
 
   // ─── Fetch all procurement data ──────────────────────────────────────────────
 
-  // 1. Get all tasks with procurement activity
+  // 1. Get all tasks with procurement activity (planned expenses or quotations)
   const procurementTasks = await db.task.findMany({
     where: {
       agencyId,
       OR: [
         { plannedExpenses: { some: {} } },
         { quotations: { some: {} } },
-        { purchaseOrders: { some: {} } },
       ],
     },
     select: {
@@ -65,14 +64,6 @@ export default async function ProcurementDashboardPage() {
           quotationNo: true,
         },
       },
-      purchaseOrders: {
-        select: {
-          id: true,
-          status: true,
-          totalAmount: true,
-          poNo: true,
-        },
-      },
     },
     orderBy: { updatedAt: "desc" },
     take: 50,
@@ -80,7 +71,7 @@ export default async function ProcurementDashboardPage() {
 
   const taskIds = procurementTasks.map((t) => t.id);
 
-  // 2. Get all quotations
+  // 2. Get all quotations with vendor and project info
   const quotations = await db.quotation.findMany({
     where: { agencyId },
     select: {
@@ -97,6 +88,9 @@ export default async function ProcurementDashboardPage() {
       },
       project: {
         select: { id: true, name: true },
+      },
+      task: {
+        select: { id: true, title: true },
       },
       _count: {
         select: {
@@ -439,7 +433,7 @@ export default async function ProcurementDashboardPage() {
                           {q.quotationNo || `QT-${q.id.slice(0, 8)}`}
                         </p>
                         <p className="text-xs text-muted-foreground">
-                          {q.vendor?.name || "No vendor"} • {q.project?.name || "No project"}
+                          {q.vendor?.name || "No vendor"} • {q.project?.name || q.task?.title || "No project"}
                         </p>
                       </div>
                       <div className="text-right">

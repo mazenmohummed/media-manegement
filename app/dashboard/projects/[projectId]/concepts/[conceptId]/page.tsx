@@ -855,102 +855,102 @@ export default function ConceptDetailPage() {
       )}
 
       {/* ─── Assets Tab ──────────────────────────────────────────────────────── */}
-      {activeTab === 'assets' && (
-        <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-sm font-semibold text-zinc-200 flex items-center gap-2">
-              <Image className="w-4 h-4 text-blue-400" />
-              Creative Assets
-              <Badge className="bg-zinc-800 text-zinc-400 border-zinc-700 font-mono text-[9px] ml-1">
-                {concept.assets.length}
-              </Badge>
-            </h2>
-            <Link href={`/dashboard/projects/${projectId}/concepts/${conceptId}/assets/new`}>
-              <Button size="sm" className="bg-blue-600 hover:bg-blue-700 text-white">
-                <Plus className="w-3.5 h-3.5 mr-1.5" />
-                Add Asset
-              </Button>
-            </Link>
-          </div>
+{activeTab === 'assets' && (
+  <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
+    <div className="flex items-center justify-between mb-4">
+      <h2 className="text-sm font-semibold text-zinc-200 flex items-center gap-2">
+        <Image className="w-4 h-4 text-blue-400" />
+        Creative Assets
+        <Badge className="bg-zinc-800 text-zinc-400 border-zinc-700 font-mono text-[9px] ml-1">
+          {concept.assets.length}
+        </Badge>
+      </h2>
+      <Link href={`/dashboard/projects/${projectId}/concepts/${conceptId}/assets/new`}>
+        <Button size="sm" className="bg-blue-600 hover:bg-blue-700 text-white">
+          <Plus className="w-3.5 h-3.5 mr-1.5" />
+          Add Asset
+        </Button>
+      </Link>
+    </div>
 
-          {concept.assets.length === 0 ? (
-            <div className="text-center py-12 bg-zinc-950/40 rounded-lg border border-zinc-800/60">
-              <Upload className="mx-auto h-10 w-10 text-zinc-600" />
-              <p className="mt-2 text-sm text-zinc-400">No assets uploaded yet</p>
-              <p className="text-xs text-zinc-500 mt-0.5">Add creative assets to this concept</p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {concept.assets.map((asset) => {
-                const latestVersion = asset.versions[0];
-                const assetIcon = assetTypeIcons[asset.type] || <File className="w-4 h-4" />;
-                const assetColor = assetTypeColors[asset.type] || 'bg-zinc-500/10 text-zinc-400 border-zinc-500/20';
-                
-                return (
-                  <Link
-                    href={`/dashboard/projects/${projectId}/concepts/${conceptId}/assets/${asset.id}`}
-                    key={asset.id}
-                    className="bg-zinc-950/60 border border-zinc-800 rounded-lg p-4 hover:border-zinc-700 transition-colors group block"
+    {concept.assets.length === 0 ? (
+      <div className="text-center py-12 bg-zinc-950/40 rounded-lg border border-zinc-800/60">
+        <Upload className="mx-auto h-10 w-10 text-zinc-600" />
+        <p className="mt-2 text-sm text-zinc-400">No assets uploaded yet</p>
+        <p className="text-xs text-zinc-500 mt-0.5">Add creative assets to this concept</p>
+      </div>
+    ) : (
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {concept.assets.map((asset) => {
+          const latestVersion = asset.versions[0];
+          const assetIcon = assetTypeIcons[asset.type] || <File className="w-4 h-4" />;
+          const assetColor = assetTypeColors[asset.type] || 'bg-zinc-500/10 text-zinc-400 border-zinc-500/20';
+          
+          return (
+            <Link
+              href={`/dashboard/projects/${projectId}/concepts/${conceptId}/assets/${asset.id}`}
+              key={asset.id}
+              className="bg-zinc-950/60 border border-zinc-800 rounded-lg p-4 hover:border-zinc-700 transition-colors group block"
+            >
+              <div className="flex items-start justify-between">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className={`p-1.5 rounded-md ${assetColor}`}>
+                      {assetIcon}
+                    </span>
+                    <h4 className="font-medium text-zinc-200 truncate">
+                      {asset.name}
+                    </h4>
+                  </div>
+                  <Badge className={`mt-1.5 text-[9px] ${assetColor}`}>
+                    {asset.type.replace('_', ' ')}
+                  </Badge>
+                </div>
+                <Badge className="bg-zinc-800 text-zinc-400 border-zinc-700 text-[9px] font-mono shrink-0 ml-2">
+                  v{asset.versions.length}
+                </Badge>
+              </div>
+              
+              {latestVersion && (
+                <div className="mt-3 flex items-center gap-3 pt-3 border-t border-zinc-800/60">
+                  <a
+                    href={latestVersion.fileUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1 transition-colors"
+                    onClick={(e) => e.stopPropagation()}
                   >
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className={`p-1.5 rounded-md ${assetColor}`}>
-                            {assetIcon}
-                          </span>
-                          <h4 className="font-medium text-zinc-200 truncate">
-                            {asset.name}
-                          </h4>
-                        </div>
-                        <Badge className={`mt-1.5 text-[9px] ${assetColor}`}>
-                          {asset.type.replace('_', ' ')}
-                        </Badge>
-                      </div>
-                      <Badge className="bg-zinc-800 text-zinc-400 border-zinc-700 text-[9px] font-mono shrink-0 ml-2">
-                        v{asset.versions.length}
-                      </Badge>
-                    </div>
-                    
-                    {latestVersion && (
-                      <div className="mt-3 flex items-center gap-3 pt-3 border-t border-zinc-800/60">
-                        <a
-                          href={latestVersion.fileUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1 transition-colors"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <Download className="w-3 h-3" />
-                          Download
-                        </a>
-                        <span className="text-zinc-700">•</span>
-                        <span className="text-[10px] text-zinc-500">
-                          v{latestVersion.versionNo}
-                        </span>
-                        <span className="text-zinc-700">•</span>
-                        <span className="text-[10px] text-zinc-500">
-                          {format(new Date(latestVersion.createdAt), 'MMM d, yyyy')}
-                        </span>
-                        <button
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            handleDeleteAsset(asset.id);
-                          }}
-                          disabled={deletingAsset === asset.id}
-                          className="ml-auto text-[10px] text-red-400 hover:text-red-300 transition-colors disabled:opacity-50"
-                        >
-                          {deletingAsset === asset.id ? '...' : 'Delete'}
-                        </button>
-                      </div>
-                    )}
-                  </Link>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      )}
+                    <Download className="w-3 h-3" />
+                    Download
+                  </a>
+                  <span className="text-zinc-700">•</span>
+                  <span className="text-[10px] text-zinc-500">
+                    v{latestVersion.versionNo}
+                  </span>
+                  <span className="text-zinc-700">•</span>
+                  <span className="text-[10px] text-zinc-500">
+                    {format(new Date(latestVersion.createdAt), 'MMM d, yyyy')}
+                  </span>
+                  <button
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      handleDeleteAsset(asset.id);
+                    }}
+                    disabled={deletingAsset === asset.id}
+                    className="ml-auto text-[10px] text-red-400 hover:text-red-300 transition-colors disabled:opacity-50"
+                  >
+                    {deletingAsset === asset.id ? '...' : 'Delete'}
+                  </button>
+                </div>
+              )}
+            </Link>
+          );
+        })}
+      </div>
+    )}
+  </div>
+)}
 
       {/* ─── Comments Tab ────────────────────────────────────────────────────── */}
       {activeTab === 'comments' && (

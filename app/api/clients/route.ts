@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma"; // Adjust path to your Prisma client instance if using @/lib/db
+import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/authOptions";
@@ -14,6 +14,19 @@ export async function GET(request: Request) {
       return NextResponse.json(
         { error: "Agency ID is required" },
         { status: 400 }
+      );
+    }
+
+    // Verify agency exists
+    const agency = await prisma.agency.findUnique({
+      where: { id: agencyId },
+      select: { id: true },
+    });
+
+    if (!agency) {
+      return NextResponse.json(
+        { error: "Agency not found" },
+        { status: 404 }
       );
     }
 
@@ -121,6 +134,7 @@ export async function GET(request: Request) {
 
     return NextResponse.json({ clients: formattedClients });
   } catch (error: any) {
+    console.error("[GET /api/clients Error]:", error);
     return NextResponse.json(
       { error: error?.message || "Failed to fetch clients" },
       { status: 500 }
@@ -141,6 +155,19 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { error: "Agency ID is required" },
         { status: 400 }
+      );
+    }
+
+    // ✅ Verify agency exists before proceeding
+    const agency = await prisma.agency.findUnique({
+      where: { id: agencyId },
+      select: { id: true, agencyName: true },
+    });
+
+    if (!agency) {
+      return NextResponse.json(
+        { error: "Agency not found. Please provide a valid agency ID." },
+        { status: 404 }
       );
     }
 
@@ -196,9 +223,9 @@ export async function POST(request: Request) {
     const portalEmail = userEmail || contactEmail || resolvedEmail;
     const portalName = userName || contactName || `${resolvedClientName} Admin`;
 
-    // Execute transaction to ensure atomic creation of Client, Contact, Budget, User, and Opportunity link
+    // Execute transaction to ensure atomic creation
     const result = await prisma.$transaction(async (tx) => {
-      // 1. Create Client
+      // 1. Create Client with direct agency connection
       const newClient = await tx.client.create({
         data: {
           clientName: resolvedClientName,
@@ -215,7 +242,7 @@ export async function POST(request: Request) {
           creditLimitAlertPct: creditLimitAlertPct
             ? Number(creditLimitAlertPct)
             : 90,
-          agency: { connect: { id: agencyId } },
+          agencyId: agencyId, // ✅ Use direct assignment instead of connect
           ...(billingLine1 || billingCity || billingCountry
             ? {
                 billingAddress: {
@@ -250,8 +277,8 @@ export async function POST(request: Request) {
             email: contactEmail ? contactEmail.toLowerCase().trim() : null,
             phoneNumber: contactPhone,
             isPrimary: true,
-            client: { connect: { id: newClient.id } },
-            agency: { connect: { id: agencyId } },
+            clientId: newClient.id,
+            agencyId: agencyId,
           },
         });
       }
@@ -271,8 +298,8 @@ export async function POST(request: Request) {
               ? new Date(budgetPeriodEnd)
               : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
             isActive: true,
-            client: { connect: { id: newClient.id } },
-            agency: { connect: { id: agencyId } },
+            clientId: newClient.id,
+            agencyId: agencyId,
           },
         });
       }
@@ -290,8 +317,8 @@ export async function POST(request: Request) {
             password: hashedPassword,
             role: "CLIENT",
             userType: "FULL_TIME",
-            agency: { connect: { id: agencyId } },
-            client: { connect: { id: newClient.id } },
+            agencyId: agencyId,
+            clientId: newClient.id,
           },
         });
       }

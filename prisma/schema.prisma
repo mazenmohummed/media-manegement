@@ -490,6 +490,7 @@ enum CreativeAssetVersionStatus {
     INTERNAL_REVIEW
     APPROVED
     REJECTED
+    REVISIONS_REQUIRED // ✅ Add this status
 }
 
 enum AdPlatform {
@@ -2033,6 +2034,8 @@ model Comment {
     task            Task?            @relation(fields: [taskId], references: [id], onDelete: Cascade)
     projectId       String?
     project         Project?         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+    conceptId       String? // ✅ Add this
+    concept         Concept?         @relation(fields: [conceptId], references: [id], onDelete: Cascade) // ✅ Add this
     authorId        String?
     author          User?            @relation(fields: [authorId], references: [id])
     agencyId        String
@@ -2042,6 +2045,7 @@ model Comment {
 
     @@index([taskId])
     @@index([projectId])
+    @@index([conceptId]) // ✅ Add this
 }
 
 model Todo {
@@ -2085,7 +2089,7 @@ model Tag {
 model Concept {
     id          String        @id @default(cuid())
     name        String
-    description String?
+    description String?       @db.Text
     status      ConceptStatus @default(DRAFT)
 
     projectId String
@@ -2095,9 +2099,11 @@ model Concept {
 
     assets CreativeAsset[]
 
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    comments  Comment[]
 
+    @@unique([projectId, name]) // Prevent duplicate concept names within same project
     @@index([projectId, status])
 }
 
@@ -2124,7 +2130,7 @@ model CreativeAssetVersion {
     versionNo Int                        @default(1)
     fileUrl   String?
     status    CreativeAssetVersionStatus @default(DRAFT)
-    feedback  String?
+    feedback  String?                    @db.Text // ✅ Make it Text for longer feedback
 
     creativeAssetId String
     creativeAsset   CreativeAsset @relation(fields: [creativeAssetId], references: [id])
@@ -2134,6 +2140,7 @@ model CreativeAssetVersion {
     agency          Agency        @relation(fields: [agencyId], references: [id])
 
     createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt // ✅ Add updatedAt for tracking review timestamps
 
     @@index([creativeAssetId, versionNo])
 }

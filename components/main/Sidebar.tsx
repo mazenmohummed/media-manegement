@@ -40,6 +40,7 @@ import {
   CalendarDays,
   ClipboardList,
   ShoppingCart,
+  Link2,
 } from "lucide-react";
 import { NotificationDrawer } from "../main/EmployeeDashboard";
 import { ProcurementChainWidget } from "@/components/procurement/ProcurementChainWidget";
@@ -148,15 +149,13 @@ export default function Sidebar() {
         { name: "Departments", href: "/dashboard/departments", icon: <Building2 size={18} /> },
         { name: "Equipment Directory", href: "/dashboard/assets", icon: <Wrench size={18} /> },
         { 
-          name: "Vendors", 
-          href: "/dashboard/vendors", 
-          icon: <Building2 size={18} />,
+          name: "Procurement Dashboard", href: "/dashboard/procurement", icon: <ClipboardList size={18} /> ,
           children: [
+              { name: "Procurement Chains", href: "/dashboard/procurement/chains", icon: <Link2 size={18} /> },
+            { name: "Vendors", href: "/dashboard/vendors", icon: <Building2 size={18} />},
             { name: "Quotations", href: "/dashboard/procurement/quotations", icon: <FileSpreadsheet size={18} /> },
             { name: "Planned Orders", href: "/dashboard/procurement/planned-purchase-orders", icon: <Receipt size={18} /> },
             { name: "Purchase Orders", href: "/dashboard/vendors/purchase-orders", icon: <Receipt size={18} /> },
-            // ─── NEW: Procurement Dashboard ───
-            { name: "Procurement Dashboard", href: "/dashboard/procurement", icon: <ClipboardList size={18} /> },
           ]
         },
       ],
@@ -335,14 +334,6 @@ export default function Sidebar() {
           <p className="text-[9px] font-bold text-rose-500 mt-2 px-1">{error}</p>
         )}
       </div>
-
-      {/* ─── PROCUREMENT CHAIN WIDGET ─── */}
-      {!isCollapsed && procurementTaskIds.length > 0 && (
-        <div className="px-4 pb-2">
-          <ProcurementChainWidget taskIds={procurementTaskIds.slice(0, 5)} />
-        </div>
-      )}
-
       {/* NAVIGATION SECTIONS */}
       <div className="flex-1 overflow-y-auto py-2 px-4 space-y-3 no-scrollbar">
         {navSections.map((section, idx) => {
