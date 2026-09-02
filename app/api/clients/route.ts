@@ -17,17 +17,19 @@ export async function GET(request: Request) {
       );
     }
 
-    // Verify agency exists
+    // ✅ Verify agency exists with better error handling
     const agency = await prisma.agency.findUnique({
       where: { id: agencyId },
-      select: { id: true },
+      select: { id: true, agencyName: true },
     });
 
     if (!agency) {
-      return NextResponse.json(
-        { error: "Agency not found" },
-        { status: 404 }
-      );
+      console.warn(`[GET /api/clients] Agency not found: ${agencyId}`);
+      // ✅ Return empty array instead of 404 to avoid breaking the UI
+      return NextResponse.json({ 
+        clients: [], 
+        error: "Agency not found. Please create an agency first." 
+      }, { status: 404 });
     }
 
     const clients = await prisma.client.findMany({
@@ -166,7 +168,7 @@ export async function POST(request: Request) {
 
     if (!agency) {
       return NextResponse.json(
-        { error: "Agency not found. Please provide a valid agency ID." },
+        { error: "Agency not found. Please create an agency first." },
         { status: 404 }
       );
     }
@@ -174,7 +176,7 @@ export async function POST(request: Request) {
     const {
       // Basic / Expanded fields
       clientName,
-      name, // Fallback if submitted from simple modal cards
+      name,
       companyName,
       accountType,
       status,
@@ -199,7 +201,7 @@ export async function POST(request: Request) {
       budgetPeriodStart,
       budgetPeriodEnd,
       currency,
-      opportunityId, // Links client directly to an opportunity if sent from Kanban/Opportunities view
+      opportunityId,
       // User Credentials
       createUser = true,
       userName,
@@ -242,7 +244,7 @@ export async function POST(request: Request) {
           creditLimitAlertPct: creditLimitAlertPct
             ? Number(creditLimitAlertPct)
             : 90,
-          agencyId: agencyId, // ✅ Use direct assignment instead of connect
+          agencyId: agencyId,
           ...(billingLine1 || billingCity || billingCountry
             ? {
                 billingAddress: {
@@ -304,7 +306,7 @@ export async function POST(request: Request) {
         });
       }
 
-      // 4. Create User with CLIENT role linked to this client (if requested & email available)
+      // 4. Create User with CLIENT role linked to this client
       let newUser = null;
       if (createUser && portalEmail) {
         const defaultPassword = userPassword || "Client@123456";

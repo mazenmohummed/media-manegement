@@ -22,14 +22,12 @@ import {
   User,
   Calendar,
   ExternalLink,
-  ChevronDown,
-  ChevronUp,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Textarea } from '@/components/ui/textarea';
+import { FeedbackPanel } from '@/components/assets/FeedbackPanel';
 
 interface Version {
   id: string;
@@ -109,9 +107,8 @@ export default function AssetComparePage() {
   const [loading, setLoading] = useState(true);
   const [versionA, setVersionA] = useState<number>(1);
   const [versionB, setVersionB] = useState<number>(2);
-  const [feedback, setFeedback] = useState('');
   const [submittingFeedback, setSubmittingFeedback] = useState(false);
-  const [selectedVersionForFeedback, setSelectedVersionForFeedback] = useState<string | null>(null);
+  const [selectedVersionForFeedback, setSelectedVersionForFeedback] = useState<Version | null>(null);
   const [showFeedbackPanel, setShowFeedbackPanel] = useState(false);
 
   const assetType = asset?.type || 'IMAGE';
@@ -147,16 +144,13 @@ export default function AssetComparePage() {
     }
   };
 
-  const handleSubmitFeedback = async () => {
-    if (!selectedVersionForFeedback || !feedback.trim()) {
-      toast.error('Please provide feedback');
-      return;
-    }
+  const handleSubmitFeedback = async (feedback: string) => {
+    if (!selectedVersionForFeedback) return;
 
     setSubmittingFeedback(true);
     try {
       const response = await fetch(
-        `/api/projects/${projectId}/concepts/${conceptId}/assets/${assetId}/versions/${selectedVersionForFeedback}`,
+        `/api/projects/${projectId}/concepts/${conceptId}/assets/${assetId}/versions/${selectedVersionForFeedback.id}`,
         {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
@@ -173,7 +167,6 @@ export default function AssetComparePage() {
       }
 
       toast.success('Feedback submitted successfully');
-      setFeedback('');
       setSelectedVersionForFeedback(null);
       setShowFeedbackPanel(false);
       await fetchVersions();
@@ -207,8 +200,8 @@ export default function AssetComparePage() {
     }
   };
 
-  const handleRejectVersion = async (versionId: string) => {
-    setSelectedVersionForFeedback(versionId);
+  const handleRejectVersion = (version: Version) => {
+    setSelectedVersionForFeedback(version);
     setShowFeedbackPanel(true);
   };
 
@@ -571,7 +564,7 @@ export default function AssetComparePage() {
                           Approve
                         </button>
                         <button
-                          onClick={() => handleRejectVersion(version.id)}
+                          onClick={() => handleRejectVersion(version)}
                           className="text-xs text-red-400 hover:text-red-300 flex items-center gap-1"
                         >
                           <XCircle className="w-3.5 h-3.5" />
@@ -588,59 +581,17 @@ export default function AssetComparePage() {
       )}
 
       {/* ─── Feedback Panel ─────────────────────────────────────────────────── */}
-      {showFeedbackPanel && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-zinc-900 border border-zinc-800 rounded-xl max-w-lg w-full p-6 shadow-2xl">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="p-2 bg-orange-500/10 rounded-lg border border-orange-500/20">
-                <MessageSquare className="w-5 h-5 text-orange-400" />
-              </div>
-              <div>
-                <h2 className="text-lg font-semibold text-zinc-100">Request Revisions</h2>
-                <p className="text-xs text-zinc-500">Provide feedback for Version {asset?.versions.find(v => v.id === selectedVersionForFeedback)?.versionNo}</p>
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              <div>
-                <label className="block text-xs font-medium text-zinc-300 mb-1.5">
-                  Feedback <span className="text-red-400">*</span>
-                </label>
-                <Textarea
-                  value={feedback}
-                  onChange={(e) => setFeedback(e.target.value)}
-                  placeholder="Describe what needs to be revised..."
-                  rows={4}
-                  className="bg-zinc-950/60 border-zinc-800 text-zinc-100 placeholder:text-zinc-600 resize-none"
-                />
-              </div>
-
-              <div className="flex justify-end gap-2">
-                <Button
-                  type="button"
-                  onClick={() => {
-                    setShowFeedbackPanel(false);
-                    setFeedback('');
-                    setSelectedVersionForFeedback(null);
-                  }}
-                  variant="outline"
-                  className="border-zinc-700 text-zinc-300 hover:bg-zinc-800"
-                >
-                  Cancel
-                </Button>
-                <Button
-                  type="button"
-                  onClick={handleSubmitFeedback}
-                  disabled={submittingFeedback || !feedback.trim()}
-                  className="bg-orange-600 hover:bg-orange-700 text-white"
-                >
-                  {submittingFeedback ? 'Submitting...' : 'Submit Feedback'}
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      <FeedbackPanel
+        isOpen={showFeedbackPanel}
+        onClose={() => {
+          setShowFeedbackPanel(false);
+          setSelectedVersionForFeedback(null);
+        }}
+        onSubmit={handleSubmitFeedback}
+        assetName={asset?.name}
+        versionNumber={selectedVersionForFeedback?.versionNo}
+        isSubmitting={submittingFeedback}
+      />
     </div>
   );
 }

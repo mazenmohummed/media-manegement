@@ -490,7 +490,7 @@ enum CreativeAssetVersionStatus {
     INTERNAL_REVIEW
     APPROVED
     REJECTED
-    REVISIONS_REQUIRED // ✅ Add this status
+    REVISIONS_REQUIRED
 }
 
 enum AdPlatform {
@@ -760,6 +760,7 @@ model Agency {
     deductionRules     DeductionRule[]
     employeeDeductions EmployeeDeduction[]
     payslips           Payslip[]
+    reviewLinks        ReviewLink[]
 
     @@index([agencyName])
 }
@@ -1563,6 +1564,7 @@ model Client {
     reports                   Report[]
     opportunities             Opportunity[]
     proposals                 Proposal[]
+    reviewLinks               ReviewLink[]
 
     @@index([agencyId, clientNo])
     @@index([agencyId, clientName])
@@ -1626,6 +1628,66 @@ model ClientContact {
     updatedAt   DateTime @updatedAt
 
     @@index([clientId])
+}
+
+model ReviewLink {
+    id        String  @id @default(cuid())
+    token     String  @unique
+    conceptId String
+    concept   Concept @relation(fields: [conceptId], references: [id], onDelete: Cascade)
+    clientId  String
+    client    Client  @relation(fields: [clientId], references: [id])
+    agencyId  String
+    agency    Agency  @relation(fields: [agencyId], references: [id])
+
+    // Access control
+    expiresAt DateTime?
+    maxViews  Int?      @default(0)
+    viewCount Int       @default(0)
+    isActive  Boolean   @default(true)
+
+    // Review tracking
+    reviewedAt  DateTime?
+    reviewedBy  String?
+    reviewNotes String?   @db.Text
+
+    // Asset approval tracking (JSON for quick lookup)
+    assetApprovals Json?
+
+    createdAt                DateTime                  @default(now())
+    updatedAt                DateTime                  @updatedAt
+    reviewLinkAssetApprovals ReviewLinkAssetApproval[]
+
+    @@index([token])
+    @@index([conceptId])
+    @@index([clientId])
+    @@index([agencyId, isActive, expiresAt])
+}
+
+model ReviewLinkAssetApproval {
+    id                   String                @id @default(cuid())
+    reviewLinkId         String
+    reviewLink           ReviewLink            @relation(fields: [reviewLinkId], references: [id], onDelete: Cascade)
+    assetId              String
+    creativeAsset        CreativeAsset         @relation(fields: [assetId], references: [id])
+    versionId            String?
+    creativeAssetVersion CreativeAssetVersion? @relation(fields: [versionId], references: [id])
+
+    status     String    @default("PENDING") // PENDING, APPROVED, REJECTED, REVISIONS_REQUESTED
+    feedback   String?   @db.Text
+    approvedAt DateTime?
+    approvedBy String?
+
+    // For revision loop
+    revisionTaskId String? // Task created for revisions
+    revisionTask   Task?   @relation(fields: [revisionTaskId], references: [id])
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@unique([reviewLinkId, assetId])
+    @@index([reviewLinkId, status])
+    @@index([revisionTaskId])
 }
 
 model Contract {
@@ -1937,9 +1999,10 @@ model Task {
 
     tags Tag[] @relation("TaskTags")
 
-    createdAt DateTime  @default(now())
-    updatedAt DateTime  @updatedAt
-    deletedAt DateTime?
+    createdAt                DateTime                  @default(now())
+    updatedAt                DateTime                  @updatedAt
+    deletedAt                DateTime?
+    reviewLinkAssetApprovals ReviewLinkAssetApproval[]
 
     @@index([agencyId, taskNo])
     @@index([agencyId, status])
@@ -2099,9 +2162,10 @@ model Concept {
 
     assets CreativeAsset[]
 
-    createdAt DateTime  @default(now())
-    updatedAt DateTime  @updatedAt
-    comments  Comment[]
+    createdAt   DateTime     @default(now())
+    updatedAt   DateTime     @updatedAt
+    comments    Comment[]
+    reviewLinks ReviewLink[]
 
     @@unique([projectId, name]) // Prevent duplicate concept names within same project
     @@index([projectId, status])
@@ -2119,8 +2183,9 @@ model CreativeAsset {
 
     versions CreativeAssetVersion[]
 
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+    createdAt                DateTime                  @default(now())
+    updatedAt                DateTime                  @updatedAt
+    reviewLinkAssetApprovals ReviewLinkAssetApproval[]
 
     @@index([conceptId])
 }
@@ -2139,8 +2204,9 @@ model CreativeAssetVersion {
     agencyId        String
     agency          Agency        @relation(fields: [agencyId], references: [id])
 
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt // ✅ Add updatedAt for tracking review timestamps
+    createdAt                DateTime                  @default(now())
+    updatedAt                DateTime                  @updatedAt // ✅ Add updatedAt for tracking review timestamps
+    reviewLinkAssetApprovals ReviewLinkAssetApproval[]
 
     @@index([creativeAssetId, versionNo])
 }

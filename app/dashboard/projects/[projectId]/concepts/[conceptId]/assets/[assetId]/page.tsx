@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef  } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -23,17 +23,21 @@ import {
   Trash2,
   RefreshCw,
   GitCompare,
+  Send,
+  Link as LinkIcon,
+  Copy,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { FeedbackPanel } from '@/components/assets/FeedbackPanel';
 
 interface Version {
   id: string;
   versionNo: number;
   fileUrl: string;
-  status: 'DRAFT' | 'CLIENT_REVIEW' | 'INTERNAL_REVIEW' | 'APPROVED' | 'REJECTED';
+  status: 'DRAFT' | 'CLIENT_REVIEW' | 'INTERNAL_REVIEW' | 'APPROVED' | 'REJECTED' | 'REVISIONS_REQUIRED';
   feedback: string | null;
   createdAt: string;
 }
@@ -46,6 +50,9 @@ interface Asset {
   concept: {
     id: string;
     name: string;
+  };
+  project?: {
+    clientId: string;
   };
   createdAt: string;
   updatedAt: string;
@@ -82,6 +89,12 @@ const versionStatusConfig: Record<Version['status'], { label: string; color: str
     bg: 'bg-red-500/10 border-red-500/20',
     icon: <XCircle className="w-3.5 h-3.5" />,
   },
+  REVISIONS_REQUIRED: {
+    label: 'Revisions Required',
+    color: 'text-orange-400',
+    bg: 'bg-orange-500/10 border-orange-500/20',
+    icon: <AlertCircle className="w-3.5 h-3.5" />,
+  },
 };
 
 const assetTypeIcons: Record<string, React.ReactNode> = {
@@ -108,6 +121,21 @@ export default function AssetDetailPage() {
   const [loading, setLoading] = useState(true);
   const [uploadingVersion, setUploadingVersion] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Feedback panel states
+  const [selectedVersionForFeedback, setSelectedVersionForFeedback] = useState<Version | null>(null);
+  const [showFeedbackPanel, setShowFeedbackPanel] = useState(false);
+  const [submittingFeedback, setSubmittingFeedback] = useState(false);
+
+  // Client review link states
+  const [creatingReviewLink, setCreatingReviewLink] = useState(false);
+  const [showReviewLinkModal, setShowReviewLinkModal] = useState(false);
+  const [generatedLink, setGeneratedLink] = useState<string | null>(null);
+  const [linkExpiry, setLinkExpiry] = useState<string | null>(null);
+  const [linkDetails, setLinkDetails] = useState<{
+    conceptName: string;
+    assetCount: number;
+  } | null>(null);
 
   useEffect(() => {
     fetchAsset();
@@ -235,6 +263,95 @@ export default function AssetDetailPage() {
     }
   };
 
+  const handleSubmitFeedback = async (feedback: string) => {
+    if (!selectedVersionForFeedback) return;
+
+    setSubmittingFeedback(true);
+    try {
+      const response = await fetch(
+        `/api/projects/${projectId}/concepts/${conceptId}/assets/${assetId}/versions/${selectedVersionForFeedback.id}`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            feedback: feedback.trim(),
+            status: 'REVISIONS_REQUIRED',
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to submit feedback');
+      }
+
+      toast.success('Feedback submitted successfully');
+      setSelectedVersionForFeedback(null);
+      setShowFeedbackPanel(false);
+      await fetchAsset();
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to submit feedback');
+    } finally {
+      setSubmittingFeedback(false);
+    }
+  };
+
+  const handleSendForClientReview = async () => {
+    if (!asset) return;
+
+    setCreatingReviewLink(true);
+    try {
+      // First, get the concept details to know the client
+      const conceptResponse = await fetch(
+        `/api/projects/${projectId}/concepts/${conceptId}`
+      );
+      if (!conceptResponse.ok) {
+        throw new Error('Failed to fetch concept details');
+      }
+      const conceptData = await conceptResponse.json();
+
+      const response = await fetch('/api/client-review/links', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          conceptId: conceptId,
+          clientId: conceptData.clientId,
+          expiresInDays: 14,
+          maxViews: 0, // unlimited
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to create review link');
+      }
+
+      const data = await response.json();
+      setGeneratedLink(data.url);
+      setLinkExpiry(data.expiresAt || null);
+      setLinkDetails({
+        conceptName: data.concept.name,
+        assetCount: data.concept.assetCount,
+      });
+      setShowReviewLinkModal(true);
+
+      // Also copy to clipboard
+      await navigator.clipboard.writeText(data.url);
+      toast.success('Review link copied to clipboard!');
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to create review link');
+    } finally {
+      setCreatingReviewLink(false);
+    }
+  };
+
+  const copyLinkToClipboard = async () => {
+    if (generatedLink) {
+      await navigator.clipboard.writeText(generatedLink);
+      toast.success('Link copied to clipboard!');
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
@@ -313,39 +430,56 @@ export default function AssetDetailPage() {
               </div>
             </div>
           </div>
-         // In the header section of AssetDetailPage
-        <div className="flex flex-wrap items-center gap-2">
-        <Link href={`/dashboard/projects/${projectId}/concepts/${conceptId}/assets/${assetId}/compare`}>
-            <Button size="sm" variant="outline" className="border-blue-600/30 text-blue-400 hover:bg-blue-950/20">
-            <GitCompare className="w-4 h-4 mr-1.5" />
-            Compare Versions
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              onClick={handleSendForClientReview}
+              disabled={creatingReviewLink || !asset.versions.length}
+              size="sm"
+              className="bg-amber-600 hover:bg-amber-700 text-white"
+            >
+              {creatingReviewLink ? (
+                <>
+                  <RefreshCw className="w-4 h-4 mr-1.5 animate-spin" />
+                  Creating...
+                </>
+              ) : (
+                <>
+                  <ExternalLink className="w-4 h-4 mr-1.5" />
+                  Send for Client Review
+                </>
+              )}
             </Button>
-        </Link>
-        <Button
-            onClick={() => fileInputRef.current?.click()}
-            disabled={uploadingVersion}
-            size="sm"
-            className="bg-blue-600 hover:bg-blue-700 text-white"
-        >
-            <Plus className="w-4 h-4 mr-1.5" />
-            {uploadingVersion ? 'Uploading...' : 'New Version'}
-        </Button>
-        <input
-            ref={fileInputRef}
-            type="file"
-            onChange={handleUploadVersion}
-            className="hidden"
-        />
-        <Button
-            onClick={handleDeleteAsset}
-            variant="outline"
-            size="sm"
-            className="border-red-800/40 text-red-400 hover:bg-red-500/10 hover:border-red-500/40"
-        >
-            <Trash2 className="w-4 h-4 mr-1.5" />
-            Delete Asset
-        </Button>
-        </div>
+            <Link href={`/dashboard/projects/${projectId}/concepts/${conceptId}/assets/${assetId}/compare`}>
+              <Button size="sm" variant="outline" className="border-blue-600/30 text-blue-400 hover:bg-blue-950/20">
+                <GitCompare className="w-4 h-4 mr-1.5" />
+                Compare Versions
+              </Button>
+            </Link>
+            <Button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploadingVersion}
+              size="sm"
+              className="bg-blue-600 hover:bg-blue-700 text-white"
+            >
+              <Plus className="w-4 h-4 mr-1.5" />
+              {uploadingVersion ? 'Uploading...' : 'New Version'}
+            </Button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              onChange={handleUploadVersion}
+              className="hidden"
+            />
+            <Button
+              onClick={handleDeleteAsset}
+              variant="outline"
+              size="sm"
+              className="border-red-800/40 text-red-400 hover:bg-red-500/10 hover:border-red-500/40"
+            >
+              <Trash2 className="w-4 h-4 mr-1.5" />
+              Delete Asset
+            </Button>
+          </div>
         </div>
 
         {/* Latest Version Preview */}
@@ -458,6 +592,15 @@ export default function AssetDetailPage() {
                             Approve
                           </button>
                           <button
+                            onClick={() => {
+                              setSelectedVersionForFeedback(version);
+                              setShowFeedbackPanel(true);
+                            }}
+                            className="text-[10px] px-2.5 py-1 rounded-full border border-orange-500/20 text-orange-400 hover:bg-orange-500/10 transition-colors"
+                          >
+                            Request Revisions
+                          </button>
+                          <button
                             onClick={() => handleVersionStatusChange(version.id, 'REJECTED')}
                             className="text-[10px] px-2.5 py-1 rounded-full border border-red-500/20 text-red-400 hover:bg-red-500/10 transition-colors"
                           >
@@ -472,6 +615,25 @@ export default function AssetDetailPage() {
                         >
                           Client Review
                         </button>
+                      )}
+                      {version.status === 'REVISIONS_REQUIRED' && (
+                        <>
+                          <button
+                            onClick={() => handleVersionStatusChange(version.id, 'INTERNAL_REVIEW')}
+                            className="text-[10px] px-2.5 py-1 rounded-full border border-blue-500/20 text-blue-400 hover:bg-blue-500/10 transition-colors"
+                          >
+                            Review Again
+                          </button>
+                          <button
+                            onClick={() => {
+                              setSelectedVersionForFeedback(version);
+                              setShowFeedbackPanel(true);
+                            }}
+                            className="text-[10px] px-2.5 py-1 rounded-full border border-orange-500/20 text-orange-400 hover:bg-orange-500/10 transition-colors"
+                          >
+                            Update Feedback
+                          </button>
+                        </>
                       )}
                       {asset.versions.length > 1 && (
                         <button
@@ -490,6 +652,92 @@ export default function AssetDetailPage() {
           </div>
         )}
       </div>
+
+      {/* Feedback Panel */}
+      <FeedbackPanel
+        isOpen={showFeedbackPanel}
+        onClose={() => {
+          setShowFeedbackPanel(false);
+          setSelectedVersionForFeedback(null);
+        }}
+        onSubmit={handleSubmitFeedback}
+        assetName={asset?.name}
+        versionNumber={selectedVersionForFeedback?.versionNo}
+        isSubmitting={submittingFeedback}
+      />
+
+      {/* Review Link Modal */}
+      {showReviewLinkModal && generatedLink && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-6 max-w-md w-full">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-2 bg-amber-500/10 rounded-lg">
+                <LinkIcon className="w-5 h-5 text-amber-400" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-zinc-100">Review Link Created</h3>
+                <p className="text-sm text-zinc-400">
+                  Share this link with your client to review this concept
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-3 mb-6">
+              <div className="bg-zinc-800/50 rounded-lg p-3">
+                <p className="text-xs text-zinc-400 mb-1">Concept</p>
+                <p className="text-sm text-zinc-200 font-medium">{linkDetails?.conceptName}</p>
+              </div>
+              <div className="bg-zinc-800/50 rounded-lg p-3">
+                <p className="text-xs text-zinc-400 mb-1">Assets</p>
+                <p className="text-sm text-zinc-200">{linkDetails?.assetCount} asset(s) included</p>
+              </div>
+              {linkExpiry && (
+                <div className="bg-zinc-800/50 rounded-lg p-3">
+                  <p className="text-xs text-zinc-400 mb-1">Expires</p>
+                  <p className="text-sm text-zinc-200">{format(new Date(linkExpiry), 'PPP')}</p>
+                </div>
+              )}
+              <div className="bg-zinc-800/50 rounded-lg p-3">
+                <p className="text-xs text-zinc-400 mb-1">Link</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-xs text-blue-400 truncate flex-1">{generatedLink}</p>
+                  <button
+                    onClick={copyLinkToClipboard}
+                    className="p-1.5 hover:bg-zinc-700 rounded-md transition-colors text-zinc-400 hover:text-zinc-200"
+                    title="Copy link"
+                  >
+                    <Copy className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-2">
+              <button
+                onClick={copyLinkToClipboard}
+                className="flex-1 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-sm text-zinc-200 font-medium transition-colors flex items-center justify-center gap-2"
+              >
+                <Copy className="w-4 h-4" />
+                Copy Link
+              </button>
+              <button
+                onClick={() => {
+                  setShowReviewLinkModal(false);
+                  setGeneratedLink(null);
+                }}
+                className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm text-white font-medium transition-colors"
+              >
+                Done
+              </button>
+            </div>
+
+            <p className="text-[10px] text-zinc-500 text-center mt-4">
+              The client can review and approve all assets without logging in.
+              You'll be notified when they submit their feedback.
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

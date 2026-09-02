@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useSession } from "next-auth/react";
 import {
   AlertCircle,
   Banknote,
@@ -15,9 +16,7 @@ import {
   SlidersHorizontal,
   Wallet,
 } from "lucide-react";
-import CreateClientCard from "@/components/opportunities/CreateClientCard"; // Adjust import path if needed
-
-const DEFAULT_AGENCY_ID = "cmqv7pkzo0000xmkk0u7229sf";
+import CreateClientCard from "@/components/opportunities/CreateClientCard";
 
 type ClientRow = {
   id: string;
@@ -74,24 +73,8 @@ const percent = (value: number) =>
     maximumFractionDigits: 0,
   })}%`;
 
-const getStoredAgencyId = () => {
-  if (typeof window === "undefined") return "";
-
-  try {
-    const storedUser =
-      window.sessionStorage.getItem("agency_user") ||
-      window.localStorage.getItem("agency_user") ||
-      window.sessionStorage.getItem("user") ||
-      window.localStorage.getItem("user");
-
-    return storedUser ? JSON.parse(storedUser)?.agencyId ?? "" : "";
-  } catch {
-    return "";
-  }
-};
-
 export default function ClientsPage() {
-  const [agencyId, setAgencyId] = useState("");
+  const { data: session, status } = useSession();
   const [clients, setClients] = useState<ClientRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -100,25 +83,34 @@ export default function ClientsPage() {
   const [selectedType, setSelectedType] = useState("ALL");
   const [selectedStatus, setSelectedStatus] = useState("ALL");
 
-  const fetchClients = async (activeAgencyId = agencyId) => {
-    setLoading(true);
-    setError("");
+  const agencyId = session?.user?.agencyId;
 
-    if (!activeAgencyId) {
+  const fetchClients = async () => {
+    if (!agencyId) {
       setLoading(false);
       setError("No agency context found. Please sign in again.");
       return;
     }
 
+    setLoading(true);
+    setError("");
+
     try {
-      const res = await fetch(`/api/clients?agencyId=${encodeURIComponent(activeAgencyId)}`, {
+      const res = await fetch(`/api/clients?agencyId=${encodeURIComponent(agencyId)}`, {
         cache: "no-store",
         credentials: "include",
-        headers: { "x-agency-id": activeAgencyId },
+        headers: { "x-agency-id": agencyId },
       });
       const data = await res.json();
 
       if (!res.ok) {
+        // ✅ If agency not found, redirect to deploy
+        if (res.status === 404) {
+          setError("Agency not found. Please complete agency setup first.");
+          // Optionally redirect to deploy
+          // router.push('/deploy/agency');
+          return;
+        }
         throw new Error(data?.error || "Failed to load clients");
       }
 
@@ -131,16 +123,13 @@ export default function ClientsPage() {
   };
 
   useEffect(() => {
-    const queryAgencyId =
-      typeof window === "undefined"
-        ? ""
-        : new URLSearchParams(window.location.search).get("agencyId") ?? "";
-    const storedAgencyId = getStoredAgencyId();
-    const resolvedAgencyId = queryAgencyId || storedAgencyId || DEFAULT_AGENCY_ID;
-
-    setAgencyId(resolvedAgencyId);
-    fetchClients(resolvedAgencyId);
-  }, []);
+    if (status === "authenticated" && agencyId) {
+      fetchClients();
+    } else if (status === "unauthenticated") {
+      setLoading(false);
+      setError("Please sign in to view clients.");
+    }
+  }, [status, agencyId]);
 
   const filteredClients = useMemo(() => {
     const query = searchTerm.trim().toLowerCase();
@@ -192,6 +181,30 @@ export default function ClientsPage() {
     ? (stats.totalReceived / stats.totalInvoiced) * 100
     : 0;
 
+  // Show loading while session is loading
+  if (status === "loading") {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+      </div>
+    );
+  }
+
+  // Show sign-in prompt
+  if (status === "unauthenticated") {
+    return (
+      <div className="text-center py-12">
+        <h2 className="text-xl font-semibold text-zinc-100">Please Sign In</h2>
+        <p className="mt-2 text-zinc-500">You need to be signed in to view clients.</p>
+        <Link href="/login">
+          <button className="mt-4 inline-flex h-10 items-center justify-center rounded-md bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700">
+            Sign In
+          </button>
+        </Link>
+      </div>
+    );
+  }
+
   return (
     <main className="space-y-6">
       <header className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
@@ -215,6 +228,13 @@ export default function ClientsPage() {
         <div className="flex items-start gap-3 rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-700">
           <AlertCircle className="mt-0.5 h-4 w-4" />
           <p>{error}</p>
+          {error.includes("Agency not found") && (
+            <Link href="/deploy/agency">
+              <button className="ml-4 inline-flex h-8 items-center justify-center rounded-md bg-blue-600 px-3 text-xs font-semibold text-white hover:bg-blue-700">
+                Set up agency
+              </button>
+            </Link>
+          )}
         </div>
       )}
 
@@ -293,7 +313,7 @@ export default function ClientsPage() {
               ) : filteredClients.length === 0 ? (
                 <tr>
                   <td colSpan={10} className="px-4 py-16 text-center text-muted-foreground">
-                    No clients found.
+                    {clients.length === 0 && !error ? "No clients found. Create your first client." : "No clients match your filters."}
                   </td>
                 </tr>
               ) : (
@@ -380,10 +400,10 @@ export default function ClientsPage() {
 
             <div className="flex-1 overflow-y-auto p-6">
               <CreateClientCard
-                agencyId={agencyId}
+                agencyId={agencyId || ""}
                 onSuccess={() => {
                   setShowForm(false);
-                  fetchClients(agencyId);
+                  fetchClients();
                 }}
                 onCancel={() => setShowForm(false)}
               />

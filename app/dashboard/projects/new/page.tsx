@@ -40,7 +40,7 @@ export default async function NewProjectPage({ searchParams }: PageProps) {
       where: { 
         agencyId, 
         isActive: true,
-        role: { in: ["ADMIN", "OPERATOR"] } 
+        role: { in: ["ADMIN", "OPERATOR", "TEAMLEADER"] } 
       },
       select: { id: true, name: true, role: true },
       orderBy: { name: "asc" },
@@ -72,7 +72,7 @@ export default async function NewProjectPage({ searchParams }: PageProps) {
 
     if (assignedUserId) {
       const userCheck = await db.user.findFirst({
-        where: { id: assignedUserId, agencyId, role: { in: ["ADMIN", "OPERATOR"] } },
+        where: { id: assignedUserId, agencyId, isActive: true },
       });
       if (!userCheck) throw new Error("Invalid assignee selected");
     }
@@ -80,6 +80,7 @@ export default async function NewProjectPage({ searchParams }: PageProps) {
     const projectCount = await db.project.count({ where: { agencyId } });
     const projectNo = `PRJ-${new Date().getFullYear()}-${String(projectCount + 1).padStart(4, "0")}`;
 
+    // ✅ Remove userId field - it doesn't exist in the schema
     const project = await db.project.create({
       data: {
         projectNo,
@@ -91,11 +92,23 @@ export default async function NewProjectPage({ searchParams }: PageProps) {
         agencyId,
         clientId,
         contractId: contractId || undefined,
-        userId: assignedUserId || undefined,
         targetDeadline: targetDeadline ? new Date(targetDeadline) : undefined,
         projectStory: projectStory || undefined,
       },
     });
+
+    // ✅ Create resource allocation for assigned user if provided
+    if (assignedUserId) {
+      await db.resourceAllocation.create({
+        data: {
+          userId: assignedUserId,
+          projectId: project.id,
+          agencyId: agencyId,
+          startDate: new Date(),
+          allocationPercent: 100.0,
+        },
+      });
+    }
 
     redirect(`/dashboard/projects/${project.id}`);
   }
@@ -191,7 +204,7 @@ export default async function NewProjectPage({ searchParams }: PageProps) {
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-zinc-400">Assign Project Manager (Admin/Operator)</label>
+              <label className="text-xs font-medium text-zinc-400">Assign Project Manager (Admin/Operator/TeamLead)</label>
               <select 
                 name="assignedUserId" 
                 className="w-full bg-zinc-950 border border-zinc-800 rounded-md text-sm text-zinc-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500 appearance-none"

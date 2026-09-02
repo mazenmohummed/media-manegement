@@ -16,16 +16,41 @@ const PUBLIC_API_ROUTES = [
   "/api/jobs/heartbeat",
 ];
 
+// ✅ Add /deploy to public pages
+const PUBLIC_PAGES = [
+  "/",
+  "/login",
+  "/onboarding",
+  "/deploy",
+  "/deploy/agency",
+  "/deploy/operator",
+  "/forgot-password",
+];
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
-  // 1. Instantly allow /login, NextAuth routes (/api/auth/*), public APIs, and static assets
+  // 1. Check if user is authenticated first (for redirects)
+  const session = await getToken({
+    req,
+    secret: process.env.NEXTAUTH_SECRET,
+  });
+
+  // 2. Handle public paths
   if (
-    pathname.startsWith("/login") ||
+    PUBLIC_PAGES.some((page) => pathname === page || pathname.startsWith(page + "/")) ||
     pathname.startsWith("/api/auth") ||
     PUBLIC_API_ROUTES.some((route) => pathname.startsWith(route)) ||
     pathname.startsWith("/_next")
   ) {
+    // ✅ If authenticated and on / or /login, redirect to dashboard
+    if (session && (pathname === "/" || pathname === "/login")) {
+      return NextResponse.redirect(new URL("/dashboard", req.url));
+    }
+    // ✅ If authenticated and on /onboarding but already has agency, redirect to dashboard
+    if (session && session.agencyId && pathname === "/onboarding") {
+      return NextResponse.redirect(new URL("/dashboard", req.url));
+    }
+    // ✅ Allow /deploy/agency even if not authenticated
     return NextResponse.next();
   }
 
@@ -34,7 +59,7 @@ export async function middleware(req: NextRequest) {
 
   let userPayload: AuthUserPayload | null = null;
 
-  // 2. Validate Bearer JWT Token (if present)
+  // 3. Validate Bearer JWT Token (if present)
   if (authHeader && authHeader.startsWith("Bearer ")) {
     const token = authHeader.substring(7);
     try {
@@ -53,23 +78,16 @@ export async function middleware(req: NextRequest) {
     }
   }
 
-  // 3. Fallback to NextAuth Cookie Session
-  if (!userPayload) {
-    const session = await getToken({
-      req,
-      secret: process.env.NEXTAUTH_SECRET,
-    });
-
-    if (session) {
-      userPayload = {
-        userId: (session.id as string) || (session.sub as string),
-        agencyId: session.agencyId as string,
-        role: session.role as string,
-      };
-    }
+  // 4. Fallback to session (already fetched above)
+  if (!userPayload && session) {
+    userPayload = {
+      userId: (session.id as string) || (session.sub as string),
+      agencyId: session.agencyId as string,
+      role: session.role as string,
+    };
   }
 
-  // 4. Handle Unauthenticated Requests
+  // 5. Handle Unauthenticated Requests
   if (!userPayload) {
     if (isApiRoute) {
       return NextResponse.json(
@@ -82,7 +100,7 @@ export async function middleware(req: NextRequest) {
     return NextResponse.redirect(loginUrl);
   }
 
-  // 5. Onboarding & Agency Guard
+  // 6. Onboarding & Agency Guard
   const isOnboardingPage = pathname === "/onboarding";
 
   if (!userPayload.agencyId && !isOnboardingPage && !isApiRoute) {
@@ -93,7 +111,7 @@ export async function middleware(req: NextRequest) {
     return NextResponse.redirect(new URL("/dashboard", req.url));
   }
 
-  // 6. Inject Audit Context Headers for Node.js Runtime
+  // 7. Inject Audit Context Headers
   const requestHeaders = new Headers(req.headers);
   requestHeaders.set("x-user-id", userPayload.userId || "");
   requestHeaders.set("x-agency-id", userPayload.agencyId || "");
@@ -112,13 +130,6 @@ export async function middleware(req: NextRequest) {
 
 export const config = {
   matcher: [
-    /*
-     * Match all requests EXCEPT:
-     * - _next/static (static files)
-     * - _next/image (image optimization files)
-     * - favicon.ico (favicon file)
-     * - public files with extensions (e.g., .png, .svg)
-     */
     "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };
