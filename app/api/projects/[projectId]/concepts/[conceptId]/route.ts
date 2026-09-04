@@ -1,67 +1,96 @@
+// app/api/projects/[projectId]/concepts/[conceptId]/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { prisma } from '@/lib/prisma';
+import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/authOptions';
+import { prisma } from '@/lib/prisma';
 
-// GET: Fetch a single concept
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ projectId: string; conceptId: string }> }
 ) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session) {
+    if (!session?.user?.agencyId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     // ✅ Await params before accessing
     const { projectId, conceptId } = await params;
-
-    const url = new URL(req.url);
-    const includeBrief = url.searchParams.get('includeBrief') === 'true';
-
-    const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
-      select: { agencyId: true },
-    });
-
-    // Build the include object based on whether brief is requested
-    const include: any = {
-      assets: {
-        include: {
-          versions: {
-            orderBy: { versionNo: 'desc' },
-          },
-        },
-      },
-      project: {
-        select: {
-          id: true,
-          name: true,
-          projectName: true,
-        },
-      },
-    };
-
-    // Conditionally include brief
-    if (includeBrief) {
-      include.project.select.brief = true;
-    }
+    const agencyId = session.user.agencyId;
 
     const concept = await prisma.concept.findFirst({
       where: {
         id: conceptId,
         projectId,
-        agencyId: user?.agencyId,
+        agencyId,
       },
-      include,
+      include: {
+        project: {
+          include: {
+            client: {
+              select: {
+                id: true,
+                clientName: true,
+                email: true,
+              },
+            },
+          },
+        },
+        assets: {
+          include: {
+            versions: {
+              orderBy: { versionNo: 'desc' },
+            },
+          },
+        },
+        task: {
+          select: {
+            id: true,
+            title: true,
+          },
+        },
+        milestone: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
     });
 
     if (!concept) {
-      return NextResponse.json({ error: 'Concept not found' }, { status: 404 });
+      return NextResponse.json(
+        { error: 'Concept not found' },
+        { status: 404 }
+      );
     }
 
-    return NextResponse.json(concept);
+    // 🔒 Check if project has a client
+    if (!concept.project.clientId) {
+      console.warn('Concept has no client associated:', conceptId);
+    }
+
+    // Return with all data including brief
+    return NextResponse.json({
+      id: concept.id,
+      name: concept.name,
+      description: concept.description,
+      brief: concept.brief, // ✅ Include brief directly from concept
+      status: concept.status,
+      projectId: concept.projectId,
+      projectName: concept.project.projectName,
+      // ✅ Include client data
+      clientId: concept.project.clientId,
+      clientName: concept.project.client?.clientName || null,
+      clientEmail: concept.project.client?.email || null,
+      // ✅ Include assets
+      assets: concept.assets,
+      // ✅ Include task and milestone
+      task: concept.task,
+      milestone: concept.milestone,
+      createdAt: concept.createdAt,
+      updatedAt: concept.updatedAt,
+    });
   } catch (error) {
     console.error('Error fetching concept:', error);
     return NextResponse.json(
@@ -78,26 +107,22 @@ export async function PATCH(
 ) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session) {
+    if (!session?.user?.agencyId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     // ✅ Await params before accessing
     const { projectId, conceptId } = await params;
+    const agencyId = session.user.agencyId;
     const body = await req.json();
-    const { name, description, status } = body;
-
-    const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
-      select: { agencyId: true },
-    });
+    const { name, description, brief, status, taskId, milestoneId } = body;
 
     // Verify concept exists and belongs to the project
     const existingConcept = await prisma.concept.findFirst({
       where: {
         id: conceptId,
         projectId,
-        agencyId: user?.agencyId,
+        agencyId,
       },
       include: {
         project: {
@@ -137,13 +162,18 @@ export async function PATCH(
       );
     }
 
+    // Build update data
+    const updateData: any = {};
+    if (name !== undefined) updateData.name = name;
+    if (description !== undefined) updateData.description = description;
+    if (brief !== undefined) updateData.brief = brief; // ✅ Update brief directly
+    if (status !== undefined) updateData.status = status;
+    if (taskId !== undefined) updateData.taskId = taskId;
+    if (milestoneId !== undefined) updateData.milestoneId = milestoneId;
+
     const updatedConcept = await prisma.concept.update({
       where: { id: conceptId },
-      data: {
-        name: name || undefined,
-        description: description !== undefined ? description : undefined,
-        status: status || undefined,
-      },
+      data: updateData,
       include: {
         assets: {
           include: {
@@ -151,6 +181,18 @@ export async function PATCH(
               orderBy: { versionNo: 'desc' },
               take: 1,
             },
+          },
+        },
+        task: {
+          select: {
+            id: true,
+            title: true,
+          },
+        },
+        milestone: {
+          select: {
+            id: true,
+            name: true,
           },
         },
       },
@@ -163,13 +205,16 @@ export async function PATCH(
         entityType: 'Concept',
         entityId: conceptId,
         message: `Updated concept "${updatedConcept.name}" for project "${existingConcept.project.name}"`,
-        agencyId: user?.agencyId!,
+        agencyId: agencyId,
         actorId: session.user.id,
         metadata: {
           changes: {
             name: name || undefined,
             description: description !== undefined ? description : undefined,
+            brief: brief !== undefined ? brief : undefined,
             status: status || undefined,
+            taskId: taskId || undefined,
+            milestoneId: milestoneId || undefined,
           },
         },
       },
@@ -192,29 +237,28 @@ export async function DELETE(
 ) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session) {
+    if (!session?.user?.agencyId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     // ✅ Await params before accessing
     const { projectId, conceptId } = await params;
-
-    const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
-      select: { agencyId: true },
-    });
+    const agencyId = session.user.agencyId;
 
     const concept = await prisma.concept.findFirst({
       where: {
         id: conceptId,
         projectId,
-        agencyId: user?.agencyId,
+        agencyId,
       },
       include: {
         project: {
           select: { name: true },
         },
         assets: true,
+        reviewLinks: {
+          where: { isActive: true },
+        },
       },
     });
 
@@ -230,6 +274,14 @@ export async function DELETE(
       );
     }
 
+    // Check if concept has active review links
+    if (concept.reviewLinks.length > 0) {
+      return NextResponse.json(
+        { error: 'Cannot delete concept with active review links. Deactivate them first.' },
+        { status: 409 }
+      );
+    }
+
     await prisma.concept.delete({
       where: { id: conceptId },
     });
@@ -240,7 +292,7 @@ export async function DELETE(
         entityType: 'Concept',
         entityId: conceptId,
         message: `Deleted concept "${concept.name}" for project "${concept.project.name}"`,
-        agencyId: user?.agencyId!,
+        agencyId: agencyId,
         actorId: session.user.id,
       },
     });

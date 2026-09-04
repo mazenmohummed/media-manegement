@@ -1,57 +1,141 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { prisma } from '@/lib/prisma';
-import { authOptions } from '@/lib/authOptions';
+// app/api/projects/[projectId]/concepts/route.ts - COMPLETE FIXED VERSION
 
-// GET: List all concepts for a project
+import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth/next';
+import { authOptions } from '@/lib/authOptions';
+import { prisma } from '@/lib/prisma';
+
+// GET - List all concepts for a project
 export async function GET(
-  request: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ projectId: string }> }
 ) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session) {
+    if (!session?.user?.agencyId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     const { projectId } = await params;
+    const { searchParams } = new URL(req.url);
+    const available = searchParams.get('available') === 'true';
+    const excludeTask = searchParams.get('excludeTask');
+    const excludeMilestone = searchParams.get('excludeMilestone');
+    const limit = parseInt(searchParams.get('limit') || '50');
 
-    // Verify user has access to this project
-    const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
-      select: { agencyId: true },
-    });
+    // Build where clause
+    const where: any = {
+      projectId: projectId,
+      agencyId: session.user.agencyId,
+      status: { not: 'ARCHIVED' },
+    };
 
-    const project = await prisma.project.findFirst({
-      where: {
-        id: projectId,
-        agencyId: user?.agencyId,
-      },
-      select: { id: true },
-    });
+    // ✅ If available=true, return concepts that are NOT linked to this milestone
+    if (available) {
+      // Build exclusion conditions
+      const excludeConditions: any[] = [];
 
-    if (!project) {
-      return NextResponse.json({ error: 'Project not found' }, { status: 404 });
+      // 1. Exclude concepts directly linked to this milestone
+      if (excludeMilestone) {
+        excludeConditions.push({ milestoneId: excludeMilestone });
+      }
+
+      // 2. Exclude concepts linked to tasks that belong to this milestone
+      if (excludeMilestone) {
+        excludeConditions.push({
+          task: {
+            milestoneId: excludeMilestone
+          }
+        });
+      }
+
+      // 3. Exclude concepts linked to the specific task
+      if (excludeTask) {
+        excludeConditions.push({ taskId: excludeTask });
+      }
+
+      if (excludeConditions.length > 0) {
+        // Use NOT with OR conditions to exclude everything
+        where.NOT = {
+          OR: excludeConditions
+        };
+      }
+      
+      // ✅ IMPORTANT: We DO NOT add { taskId: null } or { milestoneId: null }
+      // because we want to include concepts linked to tasks in OTHER milestones
     }
 
     const concepts = await prisma.concept.findMany({
-      where: { projectId },
-      orderBy: { createdAt: 'desc' },
+      where,
       include: {
         assets: {
-          include: {
-            versions: {
-              orderBy: { versionNo: 'desc' },
-              take: 1,
-            },
+          select: {
+            id: true,
+            name: true,
+            type: true,
+          },
+        },
+        reviewLinks: {
+          where: { isActive: true },
+          select: {
+            id: true,
+            token: true,
+            status: true,
+            isActive: true,
+          },
+        },
+        task: {
+          select: {
+            id: true,
+            title: true,
+            taskNo: true,
+            milestoneId: true,
+          },
+        },
+        milestone: {
+          select: {
+            id: true,
+            name: true,
           },
         },
       },
+      orderBy: {
+        createdAt: 'desc',
+      },
+      take: limit,
     });
 
-    return NextResponse.json(concepts);
+    // Format response
+    const formattedConcepts = concepts.map((concept) => ({
+      id: concept.id,
+      name: concept.name,
+      description: concept.description,
+      brief: concept.brief,
+      status: concept.status,
+      assetCount: concept.assets.length,
+      hasActiveReview: concept.reviewLinks.some(r => r.isActive),
+      linkedTask: concept.task ? {
+        id: concept.task.id,
+        title: concept.task.title,
+        taskNo: concept.task.taskNo,
+        milestoneId: concept.task.milestoneId,
+      } : null,
+      linkedMilestone: concept.milestone ? {
+        id: concept.milestone.id,
+        name: concept.milestone.name,
+      } : null,
+      createdAt: concept.createdAt,
+      updatedAt: concept.updatedAt,
+    }));
+
+    return NextResponse.json({
+      concepts: formattedConcepts,
+      total: formattedConcepts.length,
+      data: formattedConcepts,
+    });
+
   } catch (error) {
-    console.error('Error fetching concepts:', error);
+    console.error('Error fetching project concepts:', error);
     return NextResponse.json(
       { error: 'Failed to fetch concepts' },
       { status: 500 }
@@ -59,20 +143,19 @@ export async function GET(
   }
 }
 
-// POST: Create a new concept for a project
+// POST - Create a new concept for a project
 export async function POST(
-  request: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ projectId: string }> }
 ) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session) {
+    if (!session?.user?.agencyId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     const { projectId } = await params;
 
-    // Validate projectId exists
     if (!projectId) {
       return NextResponse.json(
         { error: 'Project ID is required' },
@@ -80,10 +163,9 @@ export async function POST(
       );
     }
 
-    // Parse the request body
     let body;
     try {
-      body = await request.json();
+      body = await req.json();
     } catch {
       return NextResponse.json(
         { error: 'Invalid JSON body' },
@@ -91,9 +173,8 @@ export async function POST(
       );
     }
 
-    const { name, description, status = 'DRAFT' } = body;
+    const { name, description, brief, status = 'DRAFT', taskId, milestoneId } = body;
 
-    // Validate required fields
     if (!name || typeof name !== 'string' || name.trim().length === 0) {
       return NextResponse.json(
         { error: 'Name is required and must be a non-empty string' },
@@ -101,7 +182,6 @@ export async function POST(
       );
     }
 
-    // Verify user has access to this project
     const user = await prisma.user.findUnique({
       where: { id: session.user.id },
       select: { agencyId: true },
@@ -126,11 +206,11 @@ export async function POST(
       return NextResponse.json({ error: 'Project not found' }, { status: 404 });
     }
 
-    // Check if concept with same name exists for this project
     const existingConcept = await prisma.concept.findFirst({
       where: {
         projectId,
         name: name.trim(),
+        agencyId: user.agencyId,
       },
     });
 
@@ -141,19 +221,25 @@ export async function POST(
       );
     }
 
-    // Create the concept with proper relations
+    const data: any = {
+      name: name.trim(),
+      description: description?.trim() || null,
+      brief: brief?.trim() || null,
+      status: status || 'DRAFT',
+      projectId: projectId,
+      agencyId: user.agencyId,
+    };
+
+    if (taskId) {
+      data.taskId = taskId;
+    }
+
+    if (milestoneId) {
+      data.milestoneId = milestoneId;
+    }
+
     const concept = await prisma.concept.create({
-      data: {
-        name: name.trim(),
-        description: description?.trim() || undefined,
-        status,
-        project: {
-          connect: { id: projectId }
-        },
-        agency: {
-          connect: { id: user.agencyId }
-        }
-      },
+      data,
       include: {
         assets: {
           include: {
@@ -163,10 +249,22 @@ export async function POST(
             },
           },
         },
+        task: {
+          select: {
+            id: true,
+            title: true,
+            taskNo: true,
+          },
+        },
+        milestone: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
       },
     });
 
-    // Log the action
     await prisma.auditLog.create({
       data: {
         action: 'CREATE',
@@ -175,6 +273,10 @@ export async function POST(
         message: `Created concept "${concept.name}" for project "${project.name}"`,
         agencyId: user.agencyId,
         actorId: session.user.id,
+        metadata: {
+          taskId: taskId || null,
+          milestoneId: milestoneId || null,
+        },
       },
     });
 
@@ -188,12 +290,14 @@ export async function POST(
   }
 }
 
-// OPTIONS: Handle CORS preflight requests
+// OPTIONS - Handle CORS preflight requests
 export async function OPTIONS() {
   return new NextResponse(null, {
     status: 204,
     headers: {
       'Allow': 'GET, POST, OPTIONS',
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     },
   });
 }

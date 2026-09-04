@@ -18,6 +18,7 @@ import {
   Edit3,
   Loader2,
   Receipt,
+  Lightbulb,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -38,10 +39,13 @@ import { ProgressIndicator } from "@/components/tasks/ProgressIndicator";
 import { ProcurementChainStatus } from "@/components/procurement/ProcurementChainStatus";
 import { ProcurementChainWidget } from "@/components/procurement/ProcurementChainWidget";
 import { TaskDetail } from "@/types/task";
+import { TaskReviewsTab } from '@/components/tasks/TaskReviewsTab';
+import { TaskConceptsTab } from './TaskConceptsTab';
 
 interface TaskDetailClientProps {
   taskId: string;
   initialTask: any;
+  taskConcepts?: Array<{ id: string; name: string }>;
 }
 
 const statusConfig: Record<string, { label: string; color: string }> = {
@@ -59,7 +63,7 @@ const priorityConfig: Record<string, { label: string; color: string }> = {
   URGENT: { label: "Urgent", color: "bg-red-950/30 text-red-400 border-red-800" },
 };
 
-export function TaskDetailClient({ taskId, initialTask }: TaskDetailClientProps) {
+export function TaskDetailClient({ taskId, initialTask, taskConcepts = [] }: TaskDetailClientProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [task, setTask] = useState<any>(initialTask);
@@ -107,18 +111,60 @@ export function TaskDetailClient({ taskId, initialTask }: TaskDetailClientProps)
                          task.quotations?.length > 0 || 
                          task.purchaseOrders?.length > 0;
 
+  // ✅ Define tabs with reviews tab
   const tabs = [
     { key: "overview", label: "Overview", icon: BarChart3 },
     { key: "comments", label: `Comments (${task._count?.comments || 0})`, icon: MessageSquare },
     { key: "todos", label: `Todos (${task._count?.todos || 0})`, icon: ListChecks },
     { key: "dependencies", label: "Dependencies", icon: GitBranch },
+    { key: "concepts", label: "Concepts", icon: Lightbulb },
     { key: "planned-expenses", label: "Planned Expenses", icon: DollarSign },
     { key: "task-expenses", label: "Task Expenses", icon: Receipt },
+    { key: "reviews", label: "Reviews", icon: MessageSquare },
   ];
 
   const handleTabChange = (tabKey: string) => {
     setActiveTab(tabKey);
     router.push(`/dashboard/tasks/${taskId}?tab=${tabKey}`, { scroll: false });
+  };
+
+  // ✅ Render tab content
+  const renderTabContent = () => {
+    switch (activeTab) {
+      case "overview":
+        return <OverviewTab task={task} onUpdate={fetchTask} />;
+      case "comments":
+        return <CommentsTab taskId={taskId} comments={task.comments || []} onUpdate={fetchTask} />;
+      case "todos":
+        return <TodosTab taskId={taskId} todos={task.todos || []} onUpdate={fetchTask} />;
+      case "dependencies":
+        return (
+          <DependenciesTab
+            taskId={taskId}
+            dependsOn={task.dependsOn || []}
+            dependents={task.dependents || []}
+            taskStatus={task.status}
+            onUpdate={fetchTask}
+          />
+        );
+     case "concepts":
+      return (
+        <TaskConceptsTab 
+          taskId={taskId} 
+          projectId={task.project?.id || task.projectId} 
+          // ✅ Remove initialConcepts - let the component fetch its own data
+          onUpdate={fetchTask}
+        />
+      );
+      case "planned-expenses":
+        return <TaskPlannedExpensesManager taskId={taskId} initialExpenses={task.plannedExpenses || []} />;
+      case "task-expenses":
+        return <TaskExpensesManager taskId={taskId} initialExpenses={task.taskExpenses || []} />;
+      case "reviews":
+        return <TaskReviewsTab taskId={taskId} taskConcepts={taskConcepts} />;
+      default:
+        return <OverviewTab task={task} onUpdate={fetchTask} />;
+    }
   };
 
   if (loading) {
@@ -276,30 +322,7 @@ export function TaskDetailClient({ taskId, initialTask }: TaskDetailClientProps)
 
           {/* Tab Content */}
           <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 min-h-[300px]">
-            {activeTab === "overview" && (
-              <OverviewTab task={task} onUpdate={fetchTask} />
-            )}
-            {activeTab === "comments" && (
-              <CommentsTab taskId={taskId} comments={task.comments || []} onUpdate={fetchTask} />
-            )}
-            {activeTab === "todos" && (
-              <TodosTab taskId={taskId} todos={task.todos || []} onUpdate={fetchTask} />
-            )}
-            {activeTab === "dependencies" && (
-              <DependenciesTab
-                taskId={taskId}
-                dependsOn={task.dependsOn || []}
-                dependents={task.dependents || []}
-                taskStatus={task.status}
-                onUpdate={fetchTask}
-              />
-            )}
-            {activeTab === "planned-expenses" && (
-              <TaskPlannedExpensesManager taskId={taskId} initialExpenses={task.plannedExpenses || []} />
-            )}
-            {activeTab === "task-expenses" && (
-              <TaskExpensesManager taskId={taskId} initialExpenses={task.taskExpenses || []} />
-            )}
+            {renderTabContent()}
           </div>
         </div>
 

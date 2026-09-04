@@ -24,7 +24,7 @@ import {
   LayoutGrid,
 } from 'lucide-react';
 import { format } from 'date-fns';
-import { toast } from 'sonner';
+import toast from 'react-hot-toast';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 
@@ -32,8 +32,9 @@ interface Concept {
   id: string;
   name: string;
   description: string | null;
+  brief: string | null;
   status: 'DRAFT' | 'IN_REVIEW' | 'APPROVED' | 'REJECTED' | 'ARCHIVED';
-  assets: any[];
+  assets?: any[]; // ✅ Make assets optional
   createdAt: string;
   updatedAt: string;
 }
@@ -47,7 +48,7 @@ export function ConceptsTab({ projectId }: ConceptsTabProps) {
   const [concepts, setConcepts] = useState<Concept[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [newConcept, setNewConcept] = useState({ name: '', description: '' });
+  const [newConcept, setNewConcept] = useState({ name: '', description: '', brief: '' });
   const [creating, setCreating] = useState(false);
 
   const statusConfig: Record<Concept['status'], { label: string; color: string; bg: string; icon: React.ReactNode }> = {
@@ -88,12 +89,31 @@ export function ConceptsTab({ projectId }: ConceptsTabProps) {
   }, [projectId]);
 
   const fetchConcepts = async () => {
+    setLoading(true);
     try {
       const response = await fetch(`/api/projects/${projectId}/concepts`);
       if (!response.ok) throw new Error('Failed to fetch concepts');
       const data = await response.json();
-      setConcepts(data);
+      
+      // Handle both response formats
+      let conceptsArray: Concept[] = [];
+      if (Array.isArray(data)) {
+        conceptsArray = data;
+      } else if (data.concepts && Array.isArray(data.concepts)) {
+        conceptsArray = data.concepts;
+      } else if (data.data && Array.isArray(data.data)) {
+        conceptsArray = data.data;
+      }
+      
+      // ✅ Ensure assets is always an array
+      conceptsArray = conceptsArray.map(concept => ({
+        ...concept,
+        assets: concept.assets || []
+      }));
+      
+      setConcepts(conceptsArray);
     } catch (error) {
+      console.error('Error fetching concepts:', error);
       toast.error('Failed to load concepts');
     } finally {
       setLoading(false);
@@ -115,6 +135,7 @@ export function ConceptsTab({ projectId }: ConceptsTabProps) {
         body: JSON.stringify({
           name: newConcept.name.trim(),
           description: newConcept.description.trim() || undefined,
+          brief: newConcept.brief.trim() || undefined,
         }),
       });
 
@@ -124,9 +145,9 @@ export function ConceptsTab({ projectId }: ConceptsTabProps) {
       }
 
       const concept = await response.json();
-      setConcepts([concept, ...concepts]);
+      setConcepts([{ ...concept, assets: concept.assets || [] }, ...concepts]);
       setShowCreateModal(false);
-      setNewConcept({ name: '', description: '' });
+      setNewConcept({ name: '', description: '', brief: '' });
       toast.success('Concept created successfully');
     } catch (error: any) {
       toast.error(error.message || 'Failed to create concept');
@@ -269,7 +290,6 @@ export function ConceptsTab({ projectId }: ConceptsTabProps) {
           </p>
         </div>
         
-        {/* ✅ Updated Header Actions with Compare All button */}
         <div className="flex items-center gap-2">
           <Link href={`/dashboard/projects/${projectId}/concepts/compare`}>
             <Button variant="outline" size="sm" className="border-blue-600/30 text-blue-400 hover:bg-blue-950/20">
@@ -311,6 +331,8 @@ export function ConceptsTab({ projectId }: ConceptsTabProps) {
           {concepts.map((concept) => {
             const status = statusConfig[concept.status];
             const statusActions = getStatusActions(concept);
+            // ✅ Safe access with null check
+            const assetCount = concept.assets?.length || 0;
             
             return (
               <div
@@ -338,7 +360,7 @@ export function ConceptsTab({ projectId }: ConceptsTabProps) {
                     <div className="flex items-center gap-3 mt-2 text-[10px] text-zinc-500">
                       <span className="flex items-center gap-1">
                         <FileText className="w-3 h-3" />
-                        {concept.assets.length} assets
+                        {assetCount} assets
                       </span>
                       <span>•</span>
                       <span className="flex items-center gap-1">
@@ -440,9 +462,21 @@ export function ConceptsTab({ projectId }: ConceptsTabProps) {
                   <textarea
                     value={newConcept.description}
                     onChange={(e) => setNewConcept({ ...newConcept, description: e.target.value })}
-                    rows={4}
+                    rows={3}
                     className="w-full bg-zinc-950/60 border border-zinc-800 rounded-lg px-3.5 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 resize-none"
                     placeholder="Describe the creative direction, key ideas, and rationale..."
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-zinc-300 mb-1.5">
+                    Brief
+                  </label>
+                  <textarea
+                    value={newConcept.brief}
+                    onChange={(e) => setNewConcept({ ...newConcept, brief: e.target.value })}
+                    rows={3}
+                    className="w-full bg-zinc-950/60 border border-zinc-800 rounded-lg px-3.5 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 resize-none"
+                    placeholder="Creative brief for this concept..."
                   />
                 </div>
               </div>

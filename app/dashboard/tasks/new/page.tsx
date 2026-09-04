@@ -1,3 +1,4 @@
+// app/dashboard/tasks/new/page.tsx - Complete corrected version
 "use client";
 
 import { useEffect, useState, useRef, useMemo } from "react";
@@ -22,9 +23,12 @@ import {
   Trash2,
   Edit2,
   X,
+  Shield,
+  ShieldAlert,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import toast from "react-hot-toast";
 
 interface Project {
   id: string;
@@ -60,6 +64,24 @@ interface PlannedExpenseItem {
   description?: string;
 }
 
+interface Concept {
+  id: string;
+  name: string;
+  status: string;
+}
+
+interface ApprovalStatus {
+  canProceed: boolean;
+  errors: string[];
+  warnings: string[];
+  summary?: {
+    total: number;
+    approved: number;
+    pending: number;
+    rejected: number;
+  };
+}
+
 export default function NewTaskPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -74,8 +96,10 @@ export default function NewTaskPage() {
   const [priority, setPriority] = useState("MEDIUM");
   const [dueDate, setDueDate] = useState("");
   const [selectedAssignees, setSelectedAssignees] = useState<string[]>([]);
+  const [taskType, setTaskType] = useState<string>("STANDARD");
+  const [conceptId, setConceptId] = useState<string>("");
 
-  // Planned Expenses State for new task creation
+  // Planned Expenses State
   const [expenses, setExpenses] = useState<PlannedExpenseItem[]>([]);
   const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null);
   const [expenseItemName, setExpenseItemName] = useState("");
@@ -88,6 +112,9 @@ export default function NewTaskPage() {
   const [milestones, setMilestones] = useState<Milestone[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [users, setUsers] = useState<User[]>([]);
+  const [concepts, setConcepts] = useState<Concept[]>([]);
+  const [approvalStatus, setApprovalStatus] = useState<ApprovalStatus | null>(null);
+  const [checkingApproval, setCheckingApproval] = useState(false);
 
   const [loading, setLoading] = useState(false);
   const [fetching, setFetching] = useState(true);
@@ -104,7 +131,7 @@ export default function NewTaskPage() {
     return q * u * (1 + t / 100);
   }, [expenseQuantity, expenseUnitCost, expenseTaxRate]);
 
-  // Overall cumulative sum computed in real time across pending items
+  // Overall cumulative sum
   const grandTotalEstimated = useMemo(() => {
     return expenses.reduce((acc, item) => acc + (item.totalEstimated || 0), 0);
   }, [expenses]);
@@ -177,10 +204,88 @@ export default function NewTaskPage() {
       }
     }
     loadMilestones();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
 
-  // Handlers for client-side temporary planned expenses list management prior to submit
+// In app/dashboard/tasks/new/page.tsx - Update loadConcepts
+
+// Load concepts when project changes
+useEffect(() => {
+  async function loadConcepts() {
+    if (!projectId) {
+      setConcepts([]);
+      setConceptId("");
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/projects/${projectId}/concepts`);
+      if (!isMounted.current) return;
+
+      if (res.ok) {
+        const data = await res.json();
+        console.log("Concepts API response:", data); // ✅ Debug log
+        
+        // ✅ Handle both response formats:
+        // Format 1: { concepts: [...] }
+        // Format 2: [...] (direct array)
+        let conceptsList = [];
+        if (Array.isArray(data)) {
+          conceptsList = data;
+        } else if (data.concepts && Array.isArray(data.concepts)) {
+          conceptsList = data.concepts;
+        } else if (data.data && Array.isArray(data.data)) {
+          conceptsList = data.data;
+        }
+        
+        console.log("Concepts list:", conceptsList); // ✅ Debug log
+        setConcepts(conceptsList);
+        
+        // If there's a selected concept that's no longer valid, clear it
+        if (conceptId && !conceptsList.some((c: Concept) => c.id === conceptId)) {
+          setConceptId("");
+        }
+      } else {
+        const errorText = await res.text();
+        console.error("Failed to load concepts:", errorText);
+        setConcepts([]);
+      }
+    } catch (err) {
+      console.error("Failed to load concepts:", err);
+      setConcepts([]);
+    }
+  }
+  loadConcepts();
+}, [projectId]);
+
+  // Check approval status when concept changes or task type is PRODUCTION
+  useEffect(() => {
+    async function checkApproval() {
+      if (!conceptId || taskType !== "PRODUCTION") {
+        setApprovalStatus(null);
+        return;
+      }
+
+      setCheckingApproval(true);
+      try {
+        const res = await fetch(`/api/concepts/${conceptId}/approval-status`);
+        if (res.ok) {
+          const data = await res.json();
+          setApprovalStatus(data);
+        } else {
+          const error = await res.json();
+          console.error("Failed to check approval:", error);
+        }
+      } catch (err) {
+        console.error("Failed to check approval:", err);
+      } finally {
+        setCheckingApproval(false);
+      }
+    }
+
+    checkApproval();
+  }, [conceptId, taskType]);
+
+  // Expense handlers
   const handleAddOrUpdateExpense = (e: React.FormEvent) => {
     e.preventDefault();
     if (!expenseItemName.trim()) return;
@@ -243,6 +348,7 @@ export default function NewTaskPage() {
     setExpenses(expenses.filter((ex) => ex.id !== id));
   };
 
+  // ✅ CORRECTED SUBMIT HANDLER - Uses API routes only
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -250,16 +356,52 @@ export default function NewTaskPage() {
     if (!title.trim()) return setError("Task title is required");
     if (!projectId) return setError("Project is required");
 
+    // If this is a production task, validate approval via API
+    if (taskType === "PRODUCTION") {
+      if (!conceptId) {
+        setError("Please select a concept for production tasks");
+        return;
+      }
+
+      // Check approval status first
+      try {
+        const approvalRes = await fetch(`/api/concepts/${conceptId}/approval-status`);
+        if (approvalRes.ok) {
+          const approvalData = await approvalRes.json();
+          if (!approvalData.canProceed) {
+            setError(
+              `⚠️ Cannot create production task:\n${approvalData.errors.join('\n')}`
+            );
+            return;
+          }
+        } else {
+          const errorData = await approvalRes.json();
+          setError(errorData.error || "Failed to check approval status");
+          return;
+        }
+      } catch (err) {
+        console.error("Failed to check approval:", err);
+        setError("Network error while checking approval status");
+        return;
+      }
+    }
+
     setLoading(true);
 
     try {
-      const res = await fetch("/api/tasks", {
+      // Use the production API endpoint for production tasks
+      const endpoint = taskType === "PRODUCTION" 
+        ? "/api/tasks/production" 
+        : "/api/tasks";
+
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title: title.trim(),
           description: description.trim() || null,
           projectId,
+          conceptId: taskType === "PRODUCTION" ? conceptId : null,
           milestoneId: milestoneId || null,
           categoryId: categoryId || null,
           priority,
@@ -276,15 +418,23 @@ export default function NewTaskPage() {
         }),
       });
 
-      if (res.ok) {
-        const data = await res.json();
-        router.push(`/dashboard/tasks/${data.id}`);
-        router.refresh();
-      } else {
-        const data = await res.json();
-        setError(data.error || "Failed to create task");
+      const data = await res.json();
+
+      if (!res.ok) {
+        // Handle approval gate errors
+        if (res.status === 403 && data.type === 'APPROVAL_REQUIRED') {
+          setError(`⚠️ ${data.error}\n\n${data.details}`);
+        } else {
+          setError(data.error || "Failed to create task");
+        }
+        return;
       }
-    } catch {
+
+      toast.success(data.message || "Task created successfully");
+      router.push(`/dashboard/tasks/${data.task?.id || data.id}`);
+      router.refresh();
+    } catch (err) {
+      console.error("Submit error:", err);
       setError("Network error. Please try again.");
     } finally {
       setLoading(false);
@@ -297,7 +447,11 @@ export default function NewTaskPage() {
     );
   };
 
-  const canSubmit = title.trim().length > 0 && projectId.length > 0 && !loading;
+  const canSubmit = 
+    title.trim().length > 0 && 
+    projectId.length > 0 && 
+    !loading &&
+    !(taskType === "PRODUCTION" && !approvalStatus?.canProceed);
 
   const nativeInputClass =
     "w-full bg-zinc-950 border border-zinc-800 rounded-md text-sm text-zinc-100 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500 placeholder:text-zinc-600";
@@ -318,7 +472,7 @@ export default function NewTaskPage() {
         </div>
 
         {error && (
-          <div className="bg-red-950/20 border border-red-900/50 rounded-lg p-3 flex items-start gap-2.5 text-xs text-red-400">
+          <div className="bg-red-950/20 border border-red-900/50 rounded-lg p-3 flex items-start gap-2.5 text-xs text-red-400 whitespace-pre-line">
             <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
             <span>{error}</span>
           </div>
@@ -411,6 +565,96 @@ export default function NewTaskPage() {
               </div>
             </div>
           </div>
+
+          {/* Task Type & Concept */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-zinc-400 flex items-center gap-1.5">
+                <Shield className="w-3 h-3" /> Task Type
+              </label>
+              <select
+                value={taskType}
+                onChange={(e) => setTaskType(e.target.value)}
+                className={`${nativeInputClass} appearance-none`}
+              >
+                <option value="STANDARD">Standard Task</option>
+                <option value="PRODUCTION">Production Task</option>
+                <option value="REVISION">Revision</option>
+              </select>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-zinc-400 flex items-center gap-1.5">
+                <Folder className="w-3 h-3" /> Concept
+              </label>
+              <select
+                value={conceptId}
+                onChange={(e) => setConceptId(e.target.value)}
+                disabled={!projectId}
+                className={`${nativeInputClass} disabled:opacity-50 appearance-none`}
+              >
+                <option value="">{!projectId ? "Select a project first" : "No concept"}</option>
+                {concepts.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name} ({c.status})
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Approval Status Warning */}
+          {taskType === "PRODUCTION" && conceptId && (
+            <div className={`rounded-lg p-3 border ${
+              checkingApproval
+                ? "bg-zinc-800/50 border-zinc-700"
+                : approvalStatus?.canProceed 
+                  ? "bg-emerald-950/20 border-emerald-500/30" 
+                  : "bg-red-950/20 border-red-500/30"
+            }`}>
+              <div className="flex items-start gap-2.5">
+                {checkingApproval ? (
+                  <Loader2 className="w-4 h-4 text-zinc-400 shrink-0 mt-0.5 animate-spin" />
+                ) : approvalStatus?.canProceed ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                ) : approvalStatus ? (
+                  <ShieldAlert className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 text-zinc-400 shrink-0 mt-0.5" />
+                )}
+                <div className="text-xs">
+                  {checkingApproval ? (
+                    <span className="text-zinc-400">Checking approval status...</span>
+                  ) : approvalStatus?.canProceed ? (
+                    <span className="text-emerald-400 font-medium">✓ Concept is approved and ready for production</span>
+                  ) : approvalStatus ? (
+                    <>
+                      <span className="text-red-400 font-medium block">⚠️ Production blocked</span>
+                      {approvalStatus.errors.map((err, i) => (
+                        <p key={i} className="text-red-300/80 mt-0.5">• {err}</p>
+                      ))}
+                      {approvalStatus.summary && (
+                        <div className="mt-2 flex gap-3 text-[10px]">
+                          <span className="text-emerald-400">✓ {approvalStatus.summary.approved} approved</span>
+                          <span className="text-amber-400">⏳ {approvalStatus.summary.pending} pending</span>
+                          <span className="text-red-400">✗ {approvalStatus.summary.rejected} rejected</span>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <span className="text-zinc-400">Select a concept to check approval status</span>
+                  )}
+                  {approvalStatus?.warnings && approvalStatus.warnings.length > 0 && (
+                    <div className="mt-1 text-amber-400">
+                      {approvalStatus.warnings.map((w, i) => (
+                        <p key={i} className="text-xs">• {w}</p>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Category & Priority */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

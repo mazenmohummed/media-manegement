@@ -1,10 +1,18 @@
-// lib/approval-gate.ts - Full implementation
+// lib/approval-gate.ts - Updated with better error handling
 import { prisma } from './prisma';
 
 export interface ApprovalCheckResult {
   canProceed: boolean;
   errors: string[];
   warnings: string[];
+}
+
+export interface AssetApprovalStatus {
+  assetId: string;
+  assetName: string;
+  status: string;
+  versionNo: number;
+  feedback: string | null;
 }
 
 /**
@@ -65,6 +73,7 @@ export async function checkConceptApproval(
       where: {
         creativeAssetId: asset.id,
         status: { in: ['REJECTED', 'REVISIONS_REQUESTED'] },
+        revisionTaskId: { not: null },
         revisionTask: {
           status: { not: 'COMPLETED' },
         },
@@ -100,6 +109,7 @@ export async function checkConceptApproval(
 
 /**
  * Block production actions if concept is not approved
+ * Throws an error with detailed message
  */
 export async function validateProductionAccess(
   conceptId: string,
@@ -108,9 +118,15 @@ export async function validateProductionAccess(
   const result = await checkConceptApproval(conceptId);
 
   if (!result.canProceed) {
-    throw new Error(
-      `Cannot ${action}: Concept is not fully approved.\n\n${result.errors.join('\n')}`
-    );
+    const errorMessage = [
+      `Cannot ${action}: Concept is not fully approved.`,
+      '',
+      ...result.errors,
+      '',
+      'Please address all issues before proceeding.',
+    ].join('\n');
+
+    throw new Error(errorMessage);
   }
 
   if (result.warnings.length > 0) {
@@ -120,6 +136,7 @@ export async function validateProductionAccess(
 
 /**
  * Validate production access for a specific asset
+ * Throws an error with detailed message
  */
 export async function validateAssetProductionAccess(
   assetId: string,
@@ -154,4 +171,62 @@ export async function validateAssetProductionAccess(
 
   // Also check the concept
   await validateProductionAccess(asset.conceptId, action);
+}
+
+/**
+ * Get detailed approval status for a concept
+ */
+export async function getDetailedApprovalStatus(
+  conceptId: string
+): Promise<{
+  status: ApprovalCheckResult;
+  assets: AssetApprovalStatus[];
+  summary: {
+    total: number;
+    approved: number;
+    pending: number;
+    rejected: number;
+  };
+}> {
+  const status = await checkConceptApproval(conceptId);
+
+  const assets = await prisma.creativeAsset.findMany({
+    where: { conceptId },
+    include: {
+      versions: {
+        orderBy: { versionNo: 'desc' },
+        take: 1,
+      },
+    },
+  });
+
+  const assetStatuses: AssetApprovalStatus[] = assets.map((asset) => ({
+    assetId: asset.id,
+    assetName: asset.name,
+    status: asset.versions[0]?.status || 'DRAFT',
+    versionNo: asset.versions[0]?.versionNo || 0,
+    feedback: asset.versions[0]?.feedback || null,
+  }));
+
+  const summary = {
+    total: assets.length,
+    approved: assets.filter((a) => a.versions[0]?.status === 'APPROVED').length,
+    pending: assets.filter(
+      (a) =>
+        a.versions[0]?.status === 'CLIENT_REVIEW' ||
+        a.versions[0]?.status === 'INTERNAL_REVIEW' ||
+        a.versions[0]?.status === 'DRAFT'
+    ).length,
+    rejected: assets.filter(
+      (a) =>
+        a.versions[0]?.status === 'REJECTED' ||
+        a.versions[0]?.status === 'REVISIONS_REQUIRED'
+    ).length,
+  };
+
+  return {
+    status,
+    assets: assetStatuses,
+    summary,
+  };
 }

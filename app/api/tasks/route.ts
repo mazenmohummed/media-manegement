@@ -17,7 +17,7 @@ export async function GET(req: NextRequest) {
   const milestoneId = searchParams.get("milestoneId");
   const q = searchParams.get("q");
   const exclude = searchParams.get("exclude");
-  const tagId = searchParams.get("tagId"); // ✅ Added tag filter
+  const tagId = searchParams.get("tagId");
 
   const where: any = {
     agencyId: session.user.agencyId,
@@ -30,7 +30,6 @@ export async function GET(req: NextRequest) {
   if (milestoneId && milestoneId !== "ALL") where.milestoneId = milestoneId;
   if (exclude) where.id = { not: exclude };
   
-  // ✅ Tag filtering
   if (tagId && tagId !== "ALL") {
     where.tags = {
       some: { id: tagId }
@@ -52,7 +51,19 @@ export async function GET(req: NextRequest) {
       category: { select: { id: true, name: true } },
       milestone: { select: { id: true, name: true, order: true, projectId: true } },
       project: { select: { id: true, name: true, projectName: true } },
-      tags: { select: { id: true, name: true, color: true } }, // ✅ Include tags
+      tags: { select: { id: true, name: true, color: true } },
+      plannedExpenses: {
+        select: {
+          id: true,
+          itemName: true,
+          category: true,
+          quantity: true,
+          unitCost: true,
+          taxRate: true,
+          totalEstimated: true,
+          status: true,
+        },
+      },
       _count: { select: { comments: true, todos: true } },
     },
     orderBy: [{ milestone: { order: "asc" } }, { createdAt: "desc" }],
@@ -100,7 +111,6 @@ export async function GET(req: NextRequest) {
       };
     });
 
-    // Project-level ungrouped tasks
     const ungroupedTasks = tasks.filter((t) => t.projectId === proj.id && !t.milestoneId);
 
     return {
@@ -110,7 +120,6 @@ export async function GET(req: NextRequest) {
     };
   });
 
-  // Handle tasks completely unassigned to any project if applicable
   const globalUngroupedTasks = tasks.filter((t) => !t.projectId);
   if (globalUngroupedTasks.length > 0) {
     structuredProjects.push({
@@ -126,6 +135,8 @@ export async function GET(req: NextRequest) {
     rawProjects: projects 
   });
 }
+
+// app/api/tasks/route.ts - Fixed POST handler
 
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -144,45 +155,172 @@ export async function POST(req: NextRequest) {
       priority, 
       dueDate, 
       assigneeIds,
-      tagIds // ✅ Added tagIds
+      tagIds,
+      taskType,
+      conceptId,
+      plannedExpenses,
     } = body;
 
     if (!title?.trim() || !projectId) {
       return NextResponse.json({ error: "Title and project are required" }, { status: 400 });
     }
 
+    // ✅ If this is a production task, validate concept approval
+    if (taskType === "PRODUCTION" && conceptId) {
+      const concept = await db.concept.findFirst({
+        where: {
+          id: conceptId,
+          agencyId: session.user.agencyId,
+        },
+        include: {
+          assets: {
+            include: {
+              reviewLinkAssetApprovals: true,
+            },
+          },
+        },
+      });
+
+      if (!concept) {
+        return NextResponse.json(
+          { error: "Concept not found" },
+          { status: 404 }
+        );
+      }
+
+      const allAssetsApproved = concept.assets.every((asset) => {
+        const approvals = asset.reviewLinkAssetApprovals || [];
+        return approvals.some((a) => a.status === "APPROVED");
+      });
+
+      if (!allAssetsApproved) {
+        return NextResponse.json(
+          { 
+            error: "Cannot create production task. Concept assets are not fully approved.",
+            type: "APPROVAL_REQUIRED",
+            details: "All creative assets in the concept must be approved before production can begin.",
+          },
+          { status: 403 }
+        );
+      }
+    }
+
     const count = await db.task.count({ where: { agencyId: session.user.agencyId } });
     const taskNo = `TSK-${String(count + 1).padStart(4, "0")}`;
 
-    const task = await db.task.create({
-      data: {
-        taskNo,
-        title: title.trim(),
-        description: description?.trim() || null,
-        taskType: "STANDARD",
-        status: "PENDING",
-        priority: priority || "MEDIUM",
-        projectId,
-        milestoneId: milestoneId || null,
-        categoryId: categoryId || null,
-        agencyId: session.user.agencyId,
-        dueDate: dueDate ? new Date(dueDate) : null,
-        assignees: assigneeIds?.length
-          ? { connect: assigneeIds.map((id: string) => ({ id })) }
-          : undefined,
-        // ✅ Add tags if provided
-        tags: tagIds?.length
-          ? { connect: tagIds.map((id: string) => ({ id })) }
-          : undefined,
+    // ✅ Build the data object with proper relations
+    const taskData: any = {
+      taskNo,
+      title: title.trim(),
+      description: description?.trim() || null,
+      taskType: taskType || "STANDARD",
+      status: "PENDING",
+      priority: priority || "MEDIUM",
+      dueDate: dueDate ? new Date(dueDate) : null,
+      // ✅ Connect agency relation
+      agency: {
+        connect: { id: session.user.agencyId }
       },
+      // ✅ Connect project relation
+      project: {
+        connect: { id: projectId }
+      },
+    };
+
+    // Add optional relations
+    if (milestoneId) {
+      taskData.milestone = {
+        connect: { id: milestoneId }
+      };
+    }
+
+    if (categoryId) {
+      taskData.category = {
+        connect: { id: categoryId }
+      };
+    }
+
+    if (assigneeIds?.length) {
+      taskData.assignees = {
+        connect: assigneeIds.map((id: string) => ({ id }))
+      };
+    }
+
+    if (tagIds?.length) {
+      taskData.tags = {
+        connect: tagIds.map((id: string) => ({ id }))
+      };
+    }
+
+    if (conceptId) {
+      taskData.concepts = {
+        connect: [{ id: conceptId }]
+      };
+    }
+
+    if (plannedExpenses?.length) {
+      taskData.plannedExpenses = {
+        create: plannedExpenses.map((expense: any) => ({
+          itemName: expense.itemName,
+          category: expense.category || "EQUIPMENT",
+          quantity: expense.quantity || 1,
+          unitCost: expense.unitCost || 0,
+          taxRate: expense.taxRate || 0,
+          totalEstimated: expense.totalEstimated || 0,
+          status: "DRAFT",
+          project: {
+            connect: { id: projectId }
+          },
+          agency: {
+            connect: { id: session.user.agencyId }
+          },
+        })),
+      };
+    }
+
+    // ✅ Create the task with all fields
+    const task = await db.task.create({
+      data: taskData,
       include: {
         assignees: { select: { id: true, name: true } },
         milestone: { select: { id: true, name: true } },
-        tags: { select: { id: true, name: true, color: true } }, // ✅ Include tags
+        tags: { select: { id: true, name: true, color: true } },
+        plannedExpenses: {
+          select: {
+            id: true,
+            itemName: true,
+            category: true,
+            quantity: true,
+            unitCost: true,
+            taxRate: true,
+            totalEstimated: true,
+            status: true,
+          },
+        },
+        concepts: {
+          select: {
+            id: true,
+            name: true,
+            status: true,
+          },
+        },
+        project: {
+          select: {
+            id: true,
+            name: true,
+            projectName: true,
+          },
+        },
+        agency: {
+          select: {
+            id: true,
+            agencyName: true,
+          },
+        },
       },
     });
 
-    // Trigger assignment notifications if assignees are present
+    // Trigger assignment notifications
     if (assigneeIds && assigneeIds.length > 0) {
       for (const assigneeId of assigneeIds) {
         await db.notification.create({

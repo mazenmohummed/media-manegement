@@ -1,3 +1,4 @@
+// app/dashboard/milestones/new/page.tsx
 "use client";
 
 import { useEffect, useState } from "react";
@@ -98,7 +99,7 @@ export default function NewMilestonePage() {
       >
         <ArrowLeft className="w-4 h-4" /> Back to Milestones
       </Link>
-            <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 shadow-sm space-y-6">
+      <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 shadow-sm space-y-6">
         <div className="flex items-center gap-3">
           <Milestone className="w-5 h-5 text-purple-400" />
           <h1 className="text-2xl font-bold text-zinc-100">New Milestone</h1>

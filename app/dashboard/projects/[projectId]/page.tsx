@@ -37,6 +37,8 @@ import { ConceptsTab } from "@/components/projects/tabs/ConceptsTab";
 import { BriefTab } from "@/components/projects/tabs/BriefTab";
 import { ProcurementChainStatus } from "@/components/procurement/ProcurementChainStatus";
 import { ProcurementChainWidget } from "@/components/procurement/ProcurementChainWidget";
+import { CreativeAssetsTab } from '@/components/projects/tabs/CreativeAssetsTab';
+import { ReviewsTab } from '@/components/projects/tabs/ReviewsTab';
 
 interface PageProps {
   params: Promise<{ projectId: string }>;
@@ -242,6 +244,16 @@ export default async function ProjectDetailPage({ params, searchParams }: PagePr
       key: "brief",
       label: "Brief",
       icon: FileText,
+    },
+    {
+      key: "creative-assets",  // ✅ Add this
+      label: "Creative Assets",
+      icon: FileText,
+    },
+    {
+      key: "reviews",  // ✅ Add this
+      label: "Reviews",
+      icon: MessageSquare,
     },
     {
       key: "reporting",
@@ -603,6 +615,11 @@ export default async function ProjectDetailPage({ params, searchParams }: PagePr
             {tab === "comments" && <CommentsTab projectId={projectId} />}
             
             {tab === "tags" && <TagsTab projectId={projectId} />}
+
+            {tab === "creative-assets" && <CreativeAssetsTab projectId={projectId} />}
+
+            {tab === "reviews" && <ReviewsTab projectId={projectId} />}
+            
           </div>
         </div>
 

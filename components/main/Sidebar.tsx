@@ -90,6 +90,7 @@ export default function Sidebar() {
       mainLink: { name: "Dashboard", href: "/dashboard", icon: <LayoutDashboard size={18} /> },
       items: [    
         { name: "Calendar", href: "/dashboard/calender", icon: <Calendar size={18} /> },
+        { name: "Storage", href: "/dashboard/storage", icon: <LucideDatabase size={18} /> },
       ],
     },
     {

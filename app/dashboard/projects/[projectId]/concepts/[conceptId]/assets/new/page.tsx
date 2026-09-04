@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -16,6 +16,9 @@ import {
   CheckCircle,
   AlertCircle,
   ChevronRight,
+  Shield,
+  ShieldAlert,
+  Loader2,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Button } from '@/components/ui/button';
@@ -36,6 +39,18 @@ const assetTypeOptions: { value: AssetType; label: string; icon: React.ReactNode
   { value: 'OTHER', label: 'Other', icon: <File className="w-4 h-4" /> },
 ];
 
+interface ApprovalStatus {
+  canProceed: boolean;
+  errors: string[];
+  warnings: string[];
+  summary?: {
+    total: number;
+    approved: number;
+    pending: number;
+    rejected: number;
+  };
+}
+
 export default function NewAssetPage() {
   const router = useRouter();
   const params = useParams();
@@ -49,12 +64,47 @@ export default function NewAssetPage() {
   const [preview, setPreview] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Approval status state
+  const [approvalStatus, setApprovalStatus] = useState<ApprovalStatus | null>(null);
+  const [checkingApproval, setCheckingApproval] = useState(true);
+  const [isProductionConcept, setIsProductionConcept] = useState(false);
+
+  // Check approval status on load
+  useEffect(() => {
+    async function checkApproval() {
+      if (!conceptId) return;
+
+      setCheckingApproval(true);
+      try {
+        // First check if the concept is marked for production
+        const conceptRes = await fetch(`/api/concepts/${conceptId}`);
+        if (conceptRes.ok) {
+          const conceptData = await conceptRes.json();
+          // Check if concept is in production phase
+          setIsProductionConcept(conceptData.status === 'APPROVED' || conceptData.hasProductionTasks);
+        }
+
+        // Check approval status
+        const res = await fetch(`/api/concepts/${conceptId}/approval-status`);
+        if (res.ok) {
+          const data = await res.json();
+          setApprovalStatus(data);
+        }
+      } catch (err) {
+        console.error('Failed to check approval:', err);
+      } finally {
+        setCheckingApproval(false);
+      }
+    }
+
+    checkApproval();
+  }, [conceptId]);
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
     if (selectedFile) {
       setFile(selectedFile);
       
-      // Create preview for images
       if (selectedFile.type.startsWith('image/')) {
         const reader = new FileReader();
         reader.onloadend = () => {
@@ -103,6 +153,15 @@ export default function NewAssetPage() {
       return;
     }
 
+    // Check if concept is approved before allowing upload
+    if (approvalStatus && !approvalStatus.canProceed) {
+      toast.error(
+        `Cannot upload asset: Concept is not fully approved.\n\n${approvalStatus.errors.join('\n')}`,
+        { duration: 8000 }
+      );
+      return;
+    }
+
     setUploading(true);
 
     try {
@@ -121,7 +180,14 @@ export default function NewAssetPage() {
 
       if (!response.ok) {
         const error = await response.json();
-        throw new Error(error.error || 'Failed to upload asset');
+        
+        // Handle approval gate errors from API
+        if (response.status === 403 && error.type === 'APPROVAL_REQUIRED') {
+          toast.error(`⚠️ ${error.error}\n\n${error.details}`, { duration: 8000 });
+        } else {
+          throw new Error(error.error || 'Failed to upload asset');
+        }
+        return;
       }
 
       toast.success('Asset uploaded successfully');
@@ -133,6 +199,9 @@ export default function NewAssetPage() {
       setUploading(false);
     }
   };
+
+  // Fix: Convert null to false for disabled prop
+  const isUploadBlocked = approvalStatus ? !approvalStatus.canProceed : false;
 
   return (
     <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -180,6 +249,59 @@ export default function NewAssetPage() {
           </div>
         </div>
 
+        {/* Approval Status Banner */}
+        {!checkingApproval && approvalStatus && (
+          <div className={`mb-6 rounded-lg p-4 border ${
+            approvalStatus.canProceed 
+              ? "bg-emerald-950/20 border-emerald-500/30" 
+              : "bg-red-950/20 border-red-500/30"
+          }`}>
+            <div className="flex items-start gap-3">
+              {approvalStatus.canProceed ? (
+                <CheckCircle className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+              ) : (
+                <ShieldAlert className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
+              )}
+              <div className="text-sm">
+                {approvalStatus.canProceed ? (
+                  <span className="text-emerald-400 font-medium">✓ Concept is approved and ready for new assets</span>
+                ) : (
+                  <>
+                    <span className="text-red-400 font-medium block">⚠️ Cannot add new assets</span>
+                    <p className="text-red-300/80 mt-1 text-xs">
+                      This concept must be fully approved before adding new assets.
+                    </p>
+                    {approvalStatus.errors.map((err, i) => (
+                      <p key={i} className="text-red-300/80 mt-0.5 text-xs">• {err}</p>
+                    ))}
+                    {approvalStatus.summary && (
+                      <div className="mt-2 flex gap-3 text-[10px]">
+                        <span className="text-emerald-400">✓ {approvalStatus.summary.approved} approved</span>
+                        <span className="text-amber-400">⏳ {approvalStatus.summary.pending} pending</span>
+                        <span className="text-red-400">✗ {approvalStatus.summary.rejected} rejected</span>
+                      </div>
+                    )}
+                  </>
+                )}
+                {approvalStatus.warnings && approvalStatus.warnings.length > 0 && (
+                  <div className="mt-1 text-amber-400 text-xs">
+                    {approvalStatus.warnings.map((w, i) => (
+                      <p key={i}>• {w}</p>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {checkingApproval && (
+          <div className="mb-6 rounded-lg bg-zinc-800/50 border border-zinc-700 p-4 flex items-center gap-3">
+            <Loader2 className="w-5 h-5 text-zinc-400 animate-spin" />
+            <span className="text-sm text-zinc-400">Checking approval status...</span>
+          </div>
+        )}
+
         <form onSubmit={handleSubmit}>
           <div className="space-y-4">
             {/* Asset Name */}
@@ -223,9 +345,14 @@ export default function NewAssetPage() {
               <div
                 onDrop={handleDrop}
                 onDragOver={(e) => e.preventDefault()}
-                onClick={() => fileInputRef.current?.click()}
-                className={`relative border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors
-                  ${file ? 'border-blue-500/50 bg-blue-500/5' : 'border-zinc-700 hover:border-zinc-600'}
+                onClick={() => !isUploadBlocked && fileInputRef.current?.click()}
+                className={`relative border-2 border-dashed rounded-lg p-8 text-center transition-colors
+                  ${isUploadBlocked 
+                    ? 'border-red-500/30 bg-red-500/5 cursor-not-allowed opacity-60' 
+                    : file 
+                      ? 'border-blue-500/50 bg-blue-500/5 cursor-pointer' 
+                      : 'border-zinc-700 hover:border-zinc-600 cursor-pointer'
+                  }
                 `}
               >
                 <input
@@ -234,9 +361,18 @@ export default function NewAssetPage() {
                   onChange={handleFileChange}
                   className="hidden"
                   accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.txt"
+                  disabled={isUploadBlocked}
                 />
 
-                {file ? (
+                {isUploadBlocked ? (
+                  <div className="space-y-2">
+                    <ShieldAlert className="mx-auto h-10 w-10 text-red-500" />
+                    <p className="text-sm text-red-400">Upload blocked</p>
+                    <p className="text-xs text-zinc-500">
+                      Concept must be approved before adding new assets
+                    </p>
+                  </div>
+                ) : file ? (
                   <div className="space-y-3">
                     <div className="flex items-center justify-center gap-3">
                       {preview ? (
@@ -296,7 +432,7 @@ export default function NewAssetPage() {
             </Link>
             <button
               type="submit"
-              disabled={uploading}
+              disabled={uploading || isUploadBlocked}
               className="inline-flex items-center px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {uploading ? (
@@ -306,6 +442,11 @@ export default function NewAssetPage() {
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                   </svg>
                   Uploading...
+                </>
+              ) : isUploadBlocked ? (
+                <>
+                  <ShieldAlert className="w-4 h-4 mr-2" />
+                  Blocked - Concept Not Approved
                 </>
               ) : (
                 <>

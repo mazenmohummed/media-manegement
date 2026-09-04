@@ -9,6 +9,7 @@ function generateToken(): string {
   return crypto.randomBytes(32).toString('hex');
 }
 
+// app/api/client-review/links/route.ts - POST handler
 export async function POST(req: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
@@ -45,6 +46,11 @@ export async function POST(req: NextRequest) {
           select: {
             projectName: true,
             clientId: true,
+            client: {
+              select: {
+                clientName: true,
+              },
+            },
           },
         },
         assets: {
@@ -91,6 +97,7 @@ export async function POST(req: NextRequest) {
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
     const reviewUrl = `${baseUrl}/client-review/${reviewLink.token}`;
 
+    // ✅ Return with client name
     return NextResponse.json({
       id: reviewLink.id,
       token: reviewLink.token,
@@ -102,6 +109,10 @@ export async function POST(req: NextRequest) {
         name: concept.name,
         projectName: concept.project.projectName,
         assetCount: concept.assets.length,
+      },
+      client: {
+        id: concept.project.clientId,
+        name: concept.project.client.clientName,
       },
     });
   } catch (error) {

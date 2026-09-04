@@ -28,6 +28,7 @@ export default async function TaskDetailPage({ params }: PageProps) {
         select: {
           id: true,
           name: true,
+          projectName: true,
           client: {
             select: {
               id: true,
@@ -48,7 +49,14 @@ export default async function TaskDetailPage({ params }: PageProps) {
         select: {
           id: true,
           name: true,
-          progress: true,
+          description: true,
+          status: true,
+          deadline: true,
+          order: true,
+          tasks: {
+            where: { deletedAt: null },
+            select: { progress: true }
+          }
         },
       },
       assignees: {
@@ -146,22 +154,6 @@ export default async function TaskDetailPage({ params }: PageProps) {
         },
         orderBy: { createdAt: "desc" },
       },
-      quotations: {
-        select: {
-          id: true,
-          quotationNo: true,
-          status: true,
-          amount: true,
-        },
-      },
-      purchaseOrders: {
-        select: {
-          id: true,
-          poNo: true,
-          status: true,
-          totalAmount: true,
-        },
-      },
       _count: {
         select: {
           comments: true,
@@ -176,9 +168,60 @@ export default async function TaskDetailPage({ params }: PageProps) {
     return notFound();
   }
 
+  // ✅ Fetch concepts for this task to pass to the reviews tab
+ const taskConcepts = await db.concept.findMany({
+  where: {
+    taskId: taskId,
+    agencyId: session.user.agencyId,
+  },
+  include: {
+    assets: {
+      include: {
+        versions: {
+          orderBy: { versionNo: 'desc' },
+          take: 1,
+        },
+      },
+    },
+    reviewLinks: {
+      where: { isActive: true },
+      select: {
+        id: true,
+        token: true,
+        status: true,
+        isActive: true,
+      },
+    },
+  },
+  orderBy: {
+    createdAt: 'desc',
+  },
+});
+  // Calculate milestone progress from tasks
+  let milestoneProgress = 0;
+  if (task.milestone && task.milestone.tasks) {
+    const totalProgress = task.milestone.tasks.reduce((sum, t) => sum + t.progress, 0);
+    milestoneProgress = task.milestone.tasks.length > 0 
+      ? Math.round(totalProgress / task.milestone.tasks.length) 
+      : 0;
+  }
+
+  // Calculate task progress from todos
+  let taskProgress = task.progress;
+  if (task.todos && task.todos.length > 0) {
+    const completedCount = task.todos.filter(todo => todo.completed).length;
+    taskProgress = Math.round((completedCount / task.todos.length) * 100);
+  }
+
   // Convert dates to strings for serialization
   const serializedTask = {
     ...task,
+    progress: taskProgress,
+    milestone: task.milestone ? {
+      ...task.milestone,
+      progress: milestoneProgress,
+      tasks: undefined,
+    } : null,
     dueDate: task.dueDate ? task.dueDate.toISOString() : null,
     startDate: task.startDate ? task.startDate.toISOString() : null,
     endDate: task.endDate ? task.endDate.toISOString() : null,
@@ -187,5 +230,5 @@ export default async function TaskDetailPage({ params }: PageProps) {
     completedAt: task.completedAt ? task.completedAt.toISOString() : null,
   };
 
-  return <TaskDetailClient taskId={taskId} initialTask={serializedTask} />;
+  return <TaskDetailClient taskId={taskId} initialTask={serializedTask} taskConcepts={taskConcepts} />;
 }

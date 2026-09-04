@@ -10,6 +10,26 @@ datasource db {
 // --------------------------------------
 // 1. Enums
 // --------------------------------------
+enum StorageStrategy {
+    LOCAL_ONLY // Agency stores everything
+    CLOUD_ONLY // Everything in cloud
+    HYBRID // Mix of both (recommended)
+}
+
+enum SyncStatus {
+    NOT_SYNCED
+    SYNCING
+    SYNCED
+    FAILED
+    ARCHIVED
+}
+
+enum StorageType {
+    LOCAL // Agency's own storage
+    CLOUD // Your cloud storage
+    BOTH // Stored in both locations
+}
+
 enum VendorStatus {
     ACTIVE
     INACTIVE
@@ -493,6 +513,19 @@ enum CreativeAssetVersionStatus {
     REVISIONS_REQUIRED
 }
 
+enum ReviewLinkStatus {
+    ACTIVE
+    EXPIRED
+    REVOKED
+}
+
+enum ReviewAssetApprovalStatus {
+    PENDING
+    APPROVED
+    REJECTED
+    REVISIONS_REQUESTED
+}
+
 enum AdPlatform {
     FACEBOOK
     INSTAGRAM
@@ -674,6 +707,15 @@ model Agency {
     address         String?
     addressDetails  Address?
 
+    // ✅ HYBRID STORAGE CONFIGURATION
+    storageStrategy   StorageStrategy @default(HYBRID)
+    localStoragePath  String? // e.g., "/mnt/agency-storage"
+    localBaseUrl      String? // e.g., "https://agency-files.com"
+    syncEnabled       Boolean         @default(true)
+    syncFrequency     String          @default("REAL_TIME")
+    cloudStorageQuota BigInt          @default(10737418240) // 10GB
+    storageUsed       BigInt          @default(0)
+
     stripeCustomerId String?
     hasPaymentMethod Boolean @default(false)
 
@@ -682,36 +724,37 @@ model Agency {
     radius       Int          @default(100)
     workingHours WorkingDay[]
 
-    subscription       Subscription?
-    agencyInvoices     AgencyInvoice[]
-    users              User[]
-    departments        Department[]
-    clients            Client[]
-    clientContacts     ClientContact[]
-    projects           Project[]
-    campaigns          Campaign[]
-    contracts          Contract[]
-    taskCategories     TaskCategory[]
-    tasks              Task[]
-    plannedExpenses    TaskPlannedExpense[]
-    taskExpenses       TaskExpense[]
-    assets             Asset[]
-    expenses           Expense[]
-    payments           Payment[]
-    paymentAllocations PaymentAllocation[]
-    clientInvoices     ClientInvoice[]
-    clientStatements   ClientStatement[]
-    reportingPeriods   ReportingPeriod[]
-    vendors            Vendor[]
-    payouts            Payout[]
-    attendanceLogs     AttendanceLog[]
-    comments           Comment[]
-    notifications      Notification[]
-    todos              Todo[]
-    attachments        Attachment[]
-    auditLogs          AuditLog[]
-    invitations        Invitation[]
-    apiKeys            ApiKey[]
+    reviewLinkAssetApprovals ReviewLinkAssetApproval[]
+    subscription             Subscription?
+    agencyInvoices           AgencyInvoice[]
+    users                    User[]
+    departments              Department[]
+    clients                  Client[]
+    clientContacts           ClientContact[]
+    projects                 Project[]
+    campaigns                Campaign[]
+    contracts                Contract[]
+    taskCategories           TaskCategory[]
+    tasks                    Task[]
+    plannedExpenses          TaskPlannedExpense[]
+    taskExpenses             TaskExpense[]
+    assets                   Asset[]
+    expenses                 Expense[]
+    payments                 Payment[]
+    paymentAllocations       PaymentAllocation[]
+    clientInvoices           ClientInvoice[]
+    clientStatements         ClientStatement[]
+    reportingPeriods         ReportingPeriod[]
+    vendors                  Vendor[]
+    payouts                  Payout[]
+    attendanceLogs           AttendanceLog[]
+    comments                 Comment[]
+    notifications            Notification[]
+    todos                    Todo[]
+    attachments              Attachment[]
+    auditLogs                AuditLog[]
+    invitations              Invitation[]
+    apiKeys                  ApiKey[]
 
     createdAt     DateTime       @default(now())
     updatedAt     DateTime       @updatedAt
@@ -1631,14 +1674,15 @@ model ClientContact {
 }
 
 model ReviewLink {
-    id        String  @id @default(cuid())
-    token     String  @unique
+    id        String           @id @default(cuid())
+    token     String           @unique
+    status    ReviewLinkStatus @default(ACTIVE)
     conceptId String
-    concept   Concept @relation(fields: [conceptId], references: [id], onDelete: Cascade)
+    concept   Concept          @relation(fields: [conceptId], references: [id], onDelete: Cascade)
     clientId  String
-    client    Client  @relation(fields: [clientId], references: [id])
+    client    Client           @relation(fields: [clientId], references: [id])
     agencyId  String
-    agency    Agency  @relation(fields: [agencyId], references: [id])
+    agency    Agency           @relation(fields: [agencyId], references: [id])
 
     // Access control
     expiresAt DateTime?
@@ -1647,9 +1691,10 @@ model ReviewLink {
     isActive  Boolean   @default(true)
 
     // Review tracking
-    reviewedAt  DateTime?
-    reviewedBy  String?
-    reviewNotes String?   @db.Text
+    reviewedAt    DateTime?
+    reviewedBy    String? // ✅ Add this field
+    reviewerEmail String? // ✅ Add this field
+    reviewNotes   String?   @db.Text
 
     // Asset approval tracking (JSON for quick lookup)
     assetApprovals Json?
@@ -1673,10 +1718,11 @@ model ReviewLinkAssetApproval {
     versionId            String?
     creativeAssetVersion CreativeAssetVersion? @relation(fields: [versionId], references: [id])
 
-    status     String    @default("PENDING") // PENDING, APPROVED, REJECTED, REVISIONS_REQUESTED
-    feedback   String?   @db.Text
-    approvedAt DateTime?
-    approvedBy String?
+    status          String    @default("PENDING") // PENDING, APPROVED, REJECTED, REVISIONS_REQUESTED
+    feedback        String?   @db.Text
+    generalFeedback String?   @db.Text // ✅ For general feedback on asset
+    approvedAt      DateTime?
+    approvedBy      String?
 
     // For revision loop
     revisionTaskId String? // Task created for revisions
@@ -1684,6 +1730,8 @@ model ReviewLinkAssetApproval {
 
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
+    agency    Agency?  @relation(fields: [agencyId], references: [id])
+    agencyId  String?
 
     @@unique([reviewLinkId, assetId])
     @@index([reviewLinkId, status])
@@ -1862,8 +1910,9 @@ model Milestone {
 
     tasks Task[]
 
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    concepts  Concept[]
 
     @@index([projectId, order])
     @@index([agencyId, status])
@@ -1984,6 +2033,8 @@ model Task {
 
     assignees User[]  @relation("TaskAssignees")
     assets    Asset[] @relation("TaskAssets")
+
+    concepts Concept[]
 
     plannedExpenses       TaskPlannedExpense[]
     taskExpenses          TaskExpense[]
@@ -2153,6 +2204,7 @@ model Concept {
     id          String        @id @default(cuid())
     name        String
     description String?       @db.Text
+    brief       String?       @db.Text
     status      ConceptStatus @default(DRAFT)
 
     projectId String
@@ -2166,15 +2218,22 @@ model Concept {
     updatedAt   DateTime     @updatedAt
     comments    Comment[]
     reviewLinks ReviewLink[]
+    task        Task?        @relation(fields: [taskId], references: [id])
+    taskId      String?
+    milestoneId String? // Optional: link to milestone
+    milestone   Milestone?   @relation(fields: [milestoneId], references: [id])
 
-    @@unique([projectId, name]) // Prevent duplicate concept names within same project
+    @@unique([projectId, name]) // Unique concept name per project
     @@index([projectId, status])
+    @@index([milestoneId])
+    @@index([taskId])
 }
 
 model CreativeAsset {
-    id   String            @id @default(cuid())
-    name String
-    type CreativeAssetType @default(OTHER)
+    id          String            @id @default(cuid())
+    name        String
+    description String?           @db.Text
+    type        CreativeAssetType @default(OTHER)
 
     conceptId String
     concept   Concept @relation(fields: [conceptId], references: [id])
@@ -2182,6 +2241,18 @@ model CreativeAsset {
     agency    Agency  @relation(fields: [agencyId], references: [id])
 
     versions CreativeAssetVersion[]
+
+    // ✅ Add these fields for sync tracking
+    isSynced   Boolean    @default(false)
+    syncedAt   DateTime?
+    syncStatus SyncStatus @default(NOT_SYNCED)
+
+    // Cloud copies (for collaboration)
+    cloudVersionIds String[] // IDs of versions synced to cloud
+
+    // Access control
+    clientAccessible Boolean @default(false)
+    clientAccessUrl  String? // Shared link for client
 
     createdAt                DateTime                  @default(now())
     updatedAt                DateTime                  @updatedAt
@@ -2208,7 +2279,22 @@ model CreativeAssetVersion {
     updatedAt                DateTime                  @updatedAt // ✅ Add updatedAt for tracking review timestamps
     reviewLinkAssetApprovals ReviewLinkAssetApproval[]
 
+    // ✅ HYBRID STORAGE - Two locations
+    localFileUrl   String? // Path on agency's server
+    cloudFileUrl   String? // Path on your cloud (if synced)
+    primaryStorage StorageType @default(LOCAL)
+
+    // ✅ Sync tracking
+    isSyncedToCloud Boolean   @default(false)
+    syncedAt        DateTime?
+    cloudSyncId     String?
+
+    // File metadata
+    fileSize BigInt?
+    fileHash String? // For deduplication
+
     @@index([creativeAssetId, versionNo])
+    @@index([agencyId])
 }
 
 model DigitalAdCampaign {
@@ -2594,22 +2680,29 @@ model Vendor {
     categoryId String?
     category   VendorCategory? @relation("VendorCategoryRelation", fields: [categoryId], references: [id], onDelete: SetNull)
 
-    address                     Address?
-    taxNumber                   String?
-    notes                       String?
-    paymentTerms                String                       @default("COD")
-    agencyId                    String
-    agency                      Agency                       @relation(fields: [agencyId], references: [id])
-    plannedExpenses             TaskPlannedExpense[]
-    expenses                    TaskExpense[]
-    quotations                  Quotation[]
-    purchaseOrders              PurchaseOrder[]
-    performanceReviews          VendorPerformanceReview[]
-    createdAt                   DateTime                     @default(now())
-    updatedAt                   DateTime                     @updatedAt
+    address      Address?
+    taxNumber    String?
+    notes        String?
+    paymentTerms String   @default("COD")
+    agencyId     String
+    agency       Agency   @relation(fields: [agencyId], references: [id])
+
+    // ✅ FIXED: Only keep ONE relation to TaskExpense
+    // Remove the duplicate 'expenses' field
+    taskExpenses TaskExpense[] // Keep this one
+
+    plannedExpenses    TaskPlannedExpense[]
+    quotations         Quotation[]
+    purchaseOrders     PurchaseOrder[]
+    performanceReviews VendorPerformanceReview[]
+
+    // ✅ These need proper relation names if they reference the same model
     quotationVendors            QuotationVendor[]
     plannedPurchaseOrders       PlannedPurchaseOrder[]
     plannedPurchaseOrderVendors PlannedPurchaseOrderVendor[]
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
 
     @@index([agencyId, vendorNo])
     @@index([agencyId, name])

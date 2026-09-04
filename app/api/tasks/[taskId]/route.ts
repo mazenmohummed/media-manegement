@@ -1,19 +1,23 @@
 // app/api/tasks/[taskId]/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { withAuthGuard } from "@/lib/auth/guard";
-import { getScopedPrisma } from "@/lib/prisma";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/authOptions";
+import { db } from "@/lib/db";
 
 const taskInclude = {
   assignees: { select: { id: true, name: true, email: true, avatarUrl: true, role: true } },
   category: { select: { id: true, name: true } },
-  
   milestone: {
     select: {
       id: true,
       name: true,
       status: true,
       deadline: true,
-      tasks: { where: { deletedAt: null }, select: { progress: true } },
+      // Include tasks to calculate progress
+      tasks: { 
+        where: { deletedAt: null }, 
+        select: { progress: true } 
+      },
     },
   },
   project: {
@@ -21,6 +25,7 @@ const taskInclude = {
       id: true,
       name: true,
       projectNo: true,
+      projectName: true,
       client: {
         select: { id: true, clientName: true, email: true, phoneNumber: true, accountType: true },
       },
@@ -49,19 +54,43 @@ const taskInclude = {
       availabilityStatus: true,
     },
   },
-  plannedExpenses: true,
-  taskExpenses: true,
+  plannedExpenses: {
+    select: {
+      id: true,
+      itemName: true,
+      category: true,
+      quantity: true,
+      unitCost: true,
+      taxRate: true,
+      totalEstimated: true,
+      status: true,
+    },
+  },
+  taskExpenses: {
+    select: {
+      id: true,
+      itemName: true,
+      cost: true,
+      category: true,
+      status: true,
+      reimbursable: true,
+      incurredAt: true,
+    },
+  },
   _count: { select: { comments: true, todos: true, plannedExpenses: true, taskExpenses: true } },
 };
 
 function serializeTask(task: any) {
+  // Calculate milestone progress
   let milestoneProgress = 0;
-  if (task.milestone) {
+  if (task.milestone && task.milestone.tasks) {
     const total = task.milestone.tasks.reduce((sum: number, t: any) => sum + t.progress, 0);
-    milestoneProgress = task.milestone.tasks.length > 0 ? Math.round(total / task.milestone.tasks.length) : 0;
+    milestoneProgress = task.milestone.tasks.length > 0 
+      ? Math.round(total / task.milestone.tasks.length) 
+      : 0;
   }
 
-  // ── Calculate progress from todos if they exist ───────────────────────────
+  // Calculate progress from todos
   let computedProgress = task.progress;
   if (task.todos && task.todos.length > 0) {
     const completedCount = task.todos.filter((todo: any) => todo.completed).length;
@@ -81,7 +110,7 @@ function serializeTask(task: any) {
 
   return {
     ...task,
-    progress: computedProgress, // Overwrite with dynamic todo progress
+    progress: computedProgress,
     plannedExpenses: formattedPlannedExpenses,
     milestone: task.milestone
       ? {
@@ -90,40 +119,67 @@ function serializeTask(task: any) {
           status: task.milestone.status,
           deadline: task.milestone.deadline,
           progress: milestoneProgress,
+          // Remove tasks to avoid circular references
+          tasks: undefined,
         }
       : null,
   };
 }
 
 // ─── GET ───────────────────────────────────────────────────────────────────
-export const GET = withAuthGuard("task:read", async (req: NextRequest, { agencyId }, context) => {
-  const db = getScopedPrisma(agencyId);
-  // ✅ Fix: await params before accessing properties
-  const params = await context.params;
-  const taskId = params.taskId;
+export async function GET(
+  req: NextRequest,
+  { params }: { params: Promise<{ taskId: string }> }
+) {
+  try {
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.agencyId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
-  const task = await db.task.findFirst({
-    where: { id: taskId, agencyId, deletedAt: null },
-    include: taskInclude,
-  });
+    const { taskId } = await params;
 
-  if (!task) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  return NextResponse.json(serializeTask(task));
-});
+    const task = await db.task.findFirst({
+      where: { 
+        id: taskId, 
+        agencyId: session.user.agencyId, 
+        deletedAt: null 
+      },
+      include: taskInclude,
+    });
+
+    if (!task) {
+      return NextResponse.json({ error: "Task not found" }, { status: 404 });
+    }
+
+    return NextResponse.json(serializeTask(task));
+  } catch (error: any) {
+    console.error("[TASK_GET_ERROR]", error);
+    return NextResponse.json(
+      { error: error.message || "Failed to fetch task" },
+      { status: 500 }
+    );
+  }
+}
 
 // ─── PATCH ─────────────────────────────────────────────────────────────────
-export const PATCH = withAuthGuard("task:update", async (req: NextRequest, { agencyId }, context) => {
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: Promise<{ taskId: string }> }
+) {
   try {
-    const db = getScopedPrisma(agencyId);
-    // ✅ Fix: await params before accessing properties
-    const params = await context.params;
-    const taskId = params.taskId;
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.agencyId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const { taskId } = await params;
     const body = await req.json();
 
     // ── Completion validation: check dependencies if status is COMPLETED ──
     if (body.status === "COMPLETED") {
       const task = await db.task.findFirst({
-        where: { id: taskId, agencyId, deletedAt: null },
+        where: { id: taskId, agencyId: session.user.agencyId, deletedAt: null },
         include: {
           dependsOn: {
             select: { id: true, status: true, title: true, taskNo: true }
@@ -185,7 +241,7 @@ export const PATCH = withAuthGuard("task:update", async (req: NextRequest, { age
 
     // ── Execute update ──────────────────────────────────────────────────────
     const task = await db.task.update({
-      where: { id: taskId, agencyId },
+      where: { id: taskId, agencyId: session.user.agencyId },
       data,
       include: taskInclude,
     });
@@ -198,19 +254,32 @@ export const PATCH = withAuthGuard("task:update", async (req: NextRequest, { age
       { status: 500 }
     );
   }
-});
+}
 
 // ─── DELETE (soft) ─────────────────────────────────────────────────────────
-export const DELETE = withAuthGuard("task:delete", async (req: NextRequest, { agencyId }, context) => {
-  const db = getScopedPrisma(agencyId);
-  // ✅ Fix: await params before accessing properties
-  const params = await context.params;
-  const taskId = params.taskId;
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: Promise<{ taskId: string }> }
+) {
+  try {
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.agencyId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
-  await db.task.update({
-    where: { id: taskId, agencyId },
-    data: { deletedAt: new Date() },
-  });
+    const { taskId } = await params;
 
-  return NextResponse.json({ success: true });
-});
+    await db.task.update({
+      where: { id: taskId, agencyId: session.user.agencyId },
+      data: { deletedAt: new Date() },
+    });
+
+    return NextResponse.json({ success: true });
+  } catch (error: any) {
+    console.error("[TASK_DELETE_ERROR]", error);
+    return NextResponse.json(
+      { error: error.message || "Failed to delete task" },
+      { status: 500 }
+    );
+  }
+}
