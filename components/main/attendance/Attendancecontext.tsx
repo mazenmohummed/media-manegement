@@ -42,7 +42,7 @@ export function AttendanceProvider({ children }: { children: ReactNode }) {
       const response = await fetch("/api/attendance");
       const data = await response.json();
       if (data.success) {
-        setAttendance(data.attendance);
+        setAttendance(data.data);
       }
     } catch (err) {
       console.error("Failed to fetch attendance:", err);

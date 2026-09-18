@@ -1,7 +1,7 @@
 // components/layout/Sidebar.tsx
 "use client";
 
-import { useEffect, useState } from "react";
+import {  useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useSession, signOut } from "next-auth/react";
@@ -41,6 +41,12 @@ import {
   ClipboardList,
   ShoppingCart,
   Link2,
+  Image,
+  Megaphone,
+  BarChart3,
+  TrendingUp,
+  Smartphone,
+  Activity,
 } from "lucide-react";
 import { NotificationDrawer } from "../main/EmployeeDashboard";
 import { ProcurementChainWidget } from "@/components/procurement/ProcurementChainWidget";
@@ -109,6 +115,15 @@ export default function Sidebar() {
             { name: "Recurring Schedules", href: "/dashboard/contracts/recurring-schedules", icon: <Repeat size={18} /> }
           ]
         },
+        { 
+          name: "Campaigns",
+          href: "/dashboard/campaigns",
+          icon: <Megaphone size={18} />,
+          children: [
+            { name: "All Campaigns", href: "/dashboard/campaigns", icon: <Megaphone size={18} /> },
+            { name: "New Campaign", href: "/dashboard/campaigns/new", icon: <TrendingUp size={18} /> },
+          ]
+        },
       ],
     },
     {
@@ -121,6 +136,36 @@ export default function Sidebar() {
         { name: "Tasks", href: "/dashboard/tasks", icon: <CheckSquare size={18} /> },
         { name: "Task Categories", href: "/dashboard/task-categories", icon: <Layers size={18} /> },
         { name: "Templates", href: "/dashboard/templates", icon: <LayoutTemplate size={18} /> },
+        { name: "Creative Assets", href: "/dashboard/creative-assets", icon: <Image size={18} /> },
+      ],
+    },
+    {
+      title: "Marketing & Ads",
+      isDropdownGroup: true,
+      mainLink: { name: "Marketing Hub", href: "/dashboard/campaigns", icon: <BarChart3 size={18} /> },
+      items: [
+        { 
+          name: "Campaigns", 
+          href: "/dashboard/campaigns", 
+          icon: <Megaphone size={18} />,
+          children: [
+            { name: "All Campaigns", href: "/dashboard/campaigns", icon: <Megaphone size={18} /> },
+            { name: "New Campaign", href: "/dashboard/campaigns/new", icon: <TrendingUp size={18} /> },
+            { 
+              name: "Campaign Health",
+              href: "/dashboard/campaign-health",
+              icon: <Activity className="w-4 h-4" />,
+            }
+          ]
+        },
+        { 
+          name: "Digital Ads", 
+          href: "/dashboard/digital-ads", 
+          icon: <Smartphone size={18} />,
+          children: [
+            { name: "View by Project", href: "/dashboard/projects", icon: <Briefcase size={18} /> },
+          ]
+        },
       ],
     },
     {
@@ -179,7 +224,9 @@ export default function Sidebar() {
   const [openSubMenus, setOpenSubMenus] = useState<{ [key: string]: boolean }>({
     "Vendors": pathname.startsWith("/dashboard/vendors") || pathname.startsWith("/dashboard/procurement"),
     "Contracts": pathname.startsWith("/dashboard/contracts"),
-    "Employees Directory": pathname.startsWith("/dashboard/employees")
+    "Employees Directory": pathname.startsWith("/dashboard/employees"),
+    "Campaigns": pathname.startsWith("/dashboard/campaigns"),
+    "Digital Ads": pathname.includes("/digital-ads"),
   });
 
   const toggleSection = (title: string) => {
@@ -335,6 +382,7 @@ export default function Sidebar() {
           <p className="text-[9px] font-bold text-rose-500 mt-2 px-1">{error}</p>
         )}
       </div>
+
       {/* NAVIGATION SECTIONS */}
       <div className="flex-1 overflow-y-auto py-2 px-4 space-y-3 no-scrollbar">
         {navSections.map((section, idx) => {

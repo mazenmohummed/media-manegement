@@ -19,6 +19,7 @@ import {
   Loader2,
   Receipt,
   Lightbulb,
+  Film,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -41,6 +42,7 @@ import { ProcurementChainWidget } from "@/components/procurement/ProcurementChai
 import { TaskDetail } from "@/types/task";
 import { TaskReviewsTab } from '@/components/tasks/TaskReviewsTab';
 import { TaskConceptsTab } from './TaskConceptsTab';
+import { CreativeAssetsTab } from './CreativeAssetsTab'; // ✅ Import the new tab
 
 interface TaskDetailClientProps {
   taskId: string;
@@ -111,12 +113,13 @@ export function TaskDetailClient({ taskId, initialTask, taskConcepts = [] }: Tas
                          task.quotations?.length > 0 || 
                          task.purchaseOrders?.length > 0;
 
-  // ✅ Define tabs with reviews tab
+  // ✅ Updated tabs with Creative Assets
   const tabs = [
     { key: "overview", label: "Overview", icon: BarChart3 },
     { key: "comments", label: `Comments (${task._count?.comments || 0})`, icon: MessageSquare },
     { key: "todos", label: `Todos (${task._count?.todos || 0})`, icon: ListChecks },
     { key: "dependencies", label: "Dependencies", icon: GitBranch },
+    { key: "creative-assets", label: "Creative Assets", icon: Film },
     { key: "concepts", label: "Concepts", icon: Lightbulb },
     { key: "planned-expenses", label: "Planned Expenses", icon: DollarSign },
     { key: "task-expenses", label: "Task Expenses", icon: Receipt },
@@ -147,15 +150,16 @@ export function TaskDetailClient({ taskId, initialTask, taskConcepts = [] }: Tas
             onUpdate={fetchTask}
           />
         );
-     case "concepts":
-      return (
-        <TaskConceptsTab 
-          taskId={taskId} 
-          projectId={task.project?.id || task.projectId} 
-          // ✅ Remove initialConcepts - let the component fetch its own data
-          onUpdate={fetchTask}
-        />
-      );
+      case "creative-assets":
+        return <CreativeAssetsTab taskId={taskId} onUpdate={fetchTask} />;
+      case "concepts":
+        return (
+          <TaskConceptsTab 
+            taskId={taskId} 
+            projectId={task.project?.id || task.projectId} 
+            onUpdate={fetchTask}
+          />
+        );
       case "planned-expenses":
         return <TaskPlannedExpensesManager taskId={taskId} initialExpenses={task.plannedExpenses || []} />;
       case "task-expenses":

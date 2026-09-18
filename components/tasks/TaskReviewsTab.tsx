@@ -2,32 +2,19 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { 
+import {
   MessageSquare,
+  ExternalLink,
+  Clock,
   CheckCircle,
   XCircle,
-  Clock,
   AlertCircle,
-  ExternalLink,
   RefreshCw,
-  Eye,
-  Calendar,
-  User,
-  FileText,
-  Image,
-  Video,
-  Music,
-  File,
-  ChevronDown,
+  Search,
+  ChevronLeft,
   ChevronRight,
-  Star,
-  ThumbsUp,
-  ThumbsDown,
   Link2,
-  Copy,
-  Send,
-  Filter,
-  Search
+  User,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { Badge } from '@/components/ui/badge';
@@ -35,6 +22,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Progress } from '@/components/ui/progress';
 import toast from 'react-hot-toast';
+import Link from 'next/link';
 
 interface ReviewApproval {
   id: string;
@@ -43,12 +31,16 @@ interface ReviewApproval {
   generalFeedback: string | null;
   approvedAt: string | null;
   approvedBy: string | null;
+  reviewNotes?: any;
+  sectionStatuses?: Record<string, string> | null;
   reviewLink: {
     id: string;
     token: string;
     status: string;
     isActive: boolean;
     reviewedAt: string | null;
+    reviewNotes?: string | null;
+    createdAt: string;
     client: {
       clientName: string;
       email: string | null;
@@ -76,60 +68,191 @@ interface TaskReviewsTabProps {
   taskConcepts?: Array<{ id: string; name: string }>;
 }
 
-const statusConfig = {
-  APPROVED: {
-    label: 'Approved',
-    color: 'text-emerald-400',
-    bg: 'bg-emerald-500/10',
-    border: 'border-emerald-500/20',
-    icon: <CheckCircle className="w-3.5 h-3.5" />,
-  },
-  REJECTED: {
-    label: 'Rejected',
-    color: 'text-red-400',
-    bg: 'bg-red-500/10',
-    border: 'border-red-500/20',
-    icon: <XCircle className="w-3.5 h-3.5" />,
-  },
-  REVISIONS_REQUESTED: {
-    label: 'Revisions',
-    color: 'text-amber-400',
-    bg: 'bg-amber-500/10',
-    border: 'border-amber-500/20',
-    icon: <AlertCircle className="w-3.5 h-3.5" />,
-  },
-  PENDING: {
-    label: 'Pending',
-    color: 'text-blue-400',
-    bg: 'bg-blue-500/10',
-    border: 'border-blue-500/20',
-    icon: <Clock className="w-3.5 h-3.5" />,
-  },
+const PAGE_SIZE = 5;
+
+const getReviewStatusConfig = (status: string) => {
+  const configs: Record<string, { label: string; color: string; bg: string; icon: React.ReactNode }> = {
+    APPROVED: {
+      label: 'Approved',
+      color: 'text-emerald-400',
+      bg: 'bg-emerald-500/10 border-emerald-500/20',
+      icon: <CheckCircle className="w-3 h-3" />,
+    },
+    REVISIONS_REQUIRED: {
+      label: 'Revisions Needed',
+      color: 'text-amber-400',
+      bg: 'bg-amber-500/10 border-amber-500/20',
+      icon: <AlertCircle className="w-3 h-3" />,
+    },
+    REVISIONS_REQUESTED: {
+      label: 'Revisions Needed',
+      color: 'text-amber-400',
+      bg: 'bg-amber-500/10 border-amber-500/20',
+      icon: <AlertCircle className="w-3 h-3" />,
+    },
+    PARTIALLY_APPROVED: {
+      label: 'Partially Approved',
+      color: 'text-blue-400',
+      bg: 'bg-blue-500/10 border-blue-500/20',
+      icon: <Clock className="w-3 h-3" />,
+    },
+    PENDING: {
+      label: 'Pending',
+      color: 'text-yellow-400',
+      bg: 'bg-yellow-500/10 border-yellow-500/20',
+      icon: <Clock className="w-3 h-3" />,
+    },
+    REJECTED: {
+      label: 'Rejected',
+      color: 'text-red-400',
+      bg: 'bg-red-500/10 border-red-500/20',
+      icon: <XCircle className="w-3 h-3" />,
+    },
+  };
+  return configs[status] || configs.PENDING;
 };
 
-const assetTypeIcons: Record<string, React.ReactNode> = {
-  MOODBOARD: <Image className="w-4 h-4" />,
-  STORYBOARD: <Image className="w-4 h-4" />,
-  SCRIPT: <FileText className="w-4 h-4" />,
-  COPY: <FileText className="w-4 h-4" />,
-  MOCKUP: <Image className="w-4 h-4" />,
-  VIDEO: <Video className="w-4 h-4" />,
-  IMAGE: <Image className="w-4 h-4" />,
-  AUDIO: <Music className="w-4 h-4" />,
-  DOCUMENT: <File className="w-4 h-4" />,
-  OTHER: <File className="w-4 h-4" />,
-};
+// Parse the raw reviewNotes JSON string
+function parseReviewNotes(reviewNotes: string | null | undefined): Record<string, any> | null {
+  if (!reviewNotes) return null;
+  try {
+    const parsed = JSON.parse(reviewNotes);
+    return typeof parsed === 'object' && parsed !== null ? parsed : null;
+  } catch {
+    return null;
+  }
+}
 
+// Extract task-specific feedback from reviewNotes.tasks
+const extractTaskFromNotes = (reviewNotes: string | null): { taskName: string; feedback: string } | null => {
+  if (!reviewNotes) return null;
+  const parsed = parseReviewNotes(reviewNotes);
+  if (!parsed) return null;
+
+  const tasksText = parsed.tasks;
+  if (!tasksText || typeof tasksText !== 'string') return null;
+
+  const colonIndex = tasksText.indexOf(':');
+  if (colonIndex === -1) return { taskName: 'Task Feedback', feedback: tasksText.trim() };
+
+  const rawName = tasksText.substring(0, colonIndex).trim();
+  const feedback = tasksText.substring(colonIndex + 1).trim();
+
+  // Use "Task Feedback" because "try" is not a real task name
+  const taskName = rawName.length < 10 ? 'Task Feedback' : rawName; 
+
+  return { taskName, feedback };
+};
+// Extract task reviews from sectionStatuses and reviewNotes
+const extractTaskReviews = (approvals: ReviewApproval[], taskId: string): {
+  approval: ReviewApproval;
+  taskId: string;
+  taskName: string;
+  status: string;
+  feedback: string;
+  conceptName: string;
+  isActive: boolean;
+  reviewedAt: string | null;
+  reviewerName: string | null;
+  createdAt: string;
+  summary: {
+    total: number;
+    approved: number;
+    rejected: number;
+    pending: number;
+  };
+}[] => {
+  const result: {
+    approval: ReviewApproval;
+    taskId: string;
+    taskName: string;
+    status: string;
+    feedback: string;
+    conceptName: string;
+    isActive: boolean;
+    reviewedAt: string | null;
+    reviewerName: string | null;
+    createdAt: string;
+    summary: {
+      total: number;
+      approved: number;
+      rejected: number;
+      pending: number;
+    };
+  }[] = [];
+
+    approvals.forEach((approval) => {
+    // 1. Parse notes (Handle both direct and nested data)
+    // If the API returns ReviewLink directly, use approval.reviewNotes
+    // If it returns ReviewApproval, use approval.reviewLink.reviewNotes
+    const rawNotes = (approval as any).reviewNotes || approval.reviewLink?.reviewNotes || null;
+    const parsed = parseReviewNotes(rawNotes);
+    
+    // 2. Get REAL task status and ID from sectionStatuses
+    let taskStatus = '';
+    let taskIdFound = '';
+    
+    // Handle sectionStatuses from either location
+    const sectionStatuses = (approval as any).sectionStatuses || parsed?.sectionStatuses || null;
+    
+    if (sectionStatuses && typeof sectionStatuses === 'object') {
+      Object.entries(sectionStatuses as Record<string, unknown>).forEach(([key, value]) => {
+        if (key.startsWith('task-')) {
+          taskIdFound = key.replace('task-', '');
+          taskStatus = typeof value === 'string' ? value : String(value ?? '');
+        }
+      });
+    }
+
+    // 3. Get Task Info from Notes
+    let taskInfo = extractTaskFromNotes(rawNotes);
+    
+    // 4. Check if this review belongs to the current taskId
+    // We ONLY care if the taskIdFound (from sectionStatuses) matches the passed taskId
+    const matchesTask = (taskIdFound === taskId) || (taskInfo?.taskName === taskId);
+
+    // IMPORTANT: We push if we found a task or it matches
+    if (matchesTask || taskIdFound) { 
+      const createdAt = approval.reviewLink?.createdAt || (approval as any).createdAt || approval.approvedAt || new Date().toISOString();
+      const status = taskStatus || approval.status || 'PENDING';
+
+      result.push({
+        approval,
+        taskId: taskIdFound || taskId,
+        taskName: taskInfo?.taskName || 'Task Feedback',
+        status: status,
+        feedback: taskInfo?.feedback || approval.feedback || '',
+        conceptName: approval.reviewLink?.concept?.name || 'Concept',
+        isActive: approval.reviewLink?.isActive ?? true,
+        reviewedAt: approval.reviewLink?.reviewedAt || null,
+        reviewerName: parsed?.reviewerName || null,
+        createdAt: typeof createdAt === 'string' ? createdAt : new Date().toISOString(),
+        summary: {
+          total: 1,
+          approved: approval.status === 'APPROVED' ? 1 : 0,
+          rejected: approval.status === 'REJECTED' || approval.status === 'REVISIONS_REQUIRED' || approval.status === 'REVISIONS_REQUESTED' ? 1 : 0,
+          pending: approval.status === 'PENDING' ? 1 : 0,
+        },
+      });
+    }
+  });
+
+  return result;
+};
 export function TaskReviewsTab({ taskId, taskConcepts = [] }: TaskReviewsTabProps) {
   const [approvals, setApprovals] = useState<ReviewApproval[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterStatus, setFilterStatus] = useState<string>('all');
-  const [expandedApproval, setExpandedApproval] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
 
   useEffect(() => {
     fetchTaskReviews();
   }, [taskId]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, filterStatus]);
 
   const fetchTaskReviews = async () => {
     setLoading(true);
@@ -146,32 +269,37 @@ export function TaskReviewsTab({ taskId, taskConcepts = [] }: TaskReviewsTabProp
     }
   };
 
-  const handleCopyReviewLink = (token: string) => {
-    const url = `${window.location.origin}/client-review/${token}`;
-    navigator.clipboard.writeText(url);
-    toast.success('Review link copied to clipboard!');
-  };
+  // Extract task reviews
+  const taskReviews = extractTaskReviews(approvals, taskId);
 
-  const toggleExpand = (id: string) => {
-    setExpandedApproval(expandedApproval === id ? null : id);
-  };
-
-  // Filter approvals
-  const filteredApprovals = approvals.filter(approval => {
+  // Filter task reviews
+  const filteredReviews = taskReviews.filter(item => {
     const matchesSearch = 
-      approval.creativeAsset.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      approval.reviewLink.concept.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      approval.reviewLink.client.clientName.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesStatus = filterStatus === 'all' || approval.status === filterStatus;
+      item.taskName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      item.feedback.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      item.conceptName.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesStatus = filterStatus === 'all' || item.status === filterStatus;
     return matchesSearch && matchesStatus;
   });
 
+  // Pagination
+  const totalPages = Math.max(1, Math.ceil(filteredReviews.length / PAGE_SIZE));
+  const safePage = Math.min(currentPage, totalPages);
+  const paginatedReviews = filteredReviews.slice(
+    (safePage - 1) * PAGE_SIZE,
+    safePage * PAGE_SIZE
+  );
+
   // Calculate stats
-  const totalApprovals = approvals.length;
-  const approvedCount = approvals.filter(a => a.status === 'APPROVED').length;
-  const rejectedCount = approvals.filter(a => a.status === 'REJECTED' || a.status === 'REVISIONS_REQUESTED').length;
-  const pendingCount = approvals.filter(a => a.status === 'PENDING').length;
-  const completionRate = totalApprovals > 0 ? ((approvedCount / totalApprovals) * 100) : 0;
+  const totalReviews = taskReviews.length;
+  const approvedCount = taskReviews.filter(item => item.status === 'APPROVED').length;
+  const rejectedCount = taskReviews.filter(item => 
+    item.status === 'REJECTED' || 
+    item.status === 'REVISIONS_REQUIRED' || 
+    item.status === 'REVISIONS_REQUESTED'
+  ).length;
+  const pendingCount = taskReviews.filter(item => item.status === 'PENDING').length;
+  const completionRate = totalReviews > 0 ? ((approvedCount / totalReviews) * 100) : 0;
 
   if (loading) {
     return (
@@ -186,7 +314,7 @@ export function TaskReviewsTab({ taskId, taskConcepts = [] }: TaskReviewsTabProp
       {/* Stats Overview */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div className="bg-zinc-800/30 border border-zinc-700/50 rounded-lg p-4">
-          <p className="text-2xl font-bold text-zinc-100">{totalApprovals}</p>
+          <p className="text-2xl font-bold text-zinc-100">{totalReviews}</p>
           <p className="text-xs text-zinc-400">Total Reviews</p>
         </div>
         <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-4">
@@ -217,7 +345,7 @@ export function TaskReviewsTab({ taskId, taskConcepts = [] }: TaskReviewsTabProp
         <div className="relative flex-1 min-w-[200px]">
           <Search className="w-4 h-4 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
           <Input
-            placeholder="Search reviews..."
+            placeholder="Search task reviews..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="pl-9 bg-zinc-800/50 border-zinc-700 text-zinc-100 placeholder-zinc-500"
@@ -231,7 +359,7 @@ export function TaskReviewsTab({ taskId, taskConcepts = [] }: TaskReviewsTabProp
           <option value="all">All Status</option>
           <option value="APPROVED">Approved</option>
           <option value="REJECTED">Rejected</option>
-          <option value="REVISIONS_REQUESTED">Revisions</option>
+          <option value="REVISIONS_REQUIRED">Revisions</option>
           <option value="PENDING">Pending</option>
         </select>
         <Button
@@ -245,176 +373,168 @@ export function TaskReviewsTab({ taskId, taskConcepts = [] }: TaskReviewsTabProp
         </Button>
       </div>
 
-      {/* Reviews List */}
-      {filteredApprovals.length === 0 ? (
+      {/* Task Reviews List */}
+      {filteredReviews.length === 0 ? (
         <div className="bg-zinc-800/30 border border-zinc-700/50 rounded-xl p-12 text-center">
           <MessageSquare className="w-12 h-12 text-zinc-600 mx-auto mb-4" />
           <p className="text-zinc-400">
-            {approvals.length === 0 ? 'No reviews found for this task' : 'No reviews match your filters'}
+            {taskReviews.length === 0 ? 'No task reviews found' : 'No task reviews match your filters'}
           </p>
           <p className="text-sm text-zinc-500 mt-1">
-            {approvals.length === 0 
-              ? 'Reviews appear when creative assets are reviewed by clients'
+            {taskReviews.length === 0 
+              ? 'Task reviews appear when creative assets are reviewed by clients'
               : 'Try adjusting your filters'}
           </p>
         </div>
       ) : (
-        <div className="space-y-4">
-          {filteredApprovals.map((approval) => {
-            const statusInfo = statusConfig[approval.status as keyof typeof statusConfig] || statusConfig.PENDING;
-            const isExpanded = expandedApproval === approval.id;
-            const version = approval.creativeAssetVersion;
-
-            return (
-              <div
-                key={approval.id}
-                className={`bg-zinc-800/50 border rounded-xl overflow-hidden ${statusInfo.border}`}
-              >
-                {/* Header */}
+        <>
+          <div className="space-y-3">
+            {paginatedReviews.map((item, index) => {
+              const statusConfig = getReviewStatusConfig(item.status);
+              
+              return (
                 <div
-                  className="p-4 cursor-pointer hover:bg-zinc-800/70 transition-colors"
-                  onClick={() => toggleExpand(approval.id)}
+                  key={`${item.taskId}-${index}`}
+                  className="bg-zinc-900 border border-zinc-800 rounded-lg p-4 hover:border-zinc-700 transition-colors"
                 >
-                  <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div className="flex items-start justify-between">
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <div className="p-1.5 bg-zinc-700/50 rounded-lg shrink-0">
-                          {assetTypeIcons[approval.creativeAsset.type] || <File className="w-4 h-4" />}
-                        </div>
-                        <div>
-                          <h4 className="font-medium text-zinc-100 truncate">
-                            {approval.creativeAsset.name}
-                          </h4>
-                          <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-400">
-                            <span>{approval.reviewLink.concept.name}</span>
-                            <span>•</span>
-                            <span>{approval.reviewLink.client.clientName}</span>
-                            {version && (
-                              <>
-                                <span>•</span>
-                                <span>v{version.versionNo}</span>
-                              </>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3 shrink-0">
-                      <Badge className={`${statusInfo.bg} ${statusInfo.color} border ${statusInfo.border}`}>
-                        <span className="flex items-center gap-1 text-[10px]">
-                          {statusInfo.icon}
-                          {statusInfo.label}
+                      {/* Header */}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-medium text-zinc-200">
+                          {item.taskName}
                         </span>
-                      </Badge>
-                      {approval.approvedAt && (
+                        <Badge className={`text-[10px] ${statusConfig.bg} ${statusConfig.color} flex items-center gap-1`}>
+                          {statusConfig.icon}
+                          {statusConfig.label}
+                        </Badge>
+                        {item.isActive ? (
+                          <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-[9px]">
+                            Active
+                          </Badge>
+                        ) : (
+                          <Badge className="bg-zinc-500/10 text-zinc-400 border-zinc-500/20 text-[9px]">
+                            Inactive
+                          </Badge>
+                        )}
                         <span className="text-xs text-zinc-500">
-                          {format(new Date(approval.approvedAt), 'MMM d')}
+                          {item.conceptName}
                         </span>
+                      </div>
+
+                      {/* Task ID */}
+                      <div className="mt-1 flex items-center gap-2">
+                        <span className="text-xs text-zinc-500 font-mono">
+                          Task ID: {item.taskId.slice(0, 8)}
+                        </span>
+                        <span className="text-xs text-zinc-600">•</span>
+                        <span className="text-xs text-zinc-500">
+                          {item.reviewedAt 
+                            ? new Date(item.reviewedAt).toLocaleDateString() 
+                            : 'Pending review'}
+                        </span>
+                      </div>
+
+                      {/* Feedback */}
+                      {item.feedback && (
+                        <div className="mt-2 p-2 bg-zinc-800/30 rounded-lg border border-zinc-700/30">
+                          <p className="text-xs text-zinc-300">
+                            <span className="text-zinc-500">Feedback:</span> {item.feedback}
+                          </p>
+                        </div>
                       )}
-                      {isExpanded ? (
-                        <ChevronDown className="w-4 h-4 text-zinc-400" />
-                      ) : (
-                        <ChevronRight className="w-4 h-4 text-zinc-400" />
+
+                      {/* Reviewer */}
+                      {item.reviewerName && (
+                        <p className="text-sm text-zinc-400 mt-2 flex items-center gap-1">
+                          <User className="w-3 h-3" />
+                          Reviewed by: {item.reviewerName}
+                        </p>
+                      )}
+
+                      {/* Asset Approval Summary */}
+                      {item.summary && item.summary.total > 0 && (
+                        <div className="flex items-center gap-3 mt-2 text-xs text-zinc-500">
+                          <span className="text-emerald-400 flex items-center gap-1">
+                            <CheckCircle className="w-3 h-3" /> {item.summary.approved} approved
+                          </span>
+                          <span className="text-amber-400 flex items-center gap-1">
+                            <AlertCircle className="w-3 h-3" /> {item.summary.rejected} revisions
+                          </span>
+                          <span className="text-blue-400 flex items-center gap-1">
+                            <Clock className="w-3 h-3" /> {item.summary.pending} pending
+                          </span>
+                          <span>• {item.summary.total} total</span>
+                        </div>
                       )}
                     </div>
+
+                    {/* Action Buttons */}
+                    <div className="flex items-center gap-2 ml-4 shrink-0">
+                      <Link href={`/dashboard/tasks/${item.taskId}`}>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 w-8 p-0 text-zinc-400 hover:text-zinc-200"
+                          title="View Task"
+                        >
+                          <ExternalLink className="w-4 h-4" />
+                        </Button>
+                      </Link>
+                    </div>
+                  </div>
+
+                  <div className="mt-2 text-xs text-zinc-500">
+                    Created: {new Date(item.createdAt).toLocaleDateString()}
                   </div>
                 </div>
+              );
+            })}
+          </div>
 
-                {/* Expanded Content */}
-                {isExpanded && (
-                  <div className="border-t border-zinc-700/50 p-4 space-y-4">
-                    {/* Feedback */}
-                    {approval.feedback && (
-                      <div>
-                        <p className="text-xs text-zinc-400 mb-1">Feedback</p>
-                        <div className="bg-zinc-900/50 rounded-lg p-3 text-sm text-zinc-200">
-                          {approval.feedback}
-                        </div>
-                      </div>
-                    )}
-
-                    {approval.generalFeedback && (
-                      <div>
-                        <p className="text-xs text-zinc-400 mb-1">General Feedback</p>
-                        <div className="bg-zinc-900/50 rounded-lg p-3 text-sm text-zinc-200">
-                          {approval.generalFeedback}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Review Details */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-                      <div className="bg-zinc-900/50 rounded-lg p-3">
-                        <p className="text-xs text-zinc-400">Review Link</p>
-                        <div className="flex items-center gap-2 mt-1">
-                          <code className="text-xs text-zinc-300 truncate flex-1">
-                            {approval.reviewLink.token}
-                          </code>
-                          <Button
-                            onClick={() => handleCopyReviewLink(approval.reviewLink.token)}
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 px-2 text-zinc-400 hover:text-zinc-200"
-                          >
-                            <Copy className="w-3.5 h-3.5" />
-                          </Button>
-                          <a
-                            href={`/client-review/${approval.reviewLink.token}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex"
-                          >
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-7 px-2 text-blue-400 hover:text-blue-300"
-                            >
-                              <ExternalLink className="w-3.5 h-3.5" />
-                            </Button>
-                          </a>
-                        </div>
-                      </div>
-                      {approval.approvedBy && (
-                        <div className="bg-zinc-900/50 rounded-lg p-3">
-                          <p className="text-xs text-zinc-400">Reviewed By</p>
-                          <p className="text-zinc-200 font-medium mt-1">{approval.approvedBy}</p>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Actions */}
-                    <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-zinc-700/50">
-                      <a
-                        href={`/client-review/${approval.reviewLink.token}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex"
-                      >
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="border-zinc-700 text-zinc-300 hover:bg-zinc-800"
-                        >
-                          <ExternalLink className="w-3.5 h-3.5 mr-1.5" />
-                          Open Review
-                        </Button>
-                      </a>
-                      <Button
-                        onClick={() => handleCopyReviewLink(approval.reviewLink.token)}
-                        variant="outline"
-                        size="sm"
-                        className="border-zinc-700 text-zinc-300 hover:bg-zinc-800"
-                      >
-                        <Copy className="w-3.5 h-3.5 mr-1.5" />
-                        Copy Link
-                      </Button>
-                    </div>
-                  </div>
-                )}
+          {/* Pagination */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between pt-2">
+              <p className="text-xs text-zinc-500">
+                Showing {(safePage - 1) * PAGE_SIZE + 1}
+                –{Math.min(safePage * PAGE_SIZE, filteredReviews.length)} of {filteredReviews.length}
+              </p>
+              <div className="flex items-center gap-1">
+                <Button
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  disabled={safePage === 1}
+                  variant="outline"
+                  size="sm"
+                  className="border-zinc-700 text-zinc-300 hover:bg-zinc-800 disabled:opacity-40 h-8 px-2"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </Button>
+                {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
+                  <button
+                    key={page}
+                    onClick={() => setCurrentPage(page)}
+                    className={`w-8 h-8 rounded-md text-xs font-medium transition-colors ${
+                      page === safePage
+                        ? 'bg-blue-600 text-white'
+                        : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200'
+                    }`}
+                  >
+                    {page}
+                  </button>
+                ))}
+                <Button
+                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                  disabled={safePage === totalPages}
+                  variant="outline"
+                  size="sm"
+                  className="border-zinc-700 text-zinc-300 hover:bg-zinc-800 disabled:opacity-40 h-8 px-2"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </Button>
               </div>
-            );
-          })}
-        </div>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

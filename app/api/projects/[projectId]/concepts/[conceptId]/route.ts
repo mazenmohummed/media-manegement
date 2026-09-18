@@ -4,6 +4,25 @@ import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/authOptions';
 import { prisma } from '@/lib/prisma';
 
+// ✅ FIX: Helper function to recursively serialize BigInt to string/number
+function serializeBigInt(data: any): any {
+  if (data === null || data === undefined) return data;
+  if (typeof data === 'bigint') {
+    // Convert to number if safe, otherwise string
+    if (data <= Number.MAX_SAFE_INTEGER) return Number(data);
+    return data.toString();
+  }
+  if (Array.isArray(data)) return data.map(serializeBigInt);
+  if (typeof data === 'object') {
+    const result: any = {};
+    for (const key of Object.keys(data)) {
+      result[key] = serializeBigInt(data[key]);
+    }
+    return result;
+  }
+  return data;
+}
+
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ projectId: string; conceptId: string }> }
@@ -70,27 +89,38 @@ export async function GET(
       console.warn('Concept has no client associated:', conceptId);
     }
 
+    // ✅ FIX: Serialize BigInt before returning
+    const serializedAssets = concept.assets.map((asset: any) => ({
+      ...asset,
+      versions: asset.versions.map((version: any) => ({
+        ...version,
+        fileSize: serializeBigInt(version.fileSize), // ✅ Convert BigInt safely
+      })),
+    }));
+
     // Return with all data including brief
-    return NextResponse.json({
-      id: concept.id,
-      name: concept.name,
-      description: concept.description,
-      brief: concept.brief, // ✅ Include brief directly from concept
-      status: concept.status,
-      projectId: concept.projectId,
-      projectName: concept.project.projectName,
-      // ✅ Include client data
-      clientId: concept.project.clientId,
-      clientName: concept.project.client?.clientName || null,
-      clientEmail: concept.project.client?.email || null,
-      // ✅ Include assets
-      assets: concept.assets,
-      // ✅ Include task and milestone
-      task: concept.task,
-      milestone: concept.milestone,
-      createdAt: concept.createdAt,
-      updatedAt: concept.updatedAt,
-    });
+    return NextResponse.json(
+      serializeBigInt({
+        id: concept.id,
+        name: concept.name,
+        description: concept.description,
+        brief: concept.brief, // ✅ Include brief directly from concept
+        status: concept.status,
+        projectId: concept.projectId,
+        projectName: concept.project.projectName,
+        // ✅ Include client data
+        clientId: concept.project.clientId,
+        clientName: concept.project.client?.clientName || null,
+        clientEmail: concept.project.client?.email || null,
+        // ✅ Include assets
+        assets: serializedAssets,
+        // ✅ Include task and milestone
+        task: concept.task,
+        milestone: concept.milestone,
+        createdAt: concept.createdAt,
+        updatedAt: concept.updatedAt,
+      })
+    );
   } catch (error) {
     console.error('Error fetching concept:', error);
     return NextResponse.json(
@@ -220,7 +250,8 @@ export async function PATCH(
       },
     });
 
-    return NextResponse.json(updatedConcept);
+    // ✅ FIX: Serialize BigInt before returning
+    return NextResponse.json(serializeBigInt(updatedConcept));
   } catch (error) {
     console.error('Error updating concept:', error);
     return NextResponse.json(

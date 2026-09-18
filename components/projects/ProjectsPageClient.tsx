@@ -18,12 +18,22 @@ import {
   Tag as TagIcon,
   Loader2,
   X,
+  Megaphone,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ProjectStatus } from "@prisma/client";
 import { TagManager } from "@/components/tags/TagManager";
+
+// ─── Types ──────────────────────────────────────────────────────────────
+
+interface Campaign {
+  id: string;
+  name: string;
+  campaignNo?: string | null;
+  status?: string;
+}
 
 interface Project {
   id: string;
@@ -36,6 +46,8 @@ interface Project {
   targetDeadline: string | null;
   client: { id: string; clientName: string } | null;
   contract: { id: string; contractNo: string | null } | null;
+  campaigns: Campaign[];
+  // Keep `campaign` for backward compatibility with other components
   campaign: { id: string; name: string } | null;
   tags: { id: string; name: string; color: string }[];
   _count: { tasks: number; milestones: number };
@@ -57,6 +69,8 @@ interface ProjectsPageClientProps {
   initialStats: Stats;
 }
 
+// ─── Constants ──────────────────────────────────────────────────────────
+
 const statusColors: Record<ProjectStatus, string> = {
   DRAFT: "bg-zinc-800 text-zinc-400 border-zinc-700",
   ACTIVE: "bg-blue-500/10 text-blue-400 border-blue-500/20",
@@ -65,6 +79,8 @@ const statusColors: Record<ProjectStatus, string> = {
   CANCELLED: "bg-red-500/10 text-red-400 border-red-500/20",
   ARCHIVED: "bg-purple-500/10 text-purple-400 border-purple-500/20",
 };
+
+// ─── Main Component ────────────────────────────────────────────────────
 
 export function ProjectsPageClient({
   initialProjects,
@@ -135,9 +151,7 @@ export function ProjectsPageClient({
   };
 
   const clearFilters = () => {
-    // Clear all filters from URL
     router.push("/dashboard/projects");
-    // Reset to initial data
     setProjects(initialProjects);
     setStats(initialStats);
     setLoading(false);
@@ -154,7 +168,6 @@ export function ProjectsPageClient({
   const assignTagsToProject = async (projectId: string, tagIds: string[]) => {
     setIsAssigningTags(true);
     try {
-      // First, update the project tags
       const projectRes = await fetch(`/api/projects/${projectId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -167,15 +180,14 @@ export function ProjectsPageClient({
       }
 
       const projectData = await projectRes.json();
-      
+
       // Get all tasks for this project
       const tasksRes = await fetch(`/api/tasks?projectId=${projectId}&limit=1000`);
       if (tasksRes.ok) {
         const tasksData = await tasksRes.json();
         const projectTasks = tasksData.tasks || [];
-        
-        // Assign the same tags to all tasks in the project
-        const taskUpdatePromises = projectTasks.map((task: any) => 
+
+        const taskUpdatePromises = projectTasks.map((task: any) =>
           fetch(`/api/tasks/${task.id}/tags`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
@@ -186,7 +198,6 @@ export function ProjectsPageClient({
         await Promise.all(taskUpdatePromises);
       }
 
-      // Update local state
       setProjects((prev) =>
         prev.map((p) =>
           p.id === projectId
@@ -195,7 +206,7 @@ export function ProjectsPageClient({
         )
       );
       setTagAssignmentProjectId(null);
-      
+
       // Show success message
       const toast = document.createElement('div');
       toast.className = 'fixed bottom-4 right-4 bg-emerald-500 text-white px-4 py-2 rounded-lg text-sm font-medium shadow-lg z-50 transition-all duration-300';
@@ -219,6 +230,34 @@ export function ProjectsPageClient({
   };
 
   const activeProjects = projects.filter((p) => p.status === ProjectStatus.ACTIVE).length;
+
+  // ─── Render Campaigns Helper ─────────────────────────────────────────
+
+  const renderCampaigns = (project: Project) => {
+    const campaigns = project.campaigns || [];
+
+    if (campaigns.length === 0) {
+      return null;
+    }
+
+    return (
+      <div className="flex items-center gap-2 text-zinc-300">
+        <Megaphone className="w-3.5 h-3.5 text-orange-500 shrink-0" />
+        <span className="truncate">
+          {campaigns.length === 1 ? (
+            campaigns[0].name
+          ) : (
+            <span>
+              {campaigns[0].name}{" "}
+              <span className="text-zinc-500">
+                +{campaigns.length - 1} more
+              </span>
+            </span>
+          )}
+        </span>
+      </div>
+    );
+  };
 
   if (loading) {
     return (
@@ -432,6 +471,9 @@ export function ProjectsPageClient({
                       </span>
                     </div>
 
+                    {/* ✅ Campaigns (many-to-many) */}
+                    {renderCampaigns(project)}
+
                     {project.contract && (
                       <div className="flex items-center gap-2 text-zinc-300">
                         <FileText className="w-3.5 h-3.5 text-purple-500 shrink-0" />
@@ -482,7 +524,7 @@ export function ProjectsPageClient({
 
                 {/* Tag Assignment Dropdown */}
                 {isTagAssignmentOpen && (
-                  <div 
+                  <div
                     className="absolute top-12 right-3 z-20 w-72 bg-zinc-950 border border-zinc-800 rounded-xl p-3 shadow-2xl"
                     onClick={(e) => e.stopPropagation()}
                   >
@@ -521,7 +563,9 @@ export function ProjectsPageClient({
                     {isAssigningTags && (
                       <div className="flex items-center justify-center py-2">
                         <Loader2 className="w-4 h-4 animate-spin text-purple-500" />
-                        <span className="ml-2 text-xs text-zinc-500">Assigning tags to all tasks...</span>
+                        <span className="ml-2 text-xs text-zinc-500">
+                          Assigning tags to all tasks...
+                        </span>
                       </div>
                     )}
 

@@ -109,27 +109,31 @@ export async function GET(
       orderBy: { createdAt: 'desc' },
     });
 
-    // ✅ Transform data to include brief approval status
+    // ✅ Transform data to include brief approval status and parse all feedback
     const transformedLinks = reviewLinks.map((link) => {
       // Check if brief was approved/rejected via review notes
       let briefApprovalStatus = 'PENDING';
       let briefFeedback = null;
       
+      // Parse reviewNotes for all feedback sections
+      let parsedFeedback = null;
       if (link.reviewNotes) {
         try {
-          const parsed = JSON.parse(link.reviewNotes);
-          if (parsed.brief) {
-            briefApprovalStatus = 'APPROVED';
-            briefFeedback = parsed.brief;
-          } else if (parsed.overview || parsed.overall) {
-            // If there's any feedback but no brief-specific, brief might not have been reviewed
-            briefApprovalStatus = 'PENDING';
-          }
+          parsedFeedback = JSON.parse(link.reviewNotes);
         } catch {
-          // If reviewNotes is plain text, check if brief was mentioned
-          if (link.reviewNotes.toLowerCase().includes('brief')) {
-            briefApprovalStatus = 'REVIEWED';
-          }
+          // If not JSON, it might be plain text
+          parsedFeedback = { overall: link.reviewNotes };
+        }
+      }
+
+      // Extract brief feedback
+      if (parsedFeedback) {
+        if (parsedFeedback.brief) {
+          briefApprovalStatus = 'APPROVED';
+          briefFeedback = parsedFeedback.brief;
+        } else if (parsedFeedback.overview || parsedFeedback.overall) {
+          // If there's any feedback but no brief-specific, brief might not have been reviewed
+          briefApprovalStatus = 'PENDING';
         }
       }
 
@@ -141,11 +145,24 @@ export async function GET(
         briefApprovalStatus = 'REVISIONS_REQUESTED';
       }
 
+      // ✅ Extract section statuses from parsed feedback
+      const sectionStatuses = parsedFeedback?.sectionStatuses || {};
+
       return {
         ...link,
         briefApprovalStatus,
         briefFeedback,
         hasBrief: !!link.concept.project.brief,
+        // ✅ Pass through all feedback sections for the frontend to display
+        feedbackSections: {
+          overview: parsedFeedback?.overview || null,
+          brief: parsedFeedback?.brief || null,
+          overall: parsedFeedback?.overall || null,
+          milestones: parsedFeedback?.milestones || null,
+          tasks: parsedFeedback?.tasks || null, // ✅ Added tasks
+          concepts: parsedFeedback?.concepts || null,
+          sectionStatuses: sectionStatuses,
+        },
       };
     });
 

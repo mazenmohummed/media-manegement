@@ -10,10 +10,24 @@ import { getCloudStorageService } from '@/lib/storage';
 const cloudStorage = getCloudStorageService();
 const clientShareService = new ClientShareService(cloudStorage);
 
-// Shared include shape for pulling the full project tree (milestones -> tasks ->
-// concepts -> assets -> latest version, plus direct tasks/concepts on the project).
-// Used by both GET and PATCH so asset lookups are never scoped to just the
-// review link's own concept.
+// ✅ FIX: Helper to recursively serialize BigInt to string/number
+function serializeBigInt(data: any): any {
+  if (data === null || data === undefined) return data;
+  if (typeof data === 'bigint') {
+    return data <= Number.MAX_SAFE_INTEGER ? Number(data) : data.toString();
+  }
+  if (Array.isArray(data)) return data.map(serializeBigInt);
+  if (typeof data === 'object') {
+    const result: any = {};
+    for (const key of Object.keys(data)) {
+      result[key] = serializeBigInt(data[key]);
+    }
+    return result;
+  }
+  return data;
+}
+
+// Shared include shape for pulling the full project tree
 const projectTreeInclude = {
   client: true,
   agency: true,
@@ -21,6 +35,7 @@ const projectTreeInclude = {
   milestones: {
     include: {
       tasks: {
+        where: { deletedAt: null },
         include: {
           concepts: {
             include: {
@@ -36,6 +51,7 @@ const projectTreeInclude = {
     },
   },
   tasks: {
+    where: { deletedAt: null },
     include: {
       concepts: {
         include: {
@@ -59,10 +75,7 @@ const projectTreeInclude = {
   },
 };
 
-// Build a flat map of every asset (with its latest version) across the whole
-// project tree: direct concepts, direct tasks' concepts, and milestone tasks'
-// concepts. Assets are only ever attached via a concept, so this covers every
-// asset a reviewer could see or approve.
+// Build a flat map of every asset
 function buildAssetMap(project: any): Map<string, any> {
   const map = new Map<string, any>();
   const collect = (assets: any[]) => assets?.forEach((a) => map.set(a.id, a));
@@ -258,6 +271,7 @@ export async function GET(
           brief: parsed.brief || null,
           overall: parsed.overall || null,
           milestones: parsed.milestones || null,
+          tasks: parsed.tasks || null,
           concepts: parsed.concepts || null,
         };
       } catch {
@@ -297,7 +311,8 @@ export async function GET(
       feedbackData: feedbackData,
     };
 
-    return NextResponse.json({
+    // ✅ FIX: Apply serializeBigInt to full payload
+    return NextResponse.json(serializeBigInt({
       link: {
         id: reviewLink.id,
         token: reviewLink.token,
@@ -322,7 +337,7 @@ export async function GET(
         name: reviewLink.client.clientName,
         email: reviewLink.client.email,
       },
-    });
+    }));
 
   } catch (error) {
     console.error('Error fetching review link:', error);
@@ -373,6 +388,12 @@ export async function PATCH(
             },
           },
         },
+        reviewLinkAssetApprovals: {
+          include: {
+            creativeAsset: true,
+            creativeAssetVersion: true,
+          },
+        },
       },
     });
 
@@ -398,15 +419,16 @@ export async function PATCH(
     }
 
     const project = reviewLink.concept.project;
-    // Flat map of every asset across the whole project tree, not just this
-    // review link's own concept — this is the fix: assets from milestones,
-    // direct tasks, and direct concepts were previously invisible here.
     const allAssetsMap = buildAssetMap(project);
+
+    const existingApprovalsMap = new Map();
+    reviewLink.reviewLinkAssetApprovals.forEach((approval: any) => {
+      existingApprovalsMap.set(approval.assetId, approval);
+    });
 
     const processedApprovals = [];
     const notifications = [];
 
-    // Process approvals
     for (const approval of approvals || []) {
       const { id, status, feedback, generalFeedback } = approval;
 
@@ -421,7 +443,7 @@ export async function PATCH(
           },
         });
 
-        if (status === 'REJECTED' || status === 'REVISIONS_REQUESTED') {
+        if (status === 'REVISIONS_REQUESTED') {
           const revisionTask = await prisma.task.create({
             data: {
               taskNo: `REV-${Date.now()}`,
@@ -432,6 +454,7 @@ export async function PATCH(
               priority: 'HIGH',
               projectId: reviewLink.concept.projectId,
               agencyId: reviewLink.agencyId,
+              deletedAt: null,
             },
           });
 
@@ -453,14 +476,15 @@ export async function PATCH(
         continue;
       }
 
-      // Handle asset approvals — look up across the whole project tree,
-      // not just reviewLink.concept's own assets.
+      // Handle asset approvals
       const asset = allAssetsMap.get(id);
-      if (!asset) continue; // not an asset id (could be a milestone/task/concept id with no persistence target)
+      if (!asset) {
+        continue;
+      }
 
-      const latestVersion = asset.versions?.[0];
+      const latestVersion = asset.versions && asset.versions.length > 0 ? asset.versions[0] : null;
+      const existingApproval = existingApprovalsMap.get(id);
 
-      // Update or create approval record
       const approvalRecord = await prisma.reviewLinkAssetApproval.upsert({
         where: {
           reviewLinkId_assetId: {
@@ -470,11 +494,11 @@ export async function PATCH(
         },
         update: {
           status,
-          feedback: feedback || null,
-          generalFeedback: generalFeedback || null,
+          feedback: feedback || existingApproval?.feedback || null,
+          generalFeedback: generalFeedback || existingApproval?.generalFeedback || null,
           approvedAt: status === 'APPROVED' ? new Date() : undefined,
           approvedBy: reviewerName || reviewerEmail || 'Anonymous',
-          versionId: latestVersion?.id,
+          versionId: latestVersion?.id || existingApproval?.versionId,
         },
         create: {
           reviewLinkId: reviewLink.id,
@@ -488,12 +512,12 @@ export async function PATCH(
         },
       });
 
-      // Also update the CreativeAssetVersion feedback
+      // Update CreativeAssetVersion status
       if (latestVersion) {
         let versionStatus: string;
         if (status === 'APPROVED') {
           versionStatus = 'APPROVED';
-        } else if (status === 'REVISIONS_REQUESTED' || status === 'REJECTED') {
+        } else if (status === 'REVISIONS_REQUESTED') {
           versionStatus = 'REJECTED';
         } else {
           versionStatus = 'CLIENT_REVIEW';
@@ -507,7 +531,8 @@ export async function PATCH(
           },
         });
 
-        if (status === 'REJECTED' || status === 'REVISIONS_REQUESTED') {
+        // Create revision task if revisions requested
+        if (status === 'REVISIONS_REQUESTED') {
           const revisionTask = await prisma.task.create({
             data: {
               taskNo: `REV-${Date.now()}`,
@@ -518,6 +543,7 @@ export async function PATCH(
               priority: 'HIGH',
               projectId: reviewLink.concept.projectId,
               agencyId: reviewLink.agencyId,
+              deletedAt: null,
             },
           });
 
@@ -548,16 +574,16 @@ export async function PATCH(
       processedApprovals.push(approvalRecord);
     }
 
-    // Store ALL feedback as structured JSON
     const feedbackJSON = {
       overview: projectFeedback?.overview || null,
       brief: projectFeedback?.brief || null,
       overall: projectFeedback?.overall || null,
       milestones: projectFeedback?.milestones || null,
+      tasks: projectFeedback?.tasks || null,
       concepts: projectFeedback?.concepts || null,
+      sectionStatuses: projectFeedback?.sectionStatuses || null,
     };
 
-    // Update review link with all feedback
     await prisma.reviewLink.update({
       where: { id: reviewLink.id },
       data: {
@@ -597,13 +623,14 @@ export async function PATCH(
 
     const allApproved = processedApprovals.every((a) => a.status === 'APPROVED');
 
-    return NextResponse.json({
+    // ✅ FIX: Apply serializeBigInt to response
+    return NextResponse.json(serializeBigInt({
       success: true,
       message: allApproved ? 'All items approved!' : 'Review submitted successfully',
       processedApprovals,
       allApproved,
       notificationsSent: notifications.length,
-    });
+    }));
 
   } catch (error) {
     console.error('Error submitting review:', error);
@@ -614,7 +641,7 @@ export async function PATCH(
   }
 }
 
-// DELETE - Deactivate review link
+// DELETE - Permanently delete review link
 export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ token: string }> }
@@ -622,25 +649,70 @@ export async function DELETE(
   try {
     const session = await getServerSession(authOptions);
     if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return NextResponse.json(
+        { error: 'Unauthorized' },
+        { status: 401 }
+      );
+    }
+
+    const agencyId = session.user?.agencyId;
+    if (!agencyId) {
+      return NextResponse.json(
+        { error: 'Agency ID not found' },
+        { status: 400 }
+      );
     }
 
     const { token } = await params;
+    if (!token) {
+      return NextResponse.json(
+        { error: 'Token is required' },
+        { status: 400 }
+      );
+    }
 
-    await prisma.reviewLink.update({
-      where: { token },
-      data: { isActive: false },
+    const reviewLink = await prisma.reviewLink.findFirst({
+      where: {
+        token,
+        agencyId: agencyId,
+      },
+      select: {
+        id: true,
+        token: true,
+        conceptId: true,
+        clientId: true,
+        isActive: true,
+      },
+    });
+
+    if (!reviewLink) {
+      return NextResponse.json(
+        { error: 'Review link not found or unauthorized' },
+        { status: 404 }
+      );
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.reviewLinkAssetApproval.deleteMany({
+        where: { reviewLinkId: reviewLink.id },
+      });
+
+      await tx.reviewLink.delete({
+        where: { id: reviewLink.id },
+      });
     });
 
     return NextResponse.json({
       success: true,
-      message: 'Review link deactivated',
+      message: 'Review link permanently deleted',
+      id: reviewLink.id,
+      token: reviewLink.token,
     });
 
   } catch (error) {
-    console.error('Error deactivating review link:', error);
+    console.error('Error deleting review link:', error);
     return NextResponse.json(
-      { error: 'Failed to deactivate review link' },
+      { error: 'Failed to delete review link' },
       { status: 500 }
     );
   }

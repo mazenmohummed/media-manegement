@@ -1,3 +1,4 @@
+// app/dashboard/projects/new/page.tsx
 import { db } from "@/lib/db";
 import { notFound, redirect } from "next/navigation";
 import { getServerSession } from "next-auth";
@@ -10,7 +11,7 @@ import { ProjectStatus } from "@prisma/client";
 import { TemplateProjectStarter } from "@/components/projects/template-project-starter";
 
 interface PageProps {
-  searchParams: Promise<{ template?: string }>;
+  searchParams: Promise<{ template?: string; campaignId?: string }>;
 }
 
 export default async function NewProjectPage({ searchParams }: PageProps) {
@@ -18,9 +19,9 @@ export default async function NewProjectPage({ searchParams }: PageProps) {
   if (!session?.user?.agencyId) return notFound();
 
   const agencyId = session.user.agencyId;
-  const { template: preselectedTemplateId } = await searchParams;
+  const { template: preselectedTemplateId, campaignId: preselectedCampaignId } = await searchParams;
 
-  const [clients, contracts, templates, eligibleUsers] = await Promise.all([
+  const [clients, contracts, campaigns, templates, eligibleUsers, campaign] = await Promise.all([
     db.client.findMany({
       where: { agencyId },
       select: { id: true, clientName: true, clientNo: true },
@@ -29,6 +30,18 @@ export default async function NewProjectPage({ searchParams }: PageProps) {
     db.contract.findMany({
       where: { agencyId, status: "ACTIVE" },
       select: { id: true, contractNo: true, name: true, clientId: true },
+      orderBy: { createdAt: "desc" },
+    }),
+    // ✅ Fetch all campaigns for the dropdown
+    db.campaign.findMany({
+      where: { agencyId, deletedAt: null },
+      select: { 
+        id: true, 
+        name: true, 
+        campaignNo: true,
+        status: true,
+        clientId: true,
+      },
       orderBy: { createdAt: "desc" },
     }),
     db.projectTemplate.findMany({
@@ -45,6 +58,12 @@ export default async function NewProjectPage({ searchParams }: PageProps) {
       select: { id: true, name: true, role: true },
       orderBy: { name: "asc" },
     }),
+    preselectedCampaignId 
+      ? db.campaign.findFirst({
+          where: { id: preselectedCampaignId, agencyId, deletedAt: null },
+          select: { id: true, name: true, clientId: true },
+        })
+      : Promise.resolve(null),
   ]);
 
   const selectedTemplate = preselectedTemplateId
@@ -61,6 +80,7 @@ export default async function NewProjectPage({ searchParams }: PageProps) {
     const projectName = formData.get("projectName") as string;
     const clientId = formData.get("clientId") as string;
     const contractId = formData.get("contractId") as string;
+    const campaignId = formData.get("campaignId") as string;
     const assignedUserId = formData.get("assignedUserId") as string;
     const currency = (formData.get("currency") as string) || "EGP";
     const totalValue = parseFloat(formData.get("totalValue") as string) || 0;
@@ -80,7 +100,6 @@ export default async function NewProjectPage({ searchParams }: PageProps) {
     const projectCount = await db.project.count({ where: { agencyId } });
     const projectNo = `PRJ-${new Date().getFullYear()}-${String(projectCount + 1).padStart(4, "0")}`;
 
-    // ✅ Remove userId field - it doesn't exist in the schema
     const project = await db.project.create({
       data: {
         projectNo,
@@ -92,12 +111,12 @@ export default async function NewProjectPage({ searchParams }: PageProps) {
         agencyId,
         clientId,
         contractId: contractId || undefined,
+        campaignId: campaignId || undefined,
         targetDeadline: targetDeadline ? new Date(targetDeadline) : undefined,
         projectStory: projectStory || undefined,
       },
     });
 
-    // ✅ Create resource allocation for assigned user if provided
     if (assignedUserId) {
       await db.resourceAllocation.create({
         data: {
@@ -110,25 +129,41 @@ export default async function NewProjectPage({ searchParams }: PageProps) {
       });
     }
 
-    redirect(`/dashboard/projects/${project.id}`);
+    // Redirect back to campaign if campaignId was provided
+    const redirectPath = campaignId 
+      ? `/dashboard/campaigns/${campaignId}`
+      : `/dashboard/projects/${project.id}`;
+    
+    redirect(redirectPath);
   }
+
+  // Helper to get campaign status color
+  const getCampaignStatusColor = (status: string) => {
+    const colors: Record<string, string> = {
+      PLANNED: 'text-blue-400',
+      ACTIVE: 'text-green-400',
+      PAUSED: 'text-yellow-400',
+      COMPLETED: 'text-gray-400',
+      CANCELLED: 'text-red-400',
+    };
+    return colors[status] || 'text-gray-400';
+  };
 
   return (
     <div className="max-w-3xl mx-auto p-6 space-y-6">
-      <Link href="/dashboard/projects" className="inline-flex items-center gap-2 text-sm text-zinc-400 hover:text-zinc-200 transition-colors">
-        <ArrowLeft className="w-4 h-4" /> Back to Projects
+      <Link href={preselectedCampaignId ? `/dashboard/campaigns/${preselectedCampaignId}` : "/dashboard/projects"} 
+        className="inline-flex items-center gap-2 text-sm text-zinc-400 hover:text-zinc-200 transition-colors">
+        <ArrowLeft className="w-4 h-4" /> 
+        Back to {preselectedCampaignId ? 'Campaign' : 'Projects'}
       </Link>
 
       <div>
         <h1 className="text-3xl font-bold text-zinc-100">New Project</h1>
         <p className="text-sm text-zinc-400 mt-1">
-          {selectedTemplate
-            ? "Quick-start from a template, or switch to manual setup."
-            : "Create a one-off project manually, or accelerate with a template."}
+          {campaign ? `Creating project for campaign: ${campaign.name}` : "Create a new project"}
         </p>
       </div>
 
-      {/* Template Mode */}
       {selectedTemplate && (
         <TemplateProjectStarter
           templateId={selectedTemplate.id}
@@ -137,7 +172,6 @@ export default async function NewProjectPage({ searchParams }: PageProps) {
         />
       )}
 
-      {/* Template Selector (when not preselected) */}
       {!selectedTemplate && templates.length > 0 && (
         <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 space-y-3">
           <h2 className="text-sm font-semibold text-zinc-200">Start from Template</h2>
@@ -145,7 +179,7 @@ export default async function NewProjectPage({ searchParams }: PageProps) {
             {templates.slice(0, 4).map((t) => (
               <Link
                 key={t.id}
-                href={`/dashboard/projects/new?template=${t.id}`}
+                href={`/dashboard/projects/new?template=${t.id}${campaign ? `&campaignId=${campaign.id}` : ''}`}
                 className="bg-zinc-950 border border-zinc-800 rounded-lg p-3 hover:border-purple-500/30 hover:bg-zinc-800/40 transition-all group"
               >
                 <div className="flex items-center justify-between">
@@ -162,13 +196,17 @@ export default async function NewProjectPage({ searchParams }: PageProps) {
         </div>
       )}
 
-      {/* Manual Form */}
       {!selectedTemplate && (
         <form action={createProject} className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 space-y-5">
           <h2 className="text-sm font-semibold text-zinc-200 flex items-center gap-2 border-b border-zinc-800 pb-3">
             <Briefcase className="w-4 h-4 text-blue-400" />
             Manual Project Setup
           </h2>
+
+          {/* Hidden campaignId input if coming from campaign */}
+          {campaign && (
+            <input type="hidden" name="campaignId" value={campaign.id} />
+          )}
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-1.5">
@@ -187,7 +225,9 @@ export default async function NewProjectPage({ searchParams }: PageProps) {
               <select name="clientId" required className="w-full bg-zinc-950 border border-zinc-800 rounded-md text-sm text-zinc-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500 appearance-none">
                 <option value="">Select client...</option>
                 {clients.map((c) => (
-                  <option key={c.id} value={c.id}>{c.clientName}{c.clientNo ? ` (${c.clientNo})` : ""}</option>
+                  <option key={c.id} value={c.id} selected={c.id === campaign?.clientId}>
+                    {c.clientName}{c.clientNo ? ` (${c.clientNo})` : ""}
+                  </option>
                 ))}
               </select>
             </div>
@@ -200,6 +240,39 @@ export default async function NewProjectPage({ searchParams }: PageProps) {
                 ))}
               </select>
             </div>
+          </div>
+
+          {/* ✅ NEW: Campaign selection field */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-zinc-400">Campaign</label>
+            {campaign ? (
+              // If coming from a campaign, show it as a disabled field
+              <div className="w-full bg-zinc-950 border border-zinc-800 rounded-md px-3 py-2 text-sm text-zinc-300">
+                {campaign.name} 
+                <span className="text-zinc-500 ml-2">(auto-selected from campaign page)</span>
+              </div>
+            ) : (
+              <select 
+                name="campaignId" 
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-md text-sm text-zinc-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500 appearance-none"
+              >
+                <option value="">No campaign (standalone project)</option>
+                {campaigns.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name} 
+                    {c.campaignNo && ` (${c.campaignNo})`}
+                    <span className={`ml-2 ${getCampaignStatusColor(c.status)}`}>
+                      • {c.status}
+                    </span>
+                  </option>
+                ))}
+              </select>
+            )}
+            <p className="text-[10px] text-zinc-500">
+              {campaign 
+                ? "This project will be linked to the campaign automatically" 
+                : "Optionally link this project to an existing campaign"}
+            </p>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -257,11 +330,11 @@ export default async function NewProjectPage({ searchParams }: PageProps) {
           </div>
 
           <div className="pt-4 border-t border-zinc-800 flex items-center justify-end gap-3">
-            <Link href="/dashboard/projects">
+            <Link href={campaign ? `/dashboard/campaigns/${campaign.id}` : "/dashboard/projects"}>
               <Button type="button" variant="outline" className="border-zinc-700 text-zinc-300 hover:bg-zinc-800">Cancel</Button>
             </Link>
             <Button type="submit" className="bg-purple-600 hover:bg-purple-500 text-white gap-1.5">
-              <Plus className="w-4 h-4" /> Create Empty Project
+              <Plus className="w-4 h-4" /> Create Project
             </Button>
           </div>
         </form>

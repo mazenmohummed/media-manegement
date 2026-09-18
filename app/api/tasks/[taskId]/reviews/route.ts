@@ -2,7 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/authOptions';
-import { db } from '@/lib/db';
+import { prisma } from '@/lib/prisma';
 
 export async function GET(
   req: NextRequest,
@@ -17,59 +17,84 @@ export async function GET(
     const { taskId } = await params;
 
     // Verify task exists and belongs to agency
-    const task = await db.task.findFirst({
+    const task = await prisma.task.findFirst({
       where: {
         id: taskId,
         agencyId: session.user.agencyId,
         deletedAt: null,
       },
-      select: { id: true },
+      select: {
+        id: true,
+      },
     });
 
     if (!task) {
       return NextResponse.json({ error: 'Task not found' }, { status: 404 });
     }
 
-    // Fetch all review approvals linked to this task through concepts and assets
-    const approvals = await db.reviewLinkAssetApproval.findMany({
+    // Get all concept IDs associated with this task.
+    // Concepts can be linked directly to the task or through a milestone.
+    const concepts = await prisma.concept.findMany({
       where: {
-        creativeAsset: {
-          concept: {
-            taskId: taskId,
+        OR: [
+          { taskId: taskId }, // Direct link
+          {
+            milestone: {
+              tasks: {
+                some: { id: taskId }, // Through milestone
+              },
+            },
           },
-        },
+        ],
         agencyId: session.user.agencyId,
       },
+      select: { id: true },
+    });
+
+    const conceptIdList = concepts.map((c) => c.id);
+
+    if (conceptIdList.length === 0) {
+      return NextResponse.json([]);
+    }
+
+    // ✅ Anchor on ReviewLink (not ReviewLinkAssetApproval) so task/project-level
+    // reviews show up even when the client didn't approve any individual asset.
+    const reviewLinks = await prisma.reviewLink.findMany({
+      where: {
+        conceptId: { in: conceptIdList },
+        agencyId: session.user.agencyId,
+        deletedAt: null,
+      },
       include: {
-        reviewLink: {
-          include: {
-            client: {
-              select: {
-                clientName: true,
-                email: true,
-              },
-            },
-            concept: {
-              select: {
-                id: true,
-                name: true,
-              },
-            },
+        client: {
+          select: {
+            clientName: true,
+            email: true,
           },
         },
-        creativeAsset: {
+        concept: {
           select: {
             id: true,
             name: true,
-            type: true,
           },
         },
-        creativeAssetVersion: {
-          select: {
-            id: true,
-            versionNo: true,
-            fileUrl: true,
-            createdAt: true,
+        reviewLinkAssetApprovals: {
+          include: {
+            creativeAsset: {
+              select: {
+                id: true,
+                name: true,
+                type: true,
+              },
+            },
+            creativeAssetVersion: {
+              select: {
+                id: true,
+                versionNo: true,
+                fileUrl: true,
+                createdAt: true,
+              },
+            },
           },
         },
       },
@@ -78,8 +103,42 @@ export async function GET(
       },
     });
 
-    return NextResponse.json(approvals);
+    // Parse reviewNotes once per ReviewLink and flatten to the shape the UI expects
+    const enriched = reviewLinks.map((link) => {
+      let reviewNotes: any = null;
+      let sectionStatuses: Record<string, string> | null = null;
 
+      if (link.reviewNotes) {
+        try {
+          const parsed = JSON.parse(link.reviewNotes);
+          reviewNotes = parsed;
+          sectionStatuses = parsed.sectionStatuses ?? null;
+        } catch {
+          reviewNotes = { overall: link.reviewNotes };
+        }
+      }
+
+      return {
+        reviewLink: {
+          id: link.id,
+          token: link.token,
+          status: link.status,
+          isActive: link.isActive,
+          reviewedAt: link.reviewedAt,
+          reviewNotes: link.reviewNotes,
+          createdAt: link.createdAt,
+          client: link.client,
+          concept: link.concept,
+        },
+        reviewNotes,
+        sectionStatuses,
+        // Per-asset approvals if any exist; empty is fine — task-level feedback
+        // still comes through via sectionStatuses/reviewNotes above.
+        assetApprovals: link.reviewLinkAssetApprovals,
+      };
+    });
+
+    return NextResponse.json(enriched);
   } catch (error) {
     console.error('Error fetching task reviews:', error);
     return NextResponse.json(

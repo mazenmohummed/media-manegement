@@ -178,10 +178,12 @@ export function CreativeAssetsTab({ projectId }: CreativeAssetsTabProps) {
       const response = await fetch(`/api/projects/${projectId}/creative-assets`);
       if (!response.ok) throw new Error('Failed to fetch assets');
       const data = await response.json();
-      setAssets(data);
+      // ✅ Ensure data is an array
+      setAssets(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error('Error fetching assets:', error);
       toast.error('Failed to load creative assets');
+      setAssets([]);
     } finally {
       setLoading(false);
     }
@@ -192,9 +194,11 @@ export function CreativeAssetsTab({ projectId }: CreativeAssetsTabProps) {
       const response = await fetch(`/api/projects/${projectId}/concepts`);
       if (!response.ok) throw new Error('Failed to fetch concepts');
       const data = await response.json();
-      setConcepts(data);
+      // ✅ Ensure data is an array
+      setConcepts(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error('Error fetching concepts:', error);
+      setConcepts([]);
     }
   };
 

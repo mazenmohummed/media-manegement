@@ -324,6 +324,7 @@ enum AuditAction {
     PAYOUT_TRIGGERED
     WARNING
     ALERT
+    VIEW
 }
 
 enum CreditNoteReason {
@@ -502,6 +503,18 @@ enum CreativeAssetType {
     AUDIO
     DOCUMENT
     OTHER
+    RAW_FOOTAGE
+    PROXY_FOOTAGE
+    EXPORT_MASTER
+    EXPORT_HIGH_RES
+    EXPORT_WEB
+    AUDIO_RAW
+    AUDIO_MIX
+    AUDIO_MASTER
+    MOTION_GRAPHICS
+    VFX
+    COLOR_GRADE
+    SUBTITLES
 }
 
 enum CreativeAssetVersionStatus {
@@ -659,6 +672,10 @@ model DiscoveryPersona {
     goals          String?
     frustrations   String?
 
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
+
     opportunityId String
     opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
 }
@@ -671,17 +688,24 @@ model DiscoveryCompetitor {
     pricingNote String?
     marketShare String?
 
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
+
     opportunityId String
     opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
 }
 
 model DiscoveryProduct {
-    id         String  @id @default(cuid())
+    id         String    @id @default(cuid())
     name       String
     sku        String?
     price      Float?
     usp        String?
     painPoints String?
+    createdAt  DateTime  @default(now())
+    updatedAt  DateTime  @updatedAt
+    deletedAt  DateTime?
 
     opportunityId String
     opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
@@ -708,7 +732,7 @@ model Agency {
     addressDetails  Address?
 
     // ✅ HYBRID STORAGE CONFIGURATION
-    storageStrategy   StorageStrategy @default(HYBRID)
+    storageStrategy   StorageStrategy @default(LOCAL_ONLY)
     localStoragePath  String? // e.g., "/mnt/agency-storage"
     localBaseUrl      String? // e.g., "https://agency-files.com"
     syncEnabled       Boolean         @default(true)
@@ -804,6 +828,8 @@ model Agency {
     employeeDeductions EmployeeDeduction[]
     payslips           Payslip[]
     reviewLinks        ReviewLink[]
+    uploadSessions     UploadSession[]
+    agencyIntegrations AgencyIntegration[]
 
     @@index([agencyName])
 }
@@ -850,6 +876,8 @@ model AgencyInvoice {
     periodStart     DateTime
     periodEnd       DateTime
     createdAt       DateTime            @default(now())
+    updatedAt       DateTime            @updatedAt
+    deletedAt       DateTime?
 
     @@index([agencyId, createdAt])
 }
@@ -871,8 +899,9 @@ model Coupon {
     agency        Agency?        @relation(fields: [agencyId], references: [id])
     subscriptions Subscription[]
 
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
 
     @@index([isActive, validUntil])
 }
@@ -889,6 +918,8 @@ model Invitation {
     sentBy     User?     @relation("InvitationsSent", fields: [sentById], references: [id])
     agency     Agency    @relation(fields: [agencyId], references: [id])
     createdAt  DateTime  @default(now())
+    updatedAt  DateTime  @updatedAt
+    deletedAt  DateTime?
     user       User?     @relation("InvitationsAccepted", fields: [userId], references: [id])
     userId     String?
 
@@ -954,6 +985,7 @@ model Department {
     users          User[]
     createdAt      DateTime       @default(now())
     updatedAt      DateTime       @updatedAt
+    deletedAt      DateTime?
     taskCategories TaskCategory[]
 
     @@unique([agencyId, name])
@@ -1048,8 +1080,9 @@ model FinancialTransaction {
     taskId String?
     task   Task?   @relation(fields: [taskId], references: [id])
 
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
 
     @@index([userId, status])
     @@index([taskId])
@@ -1082,6 +1115,7 @@ model AttendanceLog {
     taskSessions       TaskSession[]
     createdAt          DateTime            @default(now())
     updatedAt          DateTime            @updatedAt
+    deletedAt          DateTime?
     employeeDeductions EmployeeDeduction[]
 
     @@unique([userId, date])
@@ -1105,8 +1139,9 @@ model TaskSession {
     isBillable Boolean @default(true)
     hourlyRate Float?
 
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
 
     @@index([taskId, userId])
 }
@@ -1126,7 +1161,9 @@ model Payout {
     agencyId String
     agency   Agency @relation(fields: [agencyId], references: [id])
 
-    createdAt DateTime @default(now())
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
 
     @@index([agencyId, date])
     @@index([userId])
@@ -1142,7 +1179,9 @@ model Holiday {
     agencyId String
     agency   Agency @relation(fields: [agencyId], references: [id])
 
-    createdAt DateTime @default(now())
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
 
     @@unique([agencyId, name, date])
     @@index([agencyId, date])
@@ -1165,8 +1204,9 @@ model PerformanceReview {
     agencyId   String
     agency     Agency  @relation(fields: [agencyId], references: [id])
 
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
 
     @@index([userId, periodStart])
     @@index([agencyId])
@@ -1197,8 +1237,9 @@ model PayrollSetting {
     autoCheckoutEnabled Boolean @default(true)
     autoCheckoutHours   Float   @default(12.0)
 
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
 }
 
 model PayrollPeriod {
@@ -1225,8 +1266,9 @@ model PayrollPeriod {
 
     payrollRecords PayrollRecord[]
 
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
 
     @@unique([agencyId, periodStart, periodEnd])
     @@index([agencyId, status])
@@ -1294,8 +1336,9 @@ model PayrollRecord {
     payslipId String?  @unique
     payslip   Payslip? @relation(fields: [payslipId], references: [id])
 
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
 
     @@index([employeeId, periodStart])
     @@index([agencyId, status])
@@ -1327,6 +1370,7 @@ model DeductionRule {
 
     createdAt          DateTime            @default(now())
     updatedAt          DateTime            @updatedAt
+    deletedAt          DateTime?
     employeeDeductions EmployeeDeduction[]
 
     @@index([agencyId, isActive])
@@ -1358,8 +1402,9 @@ model EmployeeDeduction {
     employee User   @relation(fields: [employeeId], references: [id])
     agency   Agency @relation(fields: [agencyId], references: [id])
 
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
 
     @@index([employeeId, date])
     @@index([agencyId])
@@ -1408,10 +1453,11 @@ model Payslip {
     payrollRecordId String?        @unique
     payrollRecord   PayrollRecord? @relation
 
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
-    agency    Agency   @relation(fields: [agencyId], references: [id])
-    user      User?    @relation(fields: [userId], references: [id])
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
+    agency    Agency    @relation(fields: [agencyId], references: [id])
+    user      User?     @relation(fields: [userId], references: [id])
     userId    String?
 
     @@index([employeeId, payPeriod])
@@ -1468,7 +1514,9 @@ model LeadInteraction {
     createdById String?
     createdBy   User?   @relation("InteractionCreator", fields: [createdById], references: [id])
 
-    createdAt DateTime @default(now())
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
 
     @@index([leadId, occurredAt])
 }
@@ -1509,8 +1557,9 @@ model Opportunity {
     clientId String?
     client   Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
 
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
 
     @@index([agencyId, stage])
 }
@@ -1543,8 +1592,9 @@ model Proposal {
     contractId String?   @unique
     contract   Contract? @relation(fields: [contractId], references: [id])
 
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
 
     @@index([agencyId, status])
     @@index([clientId])
@@ -1560,8 +1610,9 @@ model ProposalLineItem {
     proposalId String
     proposal   Proposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
 
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
 }
 
 model Client {
@@ -1632,8 +1683,9 @@ model ClientBudget {
     agencyId String
     agency   Agency @relation(fields: [agencyId], references: [id])
 
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
 
     @@index([clientId, isActive])
 }
@@ -1649,26 +1701,28 @@ model ReportingPeriod {
     agencyId String
     agency   Agency @relation(fields: [agencyId], references: [id])
 
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
 
     @@unique([agencyId, name])
     @@index([agencyId, periodStart, periodEnd])
 }
 
 model ClientContact {
-    id          String   @id @default(cuid())
+    id          String    @id @default(cuid())
     name        String
     title       String?
     email       String?
     phoneNumber String?
-    isPrimary   Boolean  @default(false)
+    isPrimary   Boolean   @default(false)
     clientId    String
-    client      Client   @relation(fields: [clientId], references: [id])
+    client      Client    @relation(fields: [clientId], references: [id])
     agencyId    String
-    agency      Agency   @relation(fields: [agencyId], references: [id])
-    createdAt   DateTime @default(now())
-    updatedAt   DateTime @updatedAt
+    agency      Agency    @relation(fields: [agencyId], references: [id])
+    createdAt   DateTime  @default(now())
+    updatedAt   DateTime  @updatedAt
+    deletedAt   DateTime?
 
     @@index([clientId])
 }
@@ -1701,7 +1755,10 @@ model ReviewLink {
 
     createdAt                DateTime                  @default(now())
     updatedAt                DateTime                  @updatedAt
+    deletedAt                DateTime?
     reviewLinkAssetApprovals ReviewLinkAssetApproval[]
+
+    agencyDeletedAt DateTime? // Optional: hard-cascade or soft-delete protection
 
     @@index([token])
     @@index([conceptId])
@@ -1728,9 +1785,10 @@ model ReviewLinkAssetApproval {
     revisionTaskId String? // Task created for revisions
     revisionTask   Task?   @relation(fields: [revisionTaskId], references: [id])
 
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
-    agency    Agency?  @relation(fields: [agencyId], references: [id])
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
+    agency    Agency?   @relation(fields: [agencyId], references: [id])
     agencyId  String?
 
     @@unique([reviewLinkId, assetId])
@@ -1764,6 +1822,7 @@ model Contract {
 
     createdAt DateTime  @default(now())
     updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
     proposal  Proposal?
 
     @@index([agencyId, contractNo])
@@ -1787,6 +1846,7 @@ model RecurringTaskDefinition {
     isActive       Boolean       @default(true)
     createdAt      DateTime      @default(now())
     updatedAt      DateTime      @updatedAt
+    deletedAt      DateTime?
 }
 
 model Campaign {
@@ -1804,11 +1864,12 @@ model Campaign {
     agency             Agency              @relation(fields: [agencyId], references: [id])
     clientId           String
     client             Client              @relation(fields: [clientId], references: [id])
-    projects           Project[]
+    projects           Project[]           @relation("ProjectCampaigns")
     digitalAdCampaigns DigitalAdCampaign[]
 
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
 
     @@index([agencyId, campaignNo])
     @@index([agencyId, status])
@@ -1832,11 +1893,10 @@ model Project {
     agency     Agency    @relation(fields: [agencyId], references: [id])
     clientId   String
     client     Client    @relation(fields: [clientId], references: [id])
-    campaignId String?
-    campaign   Campaign? @relation(fields: [campaignId], references: [id])
     contractId String?
     contract   Contract? @relation(fields: [contractId], references: [id])
 
+    campaigns       Campaign[]           @relation("ProjectCampaigns")
     brief           CreativeBrief?
     milestones      Milestone[]
     tasks           Task[]
@@ -1883,6 +1943,7 @@ model CreativeBrief {
     project      Project     @relation(fields: [projectId], references: [id])
     createdAt    DateTime    @default(now())
     updatedAt    DateTime    @updatedAt
+    deletedAt    DateTime?
 }
 
 model Milestone {
@@ -1910,9 +1971,11 @@ model Milestone {
 
     tasks Task[]
 
-    createdAt DateTime  @default(now())
-    updatedAt DateTime  @updatedAt
-    concepts  Concept[]
+    createdAt      DateTime        @default(now())
+    updatedAt      DateTime        @updatedAt
+    deletedAt      DateTime?
+    concepts       Concept[]
+    creativeAssets CreativeAsset[]
 
     @@index([projectId, order])
     @@index([agencyId, status])
@@ -1929,8 +1992,9 @@ model ProjectTemplate {
     agency   Agency                @relation(fields: [agencyId], references: [id])
     items    ProjectTemplateItem[]
 
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
 
     @@unique([agencyId, name])
 }
@@ -1949,7 +2013,8 @@ model ProjectTemplateItem {
     templateId String
     template   ProjectTemplate @relation(fields: [templateId], references: [id])
 
-    createdAt DateTime @default(now())
+    createdAt DateTime  @default(now())
+    deletedAt DateTime?
 
     @@index([templateId, order])
 }
@@ -1971,6 +2036,7 @@ model TaskCategory {
     department    Department?               @relation(fields: [departmentId], references: [id])
     createdAt     DateTime                  @default(now())
     updatedAt     DateTime                  @updatedAt
+    deletedAt     DateTime?
 
     @@unique([agencyId, name])
 }
@@ -2054,6 +2120,7 @@ model Task {
     updatedAt                DateTime                  @updatedAt
     deletedAt                DateTime?
     reviewLinkAssetApprovals ReviewLinkAssetApproval[]
+    creativeAssets           CreativeAsset[]
 
     @@index([agencyId, taskNo])
     @@index([agencyId, status])
@@ -2089,8 +2156,9 @@ model TaskPlannedExpense {
 
     actualExpenses TaskExpense[]
 
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
 
     @@index([taskId, status])
     @@index([agencyId, category])
@@ -2118,8 +2186,9 @@ model TaskExpense {
     agencyId         String
     agency           Agency              @relation(fields: [agencyId], references: [id])
 
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
 
     @@index([taskId, status])
     @@index([projectId])
@@ -2127,14 +2196,15 @@ model TaskExpense {
 }
 
 model CommentMention {
-    id        String   @id @default(cuid())
+    id        String    @id @default(cuid())
     commentId String
-    comment   Comment  @relation(fields: [commentId], references: [id], onDelete: Cascade)
+    comment   Comment   @relation(fields: [commentId], references: [id], onDelete: Cascade)
     userId    String
-    user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+    user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
     agencyId  String
-    agency    Agency   @relation(fields: [agencyId], references: [id])
-    createdAt DateTime @default(now())
+    agency    Agency    @relation(fields: [agencyId], references: [id])
+    createdAt DateTime  @default(now())
+    deletedAt DateTime?
 
     @@unique([commentId, userId])
     @@index([userId])
@@ -2155,6 +2225,8 @@ model Comment {
     agencyId        String
     agency          Agency           @relation(fields: [agencyId], references: [id], onDelete: Cascade)
     createdAt       DateTime         @default(now())
+    updatedAt       DateTime         @updatedAt
+    deletedAt       DateTime?
     commentMentions CommentMention[]
 
     @@index([taskId])
@@ -2178,8 +2250,9 @@ model Todo {
     createdById String?
     createdBy   User?   @relation("TodoCreator", fields: [createdById], references: [id])
 
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
 
     @@index([taskId, completed])
 }
@@ -2192,10 +2265,13 @@ model Tag {
     agencyId String
     agency   Agency @relation(fields: [agencyId], references: [id])
 
-    tasks    Task[]    @relation("TaskTags")
-    projects Project[] @relation("ProjectTags")
+    tasks          Task[]          @relation("TaskTags")
+    projects       Project[]       @relation("ProjectTags")
+    creativeAssets CreativeAsset[] @relation("CreativeAssetTags") // ✅ Add this
 
-    createdAt DateTime @default(now())
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
 
     @@unique([agencyId, name])
 }
@@ -2214,8 +2290,10 @@ model Concept {
 
     assets CreativeAsset[]
 
-    createdAt   DateTime     @default(now())
-    updatedAt   DateTime     @updatedAt
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
+
     comments    Comment[]
     reviewLinks ReviewLink[]
     task        Task?        @relation(fields: [taskId], references: [id])
@@ -2229,6 +2307,7 @@ model Concept {
     @@index([taskId])
 }
 
+// Add to CreativeAsset model
 model CreativeAsset {
     id          String            @id @default(cuid())
     name        String
@@ -2242,31 +2321,56 @@ model CreativeAsset {
 
     versions CreativeAssetVersion[]
 
-    // ✅ Add these fields for sync tracking
+    // ✅ Production stage tagging (using Tags from Phase 2)
+    productionStage String? // pre-production, shooting, editing, color_grading, sound_design, motion_graphics, vfx, final_delivery
+
+    // ✅ Task/Milestone traceability
+    taskId      String?
+    task        Task?      @relation(fields: [taskId], references: [id])
+    milestoneId String?
+    milestone   Milestone? @relation(fields: [milestoneId], references: [id])
+
+    // ✅ Sync tracking
     isSynced   Boolean    @default(false)
     syncedAt   DateTime?
     syncStatus SyncStatus @default(NOT_SYNCED)
 
-    // Cloud copies (for collaboration)
     cloudVersionIds String[] // IDs of versions synced to cloud
 
-    // Access control
     clientAccessible Boolean @default(false)
     clientAccessUrl  String? // Shared link for client
 
-    createdAt                DateTime                  @default(now())
-    updatedAt                DateTime                  @updatedAt
+    // ✅ Production metadata
+    productionMetadata Json? // Camera settings, shoot date, director, DP, etc.
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    // ✅ Soft delete support - no @default needed for nullable fields
+    deletedAt DateTime?
+
     reviewLinkAssetApprovals ReviewLinkAssetApproval[]
+    uploadSessions           UploadSession[]
+
+    // ✅ Add tags relation
+    tags Tag[] @relation("CreativeAssetTags")
 
     @@index([conceptId])
+    @@index([taskId])
+    @@index([milestoneId])
+    @@index([productionStage])
+    @@index([deletedAt]) // Add index for soft delete queries
 }
 
 model CreativeAssetVersion {
-    id        String                     @id @default(cuid())
-    versionNo Int                        @default(1)
-    fileUrl   String?
-    status    CreativeAssetVersionStatus @default(DRAFT)
-    feedback  String?                    @db.Text // ✅ Make it Text for longer feedback
+    id        String @id @default(cuid())
+    versionNo Int    @default(1)
+
+    uploadKey String? @unique // Generated for multipart upload, prevents duplicate sessions
+
+    fileUrl  String?
+    status   CreativeAssetVersionStatus @default(DRAFT)
+    feedback String?                    @db.Text
 
     creativeAssetId String
     creativeAsset   CreativeAsset @relation(fields: [creativeAssetId], references: [id])
@@ -2275,13 +2379,17 @@ model CreativeAssetVersion {
     agencyId        String
     agency          Agency        @relation(fields: [agencyId], references: [id])
 
-    createdAt                DateTime                  @default(now())
-    updatedAt                DateTime                  @updatedAt // ✅ Add updatedAt for tracking review timestamps
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    // ✅ Soft delete support - no @default needed for nullable fields
+    deletedAt DateTime?
+
     reviewLinkAssetApprovals ReviewLinkAssetApproval[]
 
-    // ✅ HYBRID STORAGE - Two locations
-    localFileUrl   String? // Path on agency's server
-    cloudFileUrl   String? // Path on your cloud (if synced)
+    // ✅ Hybrid storage (local + cloud)
+    localFileUrl   String?
+    cloudFileUrl   String?
     primaryStorage StorageType @default(LOCAL)
 
     // ✅ Sync tracking
@@ -2289,12 +2397,65 @@ model CreativeAssetVersion {
     syncedAt        DateTime?
     cloudSyncId     String?
 
-    // File metadata
-    fileSize BigInt?
-    fileHash String? // For deduplication
+    // ✅ File metadata (important for large production files)
+    fileSize      BigInt?
+    fileHash      String? // For deduplication
+    mimeType      String?
+    duration      Float? // For video/audio files in seconds
+    resolution    String? // e.g., "1920x1080"
+    frameRate     Float? // e.g., 23.976, 29.97, 59.94
+    bitrate       Float? // In Mbps
+    codec         String? // e.g., "H.264", "ProRes", "DNxHD"
+    audioChannels Int? // 2, 5.1, 7.1
+
+    // ✅ Processing status for large files
+    processingStatus String? // "pending", "processing", "completed", "failed"
+    processingError  String?
+    failedAttempts   Int       @default(0)
+    processedAt      DateTime?
+
+    // ✅ Thumbnail for preview
+    thumbnailUrl   String?
+    uploadSessions UploadSession[]
 
     @@index([creativeAssetId, versionNo])
     @@index([agencyId])
+    @@index([deletedAt]) // Add index for soft delete queries
+}
+
+model UploadSession {
+    id                   String                @id @default(cuid())
+    assetId              String
+    creativeAsset        CreativeAsset         @relation(fields: [assetId], references: [id])
+    versionId            String?
+    creativeAssetVersion CreativeAssetVersion? @relation(fields: [versionId], references: [id])
+
+    // Upload tracking
+    uploadId       String @unique // Multipart upload ID
+    totalSize      BigInt
+    uploadedSize   BigInt @default(0)
+    partCount      Int    @default(0)
+    completedParts Int    @default(0)
+
+    status String @default("in_progress") // in_progress, completed, failed, expired
+
+    // Resumable upload
+    resumableUrl String?
+    expiresAt    DateTime
+
+    // Metadata
+    fileName String
+    mimeType String?
+    agencyId String
+    agency   Agency  @relation(fields: [agencyId], references: [id])
+
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
+
+    @@index([assetId])
+    @@index([status])
+    @@index([expiresAt])
 }
 
 model DigitalAdCampaign {
@@ -2308,22 +2469,37 @@ model DigitalAdCampaign {
     utmSource       String?
     utmMedium       String?
     utmCampaign     String?
+    utmTerm         String?
+    utmContent      String?
     pixelId         String?
     audienceSegment String?
     startDate       DateTime?
     endDate         DateTime?
 
-    projectId  String
-    project    Project   @relation(fields: [projectId], references: [id])
+    // Meta specific
+    metaAdAccountId String?
+    metaCampaignId  String?
+
+    // Google Ads specific
+    googleCustomerId String?
+    googleCampaignId String?
+
+    // Sync tracking
+    lastSyncedAt DateTime?
+    syncStatus   String? // synced, failed, pending
+
+    projectId  String?
+    project    Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
     campaignId String?
-    campaign   Campaign? @relation(fields: [campaignId], references: [id])
+    campaign   Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
     agencyId   String
     agency     Agency    @relation(fields: [agencyId], references: [id])
 
     metrics AdMetricSnapshot[]
 
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
 
     @@index([projectId])
     @@index([agencyId, status])
@@ -2345,15 +2521,38 @@ model AdMetricSnapshot {
     leads       Int      @default(0)
     engagement  Int      @default(0)
 
+    syncedAt DateTime? // When this was last synced from API
+    source   String? // manual, meta_api, google_api, csv_import
+
     adCampaignId String
     adCampaign   DigitalAdCampaign @relation(fields: [adCampaignId], references: [id])
     agencyId     String
     agency       Agency            @relation(fields: [agencyId], references: [id])
 
-    createdAt DateTime @default(now())
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
 
     @@unique([adCampaignId, date])
     @@index([agencyId, date])
+}
+
+model AgencyIntegration {
+    id          String    @id @default(cuid())
+    agencyId    String
+    agency      Agency    @relation(fields: [agencyId], references: [id])
+    platform    String // META, GOOGLE_ADS, TIKTOK, etc.
+    credentials String    @db.Text // Encrypted JSON
+    isActive    Boolean   @default(true)
+    lastUsedAt  DateTime?
+    lastError   String?
+    lastErrorAt DateTime?
+    expiresAt   DateTime?
+    createdAt   DateTime  @default(now())
+    updatedAt   DateTime  @updatedAt
+
+    @@unique([agencyId, platform])
+    @@index([agencyId, isActive])
 }
 
 model KnowledgeArticle {
@@ -2368,8 +2567,9 @@ model KnowledgeArticle {
     projectId String?
     project   Project? @relation(fields: [projectId], references: [id])
 
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
 
     @@index([agencyId, type])
 }
@@ -2391,7 +2591,9 @@ model Report {
     clientId  String?
     client    Client?  @relation(fields: [clientId], references: [id])
 
-    createdAt DateTime @default(now())
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
 
     @@index([agencyId, type])
     @@index([projectId])
@@ -2414,8 +2616,9 @@ model ResourceAllocation {
     agencyId  String
     agency    Agency  @relation(fields: [agencyId], references: [id])
 
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
 
     @@index([userId, startDate])
     @@index([projectId])
@@ -2458,8 +2661,9 @@ model ClientInvoice {
 
     creditNotes CreditNote[]
 
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
 
     @@unique([agencyId, invoiceNo])
     @@index([clientId, status])
@@ -2482,7 +2686,9 @@ model ClientInvoiceItem {
     taskId    String?
     task      Task?         @relation(fields: [taskId], references: [id])
 
-    createdAt DateTime @default(now())
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
 }
 
 model Payment {
@@ -2508,8 +2714,9 @@ model Payment {
     allocations    PaymentAllocation[]
     statementLines ClientStatementLine[]
 
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
 
     @@index([agencyId, paymentNo])
     @@index([clientId, datePaid])
@@ -2534,8 +2741,9 @@ model PaymentAllocation {
     invoiceId String
     invoice   ClientInvoice @relation(fields: [invoiceId], references: [id])
 
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
 
     @@index([paymentId])
     @@index([invoiceId])
@@ -2566,8 +2774,9 @@ model ClientStatement {
     client   Client                @relation(fields: [clientId], references: [id])
     lines    ClientStatementLine[]
 
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
 
     @@unique([agencyId, statementNo])
     @@index([clientId, periodStart, periodEnd])
@@ -2591,7 +2800,9 @@ model ClientStatementLine {
     paymentId   String?
     payment     Payment?        @relation(fields: [paymentId], references: [id])
 
-    createdAt DateTime @default(now())
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
 
     @@index([statementId, sortOrder])
     @@index([invoiceId])
@@ -2617,6 +2828,7 @@ model CreditNote {
     issuedAt  DateTime?
     createdAt DateTime  @default(now())
     updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
 
     @@unique([agencyId, creditNoteNo])
     @@index([clientId])
@@ -2643,8 +2855,9 @@ model RecurringInvoiceSchedule {
     lastGeneratedInvoiceId String?
     lastRunAt              DateTime?
 
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
 
     @@index([agencyId, nextRunDate])
     @@index([clientId])
@@ -2661,7 +2874,9 @@ model ExchangeRate {
     agencyId String
     agency   Agency @relation(fields: [agencyId], references: [id])
 
-    createdAt DateTime @default(now())
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
 
     @@unique([agencyId, baseCurrency, quoteCurrency, effectiveDate])
     @@index([agencyId, effectiveDate])
@@ -2701,8 +2916,9 @@ model Vendor {
     plannedPurchaseOrders       PlannedPurchaseOrder[]
     plannedPurchaseOrderVendors PlannedPurchaseOrderVendor[]
 
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
 
     @@index([agencyId, vendorNo])
     @@index([agencyId, name])
@@ -2718,8 +2934,9 @@ model VendorCategory {
     agency      Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
     vendors     Vendor[] @relation("VendorCategoryRelation")
 
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
 
     @@unique([agencyId, name])
     @@index([agencyId])
@@ -2747,9 +2964,10 @@ model Quotation {
     purchaseOrders PurchaseOrder[]
     plannedOrders  PlannedPurchaseOrder[]
 
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
-    vendor    Vendor?  @relation(fields: [vendorId], references: [id])
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
+    vendor    Vendor?   @relation(fields: [vendorId], references: [id])
     vendorId  String?
 
     @@index([agencyId, status])
@@ -2789,8 +3007,9 @@ model PlannedPurchaseOrder {
     vendors PlannedPurchaseOrderVendor[] @relation("PlannedPOVendors")
     items   PlannedPurchaseOrderItem[]
 
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
 
     @@index([quotationId])
     @@index([agencyId])
@@ -2816,7 +3035,9 @@ model PlannedPurchaseOrderItem {
     plannedPurchaseOrderId String
     plannedPurchaseOrder   PlannedPurchaseOrder @relation(fields: [plannedPurchaseOrderId], references: [id], onDelete: Cascade)
 
-    createdAt DateTime @default(now())
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
 }
 
 model PurchaseOrder {
@@ -2846,6 +3067,7 @@ model PurchaseOrder {
 
     createdAt                DateTime                  @default(now())
     updatedAt                DateTime                  @updatedAt
+    deletedAt                DateTime?
     vendorPerformanceReviews VendorPerformanceReview[]
 
     @@unique([agencyId, poNo])
@@ -2864,7 +3086,9 @@ model PurchaseOrderItem {
     purchaseOrderId String
     purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id])
 
-    createdAt DateTime @default(now())
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
 }
 
 model VendorPerformanceReview {
@@ -2883,7 +3107,9 @@ model VendorPerformanceReview {
     purchaseOrderId String?
     purchaseOrder   PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id])
 
-    createdAt DateTime @default(now())
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
 
     @@index([vendorId])
 }
@@ -2928,8 +3154,9 @@ model Expense {
     userId   String?
     user     User?   @relation(fields: [userId], references: [id])
 
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
 
     @@index([agencyId, expenseNo])
     @@index([agencyId, date])
@@ -2954,6 +3181,7 @@ model Notification {
 
     createdAt DateTime  @default(now())
     readAt    DateTime?
+    deletedAt DateTime?
 
     @@index([userId, isRead])
     @@index([agencyId])
@@ -2977,7 +3205,9 @@ model Attachment {
     taskId    String?
     task      Task?    @relation(fields: [taskId], references: [id], onDelete: Cascade)
 
-    createdAt DateTime @default(now())
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
 
     @@index([agencyId, createdAt])
     @@index([projectId])
@@ -3001,6 +3231,8 @@ model AuditLog {
 
     timestamp DateTime @default(now())
 
+    deletedAt DateTime?
+
     @@index([agencyId, entityType, entityId])
     @@index([actorId, timestamp])
 }
@@ -3016,8 +3248,9 @@ model Webhook {
     agencyId String
     agency   Agency @relation(fields: [agencyId], references: [id], onDelete: Cascade)
 
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
 
     @@index([agencyId, isActive])
 }
@@ -3035,8 +3268,9 @@ model Announcement {
     authorId String?
     author   User?   @relation(fields: [authorId], references: [id])
 
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
 
     @@index([agencyId, publishAt])
 }
@@ -3056,8 +3290,9 @@ model ApprovalRequest {
     deciderId   String?
     decider     User?   @relation("ApprovalDecider", fields: [deciderId], references: [id])
 
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
 
     @@index([agencyId, entityType, entityId])
     @@index([status])
@@ -3075,7 +3310,9 @@ model EmailLog {
     agencyId String?
     agency   Agency? @relation(fields: [agencyId], references: [id])
 
-    createdAt DateTime @default(now())
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
 
     @@index([agencyId, createdAt])
     @@index([toEmail])
@@ -3093,7 +3330,9 @@ model ClientFeedback {
     projectId String?
     project   Project? @relation(fields: [projectId], references: [id])
 
-    createdAt DateTime @default(now())
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
 
     @@index([clientId])
     @@index([projectId])

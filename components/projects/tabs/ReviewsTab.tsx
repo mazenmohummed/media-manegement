@@ -26,6 +26,12 @@ import {
   GitBranch,
   Lightbulb,
   Search,
+  LinkIcon,
+  ListChecks,
+  Camera,
+  Clapperboard,
+  Film,
+  Mic,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { Badge } from '@/components/ui/badge';
@@ -96,6 +102,8 @@ interface ReviewApproval {
     name: string;
     type: string;
     description: string | null;
+    productionStage?: string | null;
+    productionMetadata?: any;
   };
   creativeAssetVersion: {
     id: string;
@@ -107,11 +115,92 @@ interface ReviewApproval {
     updatedAt: string;
     status: string;
     isSyncedToCloud: boolean;
+    // ✅ Add these fields
+    fileSize?: number | null;
+    resolution?: string | null;
+    duration?: number | null;
+    mimeType?: string | null;
   } | null;
 }
 
 interface ReviewsTabProps {
   projectId: string;
+  conceptId?: string | null;
+  conceptName?: string | null;
+  conceptAssets?: any[];
+}
+
+// Production stage badge component
+const ProductionStageBadge = ({ stage }: { stage?: string }) => {
+  if (!stage) return null;
+  
+  const stages: Record<string, { label: string; color: string; bg: string }> = {
+    'pre-production': { label: 'Pre-Production', color: 'text-blue-400', bg: 'bg-blue-500/10' },
+    'shooting': { label: 'Shooting', color: 'text-red-400', bg: 'bg-red-500/10' },
+    'editing': { label: 'Editing', color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
+    'color_grading': { label: 'Color Grading', color: 'text-purple-400', bg: 'bg-purple-500/10' },
+    'sound_design': { label: 'Sound Design', color: 'text-amber-400', bg: 'bg-amber-500/10' },
+    'motion_graphics': { label: 'Motion Graphics', color: 'text-pink-400', bg: 'bg-pink-500/10' },
+    'vfx': { label: 'VFX', color: 'text-indigo-400', bg: 'bg-indigo-500/10' },
+    'final_delivery': { label: 'Final Delivery', color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
+  };
+
+  const info = stages[stage] || { label: stage, color: 'text-zinc-400', bg: 'bg-zinc-500/10' };
+  return (
+    <Badge className={`${info.bg} ${info.color} border-0 text-[10px]`}>
+      {info.label}
+    </Badge>
+  );
+};
+
+// Production metadata display component
+const ProductionMetadataDisplay = ({ metadata }: { metadata?: any }) => {
+  if (!metadata) return null;
+  
+  const fields = [
+    { key: 'camera', label: 'Camera', icon: <Camera className="w-3 h-3" /> },
+    { key: 'director', label: 'Director', icon: <Clapperboard className="w-3 h-3" /> },
+    { key: 'dp', label: 'DP', icon: <Camera className="w-3 h-3" /> },
+    { key: 'shootDate', label: 'Shoot Date', icon: <Calendar className="w-3 h-3" /> },
+    { key: 'location', label: 'Location', icon: <Film className="w-3 h-3" /> },
+  ];
+
+  const hasMetadata = fields.some(f => metadata[f.key]);
+  if (!hasMetadata) return null;
+
+  return (
+    <div className="mt-2 bg-zinc-800/50 p-2 rounded border border-zinc-700/30">
+      <div className="flex items-center gap-1.5 text-xs text-zinc-400 mb-1.5">
+        <Film className="w-3 h-3" />
+        <span>Production Info</span>
+      </div>
+      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+        {fields.map(({ key, label, icon }) => {
+          const value = metadata[key];
+          if (!value) return null;
+          return (
+            <div key={key} className="flex items-center gap-1 text-zinc-300">
+              <span className="text-zinc-500">{icon}</span>
+              <span className="text-zinc-400">{label}:</span>
+              <span className="text-zinc-200">
+                {key === 'shootDate' ? format(new Date(value), 'MMM d, yyyy') : value}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
+// Helper function to format file size
+function formatFileSize(bytes: number | null | undefined): string {
+  if (!bytes) return '0 B';
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
 }
 
 const statusConfig = {
@@ -152,7 +241,12 @@ const statusConfig = {
   },
 };
 
-export function ReviewsTab({ projectId }: ReviewsTabProps) {
+export function ReviewsTab({ 
+  projectId,
+  conceptId = null,
+  conceptName = null,
+  conceptAssets = [],
+}: ReviewsTabProps){
   const [reviewLinks, setReviewLinks] = useState<ReviewLink[]>([]);
   const [filteredReviews, setFilteredReviews] = useState<ReviewLink[]>([]);
   const [loading, setLoading] = useState(true);
@@ -165,6 +259,13 @@ export function ReviewsTab({ projectId }: ReviewsTabProps) {
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [filterConcept, setFilterConcept] = useState<string>('all');
   const [filterClient, setFilterClient] = useState<string>('all');
+
+  const [creatingReviewLink, setCreatingReviewLink] = useState(false);
+  const [showReviewLinkModal, setShowReviewLinkModal] = useState(false);
+  const [generatedLink, setGeneratedLink] = useState<string | null>(null);
+  const [linkExpiry, setLinkExpiry] = useState<string | null>(null);
+  const [linkDetails, setLinkDetails] = useState<{ conceptName: string; assetCount: number; clientName: string } | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const uniqueConcepts = Array.from(new Set(reviewLinks.map(r => r.concept.name)));
   const uniqueClients = Array.from(new Set(reviewLinks.map(r => r.client.clientName)));
@@ -262,139 +363,274 @@ export function ReviewsTab({ projectId }: ReviewsTabProps) {
     setExpandedReview(expandedReview === id ? null : id);
   };
 
-  // ✅ Parse review notes with all feedback sections
+  // Parse review notes with all feedback sections
   const parseReviewNotes = (reviewNotes: string | null) => {
-  if (!reviewNotes) return null;
-  
-  try {
-    const parsed = JSON.parse(reviewNotes);
-    if (typeof parsed === 'object') {
-      return {
-        overview: parsed.overview || null,
-        brief: parsed.brief || null,
-        overall: parsed.overall || null,
-        milestones: parsed.milestones || null,
-        concepts: parsed.concepts || null,
+    if (!reviewNotes) return null;
+    
+    try {
+      const parsed = JSON.parse(reviewNotes);
+      if (typeof parsed === 'object') {
+        return {
+          overview: parsed.overview || null,
+          brief: parsed.brief || null,
+          overall: parsed.overall || null,
+          milestones: parsed.milestones || null,
+          tasks: parsed.tasks || null,
+          concepts: parsed.concepts || null,
+          sectionStatuses: parsed.sectionStatuses || null,
+        };
+      }
+      return { 
+        overview: null, 
+        brief: null, 
+        overall: reviewNotes, 
+        milestones: null, 
+        tasks: null,
+        concepts: null,
+        sectionStatuses: null,
+      };
+    } catch {
+      return { 
+        overview: null, 
+        brief: null, 
+        overall: reviewNotes, 
+        milestones: null, 
+        tasks: null,
+        concepts: null,
+        sectionStatuses: null,
       };
     }
-    return { overview: null, brief: null, overall: reviewNotes, milestones: null, concepts: null };
-  } catch {
-    return { overview: null, brief: null, overall: reviewNotes, milestones: null, concepts: null };
-  }
-};
+  };
 
-  // ✅ Render all feedback sections
+  // Get status for a specific item type - UPDATED to include TASKS
+  const getItemStatus = (review: ReviewLink, type: string): { status: string; label: string; color: string; bg: string } => {
+    const parsed = parseReviewNotes(review.reviewNotes);
+    const sectionStatuses = parsed?.sectionStatuses || {};
+    
+    if (type === 'PROJECT' && sectionStatuses.project) {
+      const status = sectionStatuses.project;
+      const config = statusConfig[status as keyof typeof statusConfig] || statusConfig.PENDING;
+      return { status, label: config.label, color: config.color, bg: config.bg };
+    }
+    
+    if (type === 'BRIEF' && sectionStatuses.brief) {
+      const status = sectionStatuses.brief;
+      const config = statusConfig[status as keyof typeof statusConfig] || statusConfig.PENDING;
+      return { status, label: config.label, color: config.color, bg: config.bg };
+    }
+
+    // ✅ TASKS - Check if there are any task statuses
+    if (type === 'TASK') {
+      const taskKeys = Object.keys(sectionStatuses).filter(k => k.startsWith('task-'));
+      if (taskKeys.length > 0) {
+        const allApproved = taskKeys.every(k => sectionStatuses[k] === 'APPROVED');
+        const hasRejections = taskKeys.some(k => sectionStatuses[k] === 'REVISIONS_REQUESTED');
+        if (allApproved) {
+          return { status: 'APPROVED', label: 'Approved', color: 'text-emerald-400', bg: 'bg-emerald-500/10' };
+        }
+        if (hasRejections) {
+          return { status: 'REVISIONS_REQUESTED', label: 'Revisions', color: 'text-amber-400', bg: 'bg-amber-500/10' };
+        }
+        return { status: 'PENDING', label: 'Pending', color: 'text-blue-400', bg: 'bg-blue-500/10' };
+      }
+      // Fallback: check if any task feedback exists in reviewNotes
+      if (parsed?.tasks) {
+        return { status: 'REVIEWED', label: 'Reviewed', color: 'text-purple-400', bg: 'bg-purple-500/10' };
+      }
+      if (parsed?.overview || parsed?.overall) {
+        return { status: 'REVIEWED', label: 'Reviewed', color: 'text-purple-400', bg: 'bg-purple-500/10' };
+      }
+      return { status: 'PENDING', label: 'Pending', color: 'text-blue-400', bg: 'bg-blue-500/10' };
+    }
+
+    if (type === 'MILESTONE') {
+      const milestoneKeys = Object.keys(sectionStatuses).filter(k => k.startsWith('milestone-'));
+      if (milestoneKeys.length > 0) {
+        const allApproved = milestoneKeys.every(k => sectionStatuses[k] === 'APPROVED');
+        const hasRejections = milestoneKeys.some(k => sectionStatuses[k] === 'REVISIONS_REQUESTED');
+        if (allApproved) {
+          return { status: 'APPROVED', label: 'Approved', color: 'text-emerald-400', bg: 'bg-emerald-500/10' };
+        }
+        if (hasRejections) {
+          return { status: 'REVISIONS_REQUESTED', label: 'Revisions', color: 'text-amber-400', bg: 'bg-amber-500/10' };
+        }
+        return { status: 'PENDING', label: 'Pending', color: 'text-blue-400', bg: 'bg-blue-500/10' };
+      }
+      if (parsed?.milestones) {
+        return { status: 'APPROVED', label: 'Approved', color: 'text-emerald-400', bg: 'bg-emerald-500/10' };
+      }
+      if (review.reviewedAt) {
+        return { status: 'REVIEWED', label: 'Reviewed', color: 'text-purple-400', bg: 'bg-purple-500/10' };
+      }
+      return { status: 'PENDING', label: 'Pending', color: 'text-blue-400', bg: 'bg-blue-500/10' };
+    }
+
+    if (type === 'CONCEPT') {
+      const conceptKeys = Object.keys(sectionStatuses).filter(k => k.startsWith('concept-'));
+      if (conceptKeys.length > 0) {
+        const allApproved = conceptKeys.every(k => sectionStatuses[k] === 'APPROVED');
+        const hasRejections = conceptKeys.some(k => sectionStatuses[k] === 'REVISIONS_REQUESTED');
+        if (allApproved) {
+          return { status: 'APPROVED', label: 'Approved', color: 'text-emerald-400', bg: 'bg-emerald-500/10' };
+        }
+        if (hasRejections) {
+          return { status: 'REVISIONS_REQUESTED', label: 'Revisions', color: 'text-amber-400', bg: 'bg-amber-500/10' };
+        }
+        return { status: 'PENDING', label: 'Pending', color: 'text-blue-400', bg: 'bg-blue-500/10' };
+      }
+      if (parsed?.concepts) {
+        return { status: 'APPROVED', label: 'Approved', color: 'text-emerald-400', bg: 'bg-emerald-500/10' };
+      }
+      if (review.reviewedAt) {
+        return { status: 'REVIEWED', label: 'Reviewed', color: 'text-purple-400', bg: 'bg-purple-500/10' };
+      }
+      return { status: 'PENDING', label: 'Pending', color: 'text-blue-400', bg: 'bg-blue-500/10' };
+    }
+
+    if (type === 'ASSET') {
+      const approvals = review.reviewLinkAssetApprovals;
+      if (approvals.length === 0) {
+        return { status: 'PENDING', label: 'Pending', color: 'text-blue-400', bg: 'bg-blue-500/10' };
+      }
+      const allApproved = approvals.every(a => a.status === 'APPROVED');
+      const hasRejections = approvals.some(a => a.status === 'REJECTED' || a.status === 'REVISIONS_REQUESTED');
+      if (allApproved) {
+        return { status: 'APPROVED', label: 'Approved', color: 'text-emerald-400', bg: 'bg-emerald-500/10' };
+      }
+      if (hasRejections) {
+        return { status: 'REVISIONS_REQUESTED', label: 'Revisions', color: 'text-amber-400', bg: 'bg-amber-500/10' };
+      }
+      return { status: 'PENDING', label: 'Pending', color: 'text-blue-400', bg: 'bg-blue-500/10' };
+    }
+
+    if (review.reviewedAt) {
+      return { status: 'REVIEWED', label: 'Reviewed', color: 'text-purple-400', bg: 'bg-purple-500/10' };
+    }
+    return { status: 'PENDING', label: 'Pending', color: 'text-blue-400', bg: 'bg-blue-500/10' };
+  };
+
+  // Render all feedback sections - ADDED tasks section
   const renderFeedbackSections = (reviewNotes: string | null) => {
-  const parsed = parseReviewNotes(reviewNotes);
-  if (!parsed) return null;
+    const parsed = parseReviewNotes(reviewNotes);
+    if (!parsed) return null;
 
-  const sections = [];
+    const sections = [];
 
-  // Project Overview Feedback
-  if (parsed.overview) {
-    sections.push({
-      id: 'overview',
-      label: 'Project Overview Feedback',
-      value: parsed.overview,
-      icon: <FolderTree className="w-3.5 h-3.5" />,
-      color: 'text-blue-400',
-      bg: 'bg-blue-500/5',
-      border: 'border-blue-500/10',
-    });
-  }
+    if (parsed.overview) {
+      sections.push({
+        id: 'overview',
+        label: 'Project Overview Feedback',
+        value: parsed.overview,
+        icon: <FolderTree className="w-3.5 h-3.5" />,
+        color: 'text-blue-400',
+        bg: 'bg-blue-500/5',
+        border: 'border-blue-500/10',
+      });
+    }
 
-  // Brief Feedback
-  if (parsed.brief) {
-    sections.push({
-      id: 'brief',
-      label: 'Brief Feedback',
-      value: parsed.brief,
-      icon: <Briefcase className="w-3.5 h-3.5" />,
-      color: 'text-indigo-400',
-      bg: 'bg-indigo-500/5',
-      border: 'border-indigo-500/10',
-    });
-  }
+    if (parsed.brief) {
+      sections.push({
+        id: 'brief',
+        label: 'Brief Feedback',
+        value: parsed.brief,
+        icon: <Briefcase className="w-3.5 h-3.5" />,
+        color: 'text-indigo-400',
+        bg: 'bg-indigo-500/5',
+        border: 'border-indigo-500/10',
+      });
+    }
 
-  // Milestone Feedback
-  if (parsed.milestones) {
-    sections.push({
-      id: 'milestones',
-      label: 'Milestone Feedback',
-      value: parsed.milestones,
-      icon: <GitBranch className="w-3.5 h-3.5" />,
-      color: 'text-purple-400',
-      bg: 'bg-purple-500/5',
-      border: 'border-purple-500/10',
-    });
-  }
+    // ✅ Added Tasks section
+    if (parsed.tasks) {
+      let taskValue = parsed.tasks;
+      if (Array.isArray(parsed.tasks)) {
+        taskValue = parsed.tasks.join('\n\n');
+      }
+      sections.push({
+        id: 'tasks',
+        label: 'Task Feedback',
+        value: taskValue,
+        icon: <ListChecks className="w-3.5 h-3.5" />,
+        color: 'text-emerald-400',
+        bg: 'bg-emerald-500/5',
+        border: 'border-emerald-500/10',
+      });
+    }
 
-  // Concept Feedback
-  if (parsed.concepts) {
-    sections.push({
-      id: 'concepts',
-      label: 'Concept Feedback',
-      value: parsed.concepts,
-      icon: <Lightbulb className="w-3.5 h-3.5" />,
-      color: 'text-amber-400',
-      bg: 'bg-amber-500/5',
-      border: 'border-amber-500/10',
-    });
-  }
+    if (parsed.milestones) {
+      let milestoneValue = parsed.milestones;
+      if (Array.isArray(parsed.milestones)) {
+        milestoneValue = parsed.milestones.join('\n\n');
+      }
+      sections.push({
+        id: 'milestones',
+        label: 'Milestone Feedback',
+        value: milestoneValue,
+        icon: <GitBranch className="w-3.5 h-3.5" />,
+        color: 'text-purple-400',
+        bg: 'bg-purple-500/5',
+        border: 'border-purple-500/10',
+      });
+    }
 
-  // Overall Feedback (always show last if present)
-  if (parsed.overall) {
-    sections.push({
-      id: 'overall',
-      label: 'Overall Project Feedback',
-      value: parsed.overall,
-      icon: <MessageSquare className="w-3.5 h-3.5" />,
-      color: 'text-emerald-400',
-      bg: 'bg-emerald-500/5',
-      border: 'border-emerald-500/10',
-    });
-  }
+    if (parsed.concepts) {
+      let conceptValue = parsed.concepts;
+      if (Array.isArray(parsed.concepts)) {
+        conceptValue = parsed.concepts.join('\n\n');
+      }
+      sections.push({
+        id: 'concepts',
+        label: 'Concept Feedback',
+        value: conceptValue,
+        icon: <Lightbulb className="w-3.5 h-3.5" />,
+        color: 'text-amber-400',
+        bg: 'bg-amber-500/5',
+        border: 'border-amber-500/10',
+      });
+    }
 
-  // If no structured sections found, show as plain text
-  if (sections.length === 0 && parsed.overall) {
+    if (parsed.overall) {
+      sections.push({
+        id: 'overall',
+        label: 'Overall Project Feedback',
+        value: parsed.overall,
+        icon: <MessageSquare className="w-3.5 h-3.5" />,
+        color: 'text-emerald-400',
+        bg: 'bg-emerald-500/5',
+        border: 'border-emerald-500/10',
+      });
+    }
+
+    if (sections.length === 0) return null;
+
     return (
-      <div className="bg-zinc-900/50 rounded-lg p-3">
-        <p className="text-zinc-400 text-xs mb-1">Review Notes</p>
-        <p className="text-zinc-200 text-sm whitespace-pre-wrap">{parsed.overall}</p>
+      <div className="bg-zinc-900/50 rounded-lg p-3 space-y-3">
+        <div className="flex items-center gap-2 text-zinc-400 text-xs mb-2">
+          <MessageSquare className="w-3.5 h-3.5" />
+          <span>Client Feedback</span>
+          <Badge className="bg-zinc-800 text-zinc-400 border-zinc-700 text-[9px]">
+            {sections.length} sections
+          </Badge>
+        </div>
+        {sections.map((section, index) => (
+          <div 
+            key={section.id} 
+            className={`border-t border-zinc-700/30 ${index === 0 ? 'border-t-0' : ''} pt-2 ${index === 0 ? 'pt-0' : ''}`}
+          >
+            <div className="flex items-center gap-1.5 text-xs mb-1">
+              <span className={section.color}>{section.icon}</span>
+              <span className="text-zinc-400">{section.label}</span>
+            </div>
+            <div className={`pl-5 border-l-2 ${section.border} ${section.bg} rounded-r-lg p-2`}>
+              <p className="text-zinc-200 text-sm whitespace-pre-wrap">
+                {section.value}
+              </p>
+            </div>
+          </div>
+        ))}
       </div>
     );
-  }
-
-  if (sections.length === 0) return null;
-
-  return (
-    <div className="bg-zinc-900/50 rounded-lg p-3 space-y-3">
-      <div className="flex items-center gap-2 text-zinc-400 text-xs mb-2">
-        <MessageSquare className="w-3.5 h-3.5" />
-        <span>Client Feedback</span>
-        <Badge className="bg-zinc-800 text-zinc-400 border-zinc-700 text-[9px]">
-          {sections.length} sections
-        </Badge>
-      </div>
-      {sections.map((section, index) => (
-        <div 
-          key={section.id} 
-          className={`border-t border-zinc-700/30 ${index === 0 ? 'border-t-0' : ''} pt-2 ${index === 0 ? 'pt-0' : ''}`}
-        >
-          <div className="flex items-center gap-1.5 text-xs mb-1">
-            <span className={section.color}>{section.icon}</span>
-            <span className="text-zinc-400">{section.label}</span>
-          </div>
-          <div className={`pl-5 border-l-2 ${section.border} ${section.bg} rounded-r-lg p-2`}>
-            <p className="text-zinc-200 text-sm whitespace-pre-wrap">
-              {section.value}
-            </p>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-};
+  };
 
   const totalPages = Math.ceil(filteredReviews.length / itemsPerPage);
   const startIndex = (currentPage - 1) * itemsPerPage;
@@ -410,6 +646,153 @@ export function ReviewsTab({ projectId }: ReviewsTabProps) {
     setFilterStatus('all');
     setFilterConcept('all');
     setFilterClient('all');
+  };
+
+  const getReviewStats = () => {
+    const total = reviewLinks.length;
+    const active = reviewLinks.filter(r => r.isActive).length;
+    const completed = reviewLinks.filter(r => r.reviewedAt !== null).length;
+    const pending = reviewLinks.filter(r => r.reviewedAt === null).length;
+    
+    const withRevisions = reviewLinks.filter(r => 
+      r.reviewLinkAssetApprovals.some(a => a.status === 'REVISIONS_REQUESTED' || a.status === 'REJECTED')
+    ).length;
+    
+    const fullyApproved = reviewLinks.filter(r => {
+      const approvals = r.reviewLinkAssetApprovals;
+      if (approvals.length === 0) return false;
+      return approvals.every(a => a.status === 'APPROVED');
+    }).length;
+
+    return { total, active, completed, pending, withRevisions, fullyApproved };
+  };
+
+  const handleSendForClientReview = async () => {
+    if (!conceptId) {
+      toast.error('No concept selected. Please select a concept first.');
+      return;
+    }
+
+    setCreatingReviewLink(true);
+    try {
+      const conceptResponse = await fetch(
+        `/api/projects/${projectId}/concepts/${conceptId}`
+      );
+      if (!conceptResponse.ok) {
+        const errorData = await conceptResponse.json();
+        throw new Error(errorData.error || 'Failed to fetch concept details');
+      }
+      const conceptData = await conceptResponse.json();
+
+      if (!conceptData.clientId) {
+        toast.error(
+          'This concept is not associated with a client. ' +
+          'Please ensure the project has a client assigned before creating a review link.'
+        );
+        setCreatingReviewLink(false);
+        return;
+      }
+
+      const assetCount = conceptData.assets?.length || 0;
+      if (assetCount === 0) {
+        toast.error('Please add at least one asset before sending for review.');
+        setCreatingReviewLink(false);
+        return;
+      }
+
+      const response = await fetch('/api/client-review/links', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          conceptId: conceptId,
+          clientId: conceptData.clientId,
+          expiresInDays: 14,
+          maxViews: 0,
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to create review link');
+      }
+
+      const data = await response.json();
+      
+      const url = data.url;
+      const expiresAt = data.expiresAt || null;
+      const conceptNameText = data.concept?.name || conceptName || 'Untitled Concept';
+      const assetCountText = data.concept?.assetCount || assetCount;
+      const clientNameText = conceptData.clientName || conceptData.client?.clientName || 'Client';
+      
+      setGeneratedLink(url);
+      setLinkExpiry(expiresAt);
+      setLinkDetails({
+        conceptName: conceptNameText,
+        assetCount: assetCountText,
+        clientName: clientNameText,
+      });
+      
+      setShowReviewLinkModal(true);
+      
+      try {
+        await navigator.clipboard.writeText(url);
+        toast.success('✅ Review link copied to clipboard!');
+      } catch (clipError) {
+        console.warn('Could not copy to clipboard:', clipError);
+      }
+      
+      await fetchReviewLinks();
+      
+    } catch (error: any) {
+      console.error('Error creating review link:', error);
+      toast.error(error.message || 'Failed to create review link');
+    } finally {
+      setCreatingReviewLink(false);
+    }
+  };
+
+  const copyLinkToClipboard = async () => {
+    if (!generatedLink) return;
+    try {
+      await navigator.clipboard.writeText(generatedLink);
+      setCopied(true);
+      toast.success('Link copied to clipboard!');
+      setTimeout(() => setCopied(false), 3000);
+    } catch (error) {
+      toast.error('Failed to copy link');
+    }
+  };
+
+  const handleDeleteReviewLink = async (reviewId: string, token: string) => {
+    if (!confirm('⚠️ Are you sure you want to permanently delete this review link?\n\nThis action cannot be undone and will remove all associated approvals and feedback.')) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/client-review/links/${token}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to delete review link');
+      }
+
+      toast.success(data.message || '✅ Review link deleted successfully');
+      
+      setReviewLinks(prev => prev.filter(link => link.id !== reviewId));
+      setFilteredReviews(prev => prev.filter(link => link.id !== reviewId));
+      
+      if (expandedReview === reviewId) {
+        setExpandedReview(null);
+      }
+      
+    } catch (error: any) {
+      console.error('Error deleting review link:', error);
+      toast.error(error.message || '❌ Failed to delete review link');
+    }
   };
 
   if (loading) {
@@ -430,14 +813,60 @@ export function ReviewsTab({ projectId }: ReviewsTabProps) {
             {filteredReviews.length} reviews
           </Badge>
         </div>
-        <Button
-          onClick={fetchReviewLinks}
-          variant="outline"
-          className="border-zinc-700 text-zinc-300 hover:bg-zinc-800"
-        >
-          <RefreshCw className="w-4 h-4 mr-2" />
-          Refresh
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            onClick={fetchReviewLinks}
+            variant="outline"
+            className="border-zinc-700 text-zinc-300 hover:bg-zinc-800"
+          >
+            <RefreshCw className="w-4 h-4 mr-2" />
+            Refresh
+          </Button>
+          {conceptId && (
+            <Button
+              onClick={handleSendForClientReview}
+              disabled={creatingReviewLink}
+              size="sm"
+              className="bg-amber-600 hover:bg-amber-700 text-white"
+            >
+              {creatingReviewLink ? (
+                <>
+                  <RefreshCw className="w-4 h-4 mr-1.5 animate-spin" />
+                  Creating...
+                </>
+              ) : (
+                <>
+                  <ExternalLink className="w-4 h-4 mr-1.5" />
+                  Send for Client Review
+                </>
+              )}
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {/* Review Stats */}
+      <div className="grid grid-cols-3 md:grid-cols-5 gap-3">
+        <div className="bg-zinc-800/30 border border-zinc-700/50 rounded-lg p-3 text-center">
+          <p className="text-2xl font-bold text-zinc-100">{getReviewStats().total}</p>
+          <p className="text-xs text-zinc-400">Total Reviews</p>
+        </div>
+        <div className="bg-zinc-800/30 border border-zinc-700/50 rounded-lg p-3 text-center">
+          <p className="text-2xl font-bold text-emerald-400">{getReviewStats().fullyApproved}</p>
+          <p className="text-xs text-zinc-400">Approved</p>
+        </div>
+        <div className="bg-zinc-800/30 border border-zinc-700/50 rounded-lg p-3 text-center">
+          <p className="text-2xl font-bold text-amber-400">{getReviewStats().withRevisions}</p>
+          <p className="text-xs text-zinc-400">Revisions Needed</p>
+        </div>
+        <div className="bg-zinc-800/30 border border-zinc-700/50 rounded-lg p-3 text-center">
+          <p className="text-2xl font-bold text-blue-400">{getReviewStats().pending}</p>
+          <p className="text-xs text-zinc-400">Pending</p>
+        </div>
+        <div className="bg-zinc-800/30 border border-zinc-700/50 rounded-lg p-3 text-center">
+          <p className="text-2xl font-bold text-purple-400">{getReviewStats().completed}</p>
+          <p className="text-xs text-zinc-400">Completed</p>
+        </div>
       </div>
 
       {/* Filters */}
@@ -561,6 +990,13 @@ export function ReviewsTab({ projectId }: ReviewsTabProps) {
               
               const isComplete = pendingCount === 0 && (!hasBrief || briefStatus === 'APPROVED' || briefStatus === 'REVIEWED');
 
+              // Get statuses for each section - NOW INCLUDES TASKS
+              const projectStatus = getItemStatus(review, 'PROJECT');
+              const briefStatusInfo2 = getItemStatus(review, 'BRIEF');
+              const taskStatus = getItemStatus(review, 'TASK');
+              const milestoneStatus = getItemStatus(review, 'MILESTONE');
+              const conceptStatus = getItemStatus(review, 'CONCEPT');
+
               return (
                 <div
                   key={review.id}
@@ -580,14 +1016,6 @@ export function ReviewsTab({ projectId }: ReviewsTabProps) {
                           <Badge className={review.isActive ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-zinc-800 text-zinc-400 border-zinc-700'}>
                             {review.isActive ? 'Active' : 'Inactive'}
                           </Badge>
-                          {hasBrief && (
-                            <Badge className={`${briefStatusInfo.bg} ${briefStatusInfo.color} border ${briefStatusInfo.border}`}>
-                              <span className="flex items-center gap-1 text-[10px]">
-                                <Briefcase className="w-3 h-3" />
-                                Brief: {briefStatusInfo.label}
-                              </span>
-                            </Badge>
-                          )}
                         </div>
                         <div className="flex flex-wrap items-center gap-3 mt-1 text-xs text-zinc-400">
                           <span className="flex items-center gap-1">
@@ -628,11 +1056,6 @@ export function ReviewsTab({ projectId }: ReviewsTabProps) {
                                 {pendingCount} pending
                               </Badge>
                             )}
-                            {hasBrief && briefStatus === 'PENDING' && (
-                              <Badge className="bg-blue-500/10 text-blue-400 border-blue-500/20 text-[10px]">
-                                Brief pending
-                              </Badge>
-                            )}
                           </div>
                         </div>
                         {isExpanded ? (
@@ -647,10 +1070,44 @@ export function ReviewsTab({ projectId }: ReviewsTabProps) {
                   {/* Expanded Content */}
                   {isExpanded && (
                     <div className="border-t border-zinc-700/50 p-4 space-y-4">
-                      {/* Status Cards */}
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+                      {/* Status Cards - Show ALL section statuses including TASKS */}
+                      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-sm">
                         <div className="bg-zinc-900/50 rounded-lg p-3">
-                          <p className="text-zinc-400 text-xs">Status</p>
+                          <p className="text-zinc-400 text-xs">Project</p>
+                          <p className={`font-medium ${projectStatus.color}`}>
+                            {projectStatus.label}
+                          </p>
+                        </div>
+                        <div className="bg-zinc-900/50 rounded-lg p-3">
+                          <p className="text-zinc-400 text-xs">Brief</p>
+                          <p className={`font-medium ${briefStatusInfo2.color}`}>
+                            {briefStatusInfo2.label}
+                          </p>
+                        </div>
+                        <div className="bg-zinc-900/50 rounded-lg p-3">
+                          <p className="text-zinc-400 text-xs">Tasks</p>
+                          <p className={`font-medium ${taskStatus.color}`}>
+                            {taskStatus.label}
+                          </p>
+                        </div>
+                        <div className="bg-zinc-900/50 rounded-lg p-3">
+                          <p className="text-zinc-400 text-xs">Milestones</p>
+                          <p className={`font-medium ${milestoneStatus.color}`}>
+                            {milestoneStatus.label}
+                          </p>
+                        </div>
+                        <div className="bg-zinc-900/50 rounded-lg p-3">
+                          <p className="text-zinc-400 text-xs">Concepts</p>
+                          <p className={`font-medium ${conceptStatus.color}`}>
+                            {conceptStatus.label}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Status Cards - Additional info */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                        <div className="bg-zinc-900/50 rounded-lg p-3">
+                          <p className="text-zinc-400 text-xs">Overall Status</p>
                           <p className="text-zinc-200 font-medium">
                             {isComplete ? (rejectedCount > 0 ? 'Revisions Needed' : 'Fully Approved') : 'In Progress'}
                           </p>
@@ -660,14 +1117,6 @@ export function ReviewsTab({ projectId }: ReviewsTabProps) {
                             <p className="text-zinc-400 text-xs">Reviewed By</p>
                             <p className="text-zinc-200 font-medium">
                               {review.reviewedBy || review.reviewerEmail || 'Anonymous'}
-                            </p>
-                          </div>
-                        )}
-                        {review.expiresAt && (
-                          <div className="bg-zinc-900/50 rounded-lg p-3">
-                            <p className="text-zinc-400 text-xs">Expires</p>
-                            <p className="text-zinc-200 font-medium">
-                              {format(new Date(review.expiresAt), 'MMM d, yyyy')}
                             </p>
                           </div>
                         )}
@@ -690,7 +1139,6 @@ export function ReviewsTab({ projectId }: ReviewsTabProps) {
                               </span>
                             </Badge>
                           </div>
-                          {/* Show brief feedback from parsed notes */}
                           {(() => {
                             const parsed = parseReviewNotes(review.reviewNotes);
                             if (parsed?.brief) {
@@ -706,10 +1154,10 @@ export function ReviewsTab({ projectId }: ReviewsTabProps) {
                         </div>
                       )}
 
-                      {/* Render all feedback sections */}
+                      {/* Render all feedback sections - NOW INCLUDES TASKS */}
                       {renderFeedbackSections(review.reviewNotes)}
 
-                      {/* Asset Reviews */}
+                      {/* Asset Reviews - UPDATED with production metadata */}
                       <div>
                         <h4 className="text-sm font-medium text-zinc-200 mb-2">Asset Reviews</h4>
                         <div className="space-y-2">
@@ -725,7 +1173,7 @@ export function ReviewsTab({ projectId }: ReviewsTabProps) {
                               >
                                 <div className="flex items-start justify-between gap-4">
                                   <div className="flex-1 min-w-0">
-                                    <div className="flex items-center gap-2">
+                                    <div className="flex items-center gap-2 flex-wrap">
                                       <span className="font-medium text-zinc-200 text-sm">
                                         {asset.name}
                                       </span>
@@ -735,26 +1183,46 @@ export function ReviewsTab({ projectId }: ReviewsTabProps) {
                                           {statusInfo.label}
                                         </span>
                                       </Badge>
+                                      {/* ✅ Production stage badge */}
+                                      {asset.productionStage && (
+                                        <ProductionStageBadge stage={asset.productionStage} />
+                                      )}
+                                      {/* ✅ Asset type badge for production assets */}
+                                      {['RAW_FOOTAGE', 'EXPORT_MASTER', 'EXPORT_HIGH_RES', 'EXPORT_WEB', 'MOTION_GRAPHICS', 'VFX', 'COLOR_GRADE'].includes(asset.type) && (
+                                        <Badge className="bg-purple-500/10 text-purple-400 border-purple-500/20 text-[10px]">
+                                          Production
+                                        </Badge>
+                                      )}
                                     </div>
                                     {version && (
                                       <p className="text-xs text-zinc-400 mt-0.5">
                                         v{version.versionNo} • {format(new Date(version.createdAt), 'MMM d, yyyy')}
+                                        {version.fileSize && (
+                                          <span className="ml-2">
+                                            • {formatFileSize(version.fileSize)}
+                                          </span>
+                                        )}
+                                        {version.resolution && (
+                                          <span className="ml-2">
+                                            • {version.resolution}
+                                          </span>
+                                        )}
                                       </p>
                                     )}
-                                    {/* ✅ Display feedback from the approval */}
                                     {approval.feedback && (
                                       <div className="mt-1 bg-zinc-800/50 p-2 rounded">
                                         <p className="text-xs text-zinc-400">Feedback</p>
                                         <p className="text-sm text-zinc-300">{approval.feedback}</p>
                                       </div>
                                     )}
-                                    {/* ✅ Display general feedback from the approval */}
                                     {approval.generalFeedback && (
                                       <div className="mt-1 bg-zinc-800/50 p-2 rounded">
                                         <p className="text-xs text-zinc-400">General Feedback</p>
                                         <p className="text-sm text-zinc-300">{approval.generalFeedback}</p>
                                       </div>
                                     )}
+                                    {/* ✅ Production metadata display */}
+                                    <ProductionMetadataDisplay metadata={asset.productionMetadata} />
                                   </div>
                                   {approval.approvedAt && (
                                     <div className="text-xs text-zinc-500 shrink-0">
@@ -794,6 +1262,15 @@ export function ReviewsTab({ projectId }: ReviewsTabProps) {
                             Open Review
                           </Button>
                         </a>
+                        <Button
+                          onClick={() => handleDeleteReviewLink(review.id, review.token)}
+                          variant="outline"
+                          size="sm"
+                          className="border-red-700/50 text-red-400 hover:bg-red-500/10 hover:text-red-300 hover:border-red-600"
+                        >
+                          <XCircle className="w-3.5 h-3.5 mr-1.5" />
+                          Delete
+                        </Button>
                       </div>
                     </div>
                   )}
@@ -854,6 +1331,97 @@ export function ReviewsTab({ projectId }: ReviewsTabProps) {
             </div>
           )}
         </>
+      )}
+
+      {/* Review Link Modal */}
+      {showReviewLinkModal && generatedLink && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-6 max-w-md w-full">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-2 bg-amber-500/10 rounded-lg">
+                <LinkIcon className="w-5 h-5 text-amber-400" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-zinc-100">Review Link Created</h3>
+                <p className="text-sm text-zinc-400">
+                  Share this link with your client to review this concept
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-3 mb-6">
+              <div className="bg-zinc-800/50 rounded-lg p-3">
+                <p className="text-xs text-zinc-400 mb-1">Concept</p>
+                <p className="text-sm text-zinc-200 font-medium">{linkDetails?.conceptName}</p>
+              </div>
+              <div className="bg-zinc-800/50 rounded-lg p-3">
+                <p className="text-xs text-zinc-400 mb-1">Client</p>
+                <p className="text-sm text-zinc-200 font-medium">{linkDetails?.clientName}</p>
+              </div>
+              <div className="bg-zinc-800/50 rounded-lg p-3">
+                <p className="text-xs text-zinc-400 mb-1">Assets</p>
+                <p className="text-sm text-zinc-200">{linkDetails?.assetCount} asset(s) included</p>
+              </div>
+              {linkExpiry && (
+                <div className="bg-zinc-800/50 rounded-lg p-3">
+                  <p className="text-xs text-zinc-400 mb-1">Expires</p>
+                  <p className="text-sm text-zinc-200">{format(new Date(linkExpiry), 'PPP')}</p>
+                </div>
+              )}
+              <div className="bg-zinc-800/50 rounded-lg p-3">
+                <p className="text-xs text-zinc-400 mb-1">Link</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-xs text-blue-400 truncate flex-1">{generatedLink}</p>
+                  <button
+                    onClick={copyLinkToClipboard}
+                    className="p-1.5 hover:bg-zinc-700 rounded-md transition-colors text-zinc-400 hover:text-zinc-200"
+                    title="Copy link"
+                  >
+                    <Copy className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-2">
+              <button
+                onClick={copyLinkToClipboard}
+                className={`flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 ${
+                  copied 
+                    ? 'bg-emerald-600/20 text-emerald-400 border border-emerald-500/30' 
+                    : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200'
+                }`}
+              >
+                {copied ? (
+                  <>
+                    <CheckCircle className="w-4 h-4" />
+                    Copied!
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-4 h-4" />
+                    Copy Link
+                  </>
+                )}
+              </button>
+              <button
+                onClick={() => {
+                  setShowReviewLinkModal(false);
+                  setGeneratedLink(null);
+                  setCopied(false);
+                }}
+                className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm text-white font-medium transition-colors"
+              >
+                Done
+              </button>
+            </div>
+
+            <p className="text-[10px] text-zinc-500 text-center mt-4">
+              The client can review and approve all assets without logging in.
+              You'll be notified when they submit their feedback.
+            </p>
+          </div>
+        </div>
       )}
     </div>
   );

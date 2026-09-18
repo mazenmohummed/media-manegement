@@ -1,3 +1,4 @@
+// app/dashboard/projects/[projectId]/page.tsx
 import { db } from "@/lib/db";
 import { notFound, redirect } from "next/navigation";
 import { getServerSession } from "next-auth";
@@ -24,6 +25,8 @@ import {
   FileText,
   PlusCircle,
   Lightbulb,
+  Megaphone,
+  Target, 
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -39,6 +42,9 @@ import { ProcurementChainStatus } from "@/components/procurement/ProcurementChai
 import { ProcurementChainWidget } from "@/components/procurement/ProcurementChainWidget";
 import { CreativeAssetsTab } from '@/components/projects/tabs/CreativeAssetsTab';
 import { ReviewsTab } from '@/components/projects/tabs/ReviewsTab';
+import { CampaignsTab } from "@/components/campaigns/CampaignsTab";
+import ProjectCampaignsTab from "@/components/projects/tabs/ProjectCampaignsTab";
+import DigitalAdsTab from "@/components/projects/tabs/DigitalAdsTab";
 
 interface PageProps {
   params: Promise<{ projectId: string }>;
@@ -71,16 +77,6 @@ export default async function ProjectDetailPage({ params, searchParams }: PagePr
     redirect("/dashboard/projects");
     return notFound();
   }
-
-  // ✅ Log the query that will be executed
-  const query = {
-    where: {
-      id: projectId,
-      agencyId: session.user.agencyId,
-      deletedAt: null,
-    },
-  };
-  console.log("Query:", JSON.stringify(query, null, 2));
 
   // ✅ Fetch project with security check
   const project = await db.project.findFirst({
@@ -171,9 +167,98 @@ export default async function ProjectDetailPage({ params, searchParams }: PagePr
           tasks: true,
           milestones: true,
           attachments: true,
+          digitalAdCampaigns: true,
         },
       },
     },
+  });
+
+  const concepts = await db.concept.findMany({
+    where: {
+      projectId: projectId,
+      agencyId: session.user.agencyId,
+    },
+    include: {
+      assets: {
+        include: {
+          versions: {
+            orderBy: { versionNo: 'desc' },
+            take: 1,
+          },
+        },
+      },
+    },
+    orderBy: { createdAt: 'desc' },
+    take: 1,
+  });
+
+  const firstConcept = concepts.length > 0 ? concepts[0] : null;
+
+  // ✅ Fetch campaigns for this project (raw data with Date objects)
+  const campaignData = await db.campaign.findMany({
+    where: {
+      agencyId: session.user.agencyId,
+      deletedAt: null,
+      projects: {
+        some: {
+          id: projectId,
+        },
+      },
+    },
+    include: {
+      client: { 
+        select: { 
+          id: true, 
+          clientName: true, 
+          clientNo: true 
+        } 
+      },
+      _count: {
+        select: {
+          projects: true,
+          digitalAdCampaigns: true,
+        },
+      },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+
+  // ✅ SERIALIZE: Convert Date objects to ISO strings for the ProjectCampaignsTab
+  const serializedCampaigns = campaignData.map((campaign) => ({
+    id: campaign.id,
+    campaignNo: campaign.campaignNo,
+    name: campaign.name,
+    objective: campaign.objective,
+    budget: campaign.budget,
+    currency: campaign.currency,
+    status: campaign.status,
+    startDate: campaign.startDate ? campaign.startDate.toISOString() : null,
+    endDate: campaign.endDate ? campaign.endDate.toISOString() : null,
+    client: {
+      id: campaign.client.id,
+      clientName: campaign.client.clientName,
+      clientNo: campaign.client.clientNo,
+    },
+    _count: {
+      projects: campaign._count.projects,
+      digitalAdCampaigns: campaign._count.digitalAdCampaigns,
+    },
+    createdAt: campaign.createdAt ? campaign.createdAt.toISOString() : null,
+    updatedAt: campaign.updatedAt ? campaign.updatedAt.toISOString() : null,
+  }));
+
+  // ✅ Fetch clients for the campaigns filter
+  const clients = await db.client.findMany({
+    where: {
+      agencyId: session.user.agencyId,
+      deletedAt: null,
+    },
+    select: {
+      id: true,
+      clientName: true,
+      clientNo: true,
+    },
+    orderBy: { clientName: "asc" },
   });
 
   console.log("Project found:", !!project);
@@ -182,7 +267,6 @@ export default async function ProjectDetailPage({ params, searchParams }: PagePr
     console.log("Project name:", project.name);
   } else {
     console.log("Project NOT found - checking if it exists but is soft-deleted");
-    // Check if project exists but is soft-deleted
     const softDeletedProject = await db.project.findFirst({
       where: {
         id: projectId,
@@ -236,6 +320,16 @@ export default async function ProjectDetailPage({ params, searchParams }: PagePr
       icon: GitBranch,
     },
     {
+      key: "campaigns",
+      label: `Campaigns (${serializedCampaigns.length})`,
+      icon: Megaphone,
+    },
+    {
+    key: "digital-ads",
+    label: `Digital Ads (${project._count.digitalAdCampaigns})`,
+    icon: Target, // Import Target from lucide-react
+    },
+    {
       key: "concepts",
       label: "Concepts",
       icon: Lightbulb,
@@ -246,12 +340,12 @@ export default async function ProjectDetailPage({ params, searchParams }: PagePr
       icon: FileText,
     },
     {
-      key: "creative-assets",  // ✅ Add this
+      key: "creative-assets",
       label: "Creative Assets",
       icon: FileText,
     },
     {
-      key: "reviews",  // ✅ Add this
+      key: "reviews",
       label: "Reviews",
       icon: MessageSquare,
     },
@@ -317,6 +411,12 @@ export default async function ProjectDetailPage({ params, searchParams }: PagePr
               <Button size="sm" className="bg-blue-600 hover:bg-blue-700 text-white">
                 <PlusCircle className="w-4 h-4 mr-1.5" />
                 New Task
+              </Button>
+            </Link>
+            <Link href={`/dashboard/campaigns/new?clientId=${project.clientId}`}>
+              <Button size="sm" variant="outline" className="border-zinc-700 text-zinc-300 hover:bg-zinc-800">
+                <Megaphone className="w-4 h-4 mr-1.5" />
+                New Campaign
               </Button>
             </Link>
           </div>
@@ -598,6 +698,20 @@ export default async function ProjectDetailPage({ params, searchParams }: PagePr
               </div>
             )}
 
+            {tab === "campaigns" && (
+              <ProjectCampaignsTab
+                projectId={projectId}
+                initialCampaigns={serializedCampaigns}
+              />
+            )}
+
+            {tab === "digital-ads" && (
+              <DigitalAdsTab
+                projectId={projectId}
+                currency={project.currency}
+              />
+            )}
+
             {tab === "reporting" && (
               <ProjectReportingDashboard projectId={projectId} />
             )}
@@ -618,8 +732,16 @@ export default async function ProjectDetailPage({ params, searchParams }: PagePr
 
             {tab === "creative-assets" && <CreativeAssetsTab projectId={projectId} />}
 
-            {tab === "reviews" && <ReviewsTab projectId={projectId} />}
-            
+            {tab === "reviews" && (
+              <ReviewsTab
+                projectId={projectId}
+                conceptId={firstConcept?.id || null}
+                conceptName={firstConcept?.name || null}
+                conceptAssets={firstConcept?.assets || []}
+              />
+            )}
+
+
           </div>
         </div>
 
@@ -696,6 +818,12 @@ export default async function ProjectDetailPage({ params, searchParams }: PagePr
                 <Button variant="outline" size="sm" className="w-full justify-start text-xs border-zinc-700 text-zinc-300 hover:bg-zinc-800">
                   <PlusCircle className="w-3.5 h-3.5 mr-2" />
                   New Task
+                </Button>
+              </Link>
+              <Link href={`/dashboard/campaigns/new?clientId=${project.clientId}`}>
+                <Button variant="outline" size="sm" className="w-full justify-start text-xs border-zinc-700 text-zinc-300 hover:bg-zinc-800">
+                  <Megaphone className="w-3.5 h-3.5 mr-2" />
+                  New Campaign
                 </Button>
               </Link>
               <Link href={`/dashboard/projects/${project.id}/edit`}>

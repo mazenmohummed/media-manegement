@@ -47,7 +47,14 @@ export default async function ProjectsPage({
       include: {
         client: { select: { id: true, clientName: true } },
         contract: { select: { id: true, contractNo: true } },
-        campaign: { select: { id: true, name: true } },
+        campaigns: {
+        select: { 
+          id: true, 
+          name: true, 
+          campaignNo: true,
+          status: true,
+        },
+      },
         tags: { select: { id: true, name: true, color: true } },
         _count: { select: { tasks: true, milestones: true } },
       },
@@ -77,7 +84,16 @@ export default async function ProjectsPage({
     targetDeadline: project.targetDeadline ? project.targetDeadline.toISOString() : null,
     client: project.client,
     contract: project.contract,
-    campaign: project.campaign,
+    campaigns: project.campaigns.map((c) => ({
+    id: c.id,
+    name: c.name,
+    campaignNo: c.campaignNo,
+    status: c.status,
+    })),
+    campaign: project.campaigns[0] ? {
+      id: project.campaigns[0].id,
+      name: project.campaigns[0].name,
+    } : null,
     tags: project.tags,
     _count: project._count,
     createdAt: project.createdAt ? project.createdAt.toISOString() : null,
