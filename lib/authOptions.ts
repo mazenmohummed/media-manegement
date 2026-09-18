@@ -6,35 +6,6 @@ import CredentialsProvider from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
 import { UserRole } from "@prisma/client";
 
-// Module Augmentation using pure UserRole from Prisma
-declare module "next-auth" {
-  interface Session {
-    user: {
-      id: string;
-      agencyId?: string | null;
-      agencyName?: string | null;
-      clientId?: string | null;
-      role?: UserRole;
-    } & DefaultSession["user"];
-  }
-
-  interface User {
-    id: string;
-    agencyId?: string | null;
-    clientId?: string | null;
-    role?: UserRole;
-  }
-}
-
-declare module "next-auth/jwt" {
-  interface JWT {
-    id: string;
-    agencyId?: string | null;
-    agencyName?: string | null;
-    clientId?: string | null;
-    role?: UserRole;
-  }
-}
 
 export const authOptions: NextAuthOptions = {
   session: { strategy: "jwt" },

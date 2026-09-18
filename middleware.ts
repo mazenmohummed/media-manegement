@@ -1,6 +1,6 @@
 // middleware.ts
 import { NextRequest, NextResponse } from "next/server";
-import { getToken } from "next-auth/jwt";
+import { getToken, type JWT } from "next-auth/jwt";
 import { jwtVerify, JWTPayload } from "jose";
 
 interface AuthUserPayload extends JWTPayload {
@@ -9,6 +9,8 @@ interface AuthUserPayload extends JWTPayload {
   role?: string;
 }
 
+type AuthToken = JWT & AuthUserPayload;
+
 const PUBLIC_API_ROUTES = [
   "/api/public",
   "/api/webhooks",
@@ -16,7 +18,6 @@ const PUBLIC_API_ROUTES = [
   "/api/jobs/heartbeat",
 ];
 
-// ✅ Add /deploy to public pages
 const PUBLIC_PAGES = [
   "/",
   "/login",
@@ -26,18 +27,22 @@ const PUBLIC_PAGES = [
   "/deploy/operator",
   "/forgot-password",
 ];
+
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
   // 1. Check if user is authenticated first (for redirects)
-  const session = await getToken({
+  // ✅ Cast the token so custom fields (agencyId, role, userId) are typed
+  const session = (await getToken({
     req,
     secret: process.env.NEXTAUTH_SECRET,
-  });
+  })) as AuthToken | null;
 
   // 2. Handle public paths
   if (
-    PUBLIC_PAGES.some((page) => pathname === page || pathname.startsWith(page + "/")) ||
+    PUBLIC_PAGES.some(
+      (page) => pathname === page || pathname.startsWith(page + "/")
+    ) ||
     pathname.startsWith("/api/auth") ||
     PUBLIC_API_ROUTES.some((route) => pathname.startsWith(route)) ||
     pathname.startsWith("/_next")
@@ -79,11 +84,12 @@ export async function middleware(req: NextRequest) {
   }
 
   // 4. Fallback to session (already fetched above)
+  // ✅ Use `userId` / `sub` — NextAuth JWTs do not have an `id` field
   if (!userPayload && session) {
     userPayload = {
-      userId: (session.id as string) || (session.sub as string),
-      agencyId: session.agencyId as string,
-      role: session.role as string,
+      userId: (session.userId as string) || (session.sub as string) || undefined,
+      agencyId: session.agencyId as string | undefined,
+      role: session.role as string | undefined,
     };
   }
 
@@ -116,16 +122,18 @@ export async function middleware(req: NextRequest) {
   requestHeaders.set("x-user-id", userPayload.userId || "");
   requestHeaders.set("x-agency-id", userPayload.agencyId || "");
   requestHeaders.set("x-user-role", userPayload.role || "");
-
-  const forwardedFor = req.headers.get("x-forwarded-for");
-  const ipAddress = forwardedFor ? forwardedFor.split(",")[0].trim() : "127.0.0.1";
-  requestHeaders.set("x-ip-address", ipAddress);
+  requestHeaders.set("x-ip-address", getClientIp(req));
 
   return NextResponse.next({
     request: {
       headers: requestHeaders,
     },
   });
+}
+
+function getClientIp(req: NextRequest): string {
+  const forwardedFor = req.headers.get("x-forwarded-for");
+  return forwardedFor ? forwardedFor.split(",")[0].trim() : "127.0.0.1";
 }
 
 export const config = {
