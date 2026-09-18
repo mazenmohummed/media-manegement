@@ -1,89 +1,90 @@
-import { NextRequest, NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
-import { withAuthGuard, AuthContext } from "@/lib/auth/guard";
+// app/api/notifications/[id]/route.ts
+import { NextRequest, NextResponse } from 'next/server';
+import { withAuthGuard } from '@/lib/auth/guard';
+import { getScopedPrisma } from '@/lib/prisma';
 
-interface RouteParams {
-  params: Promise<{ id: string }>;
-}
-
-// PATCH: Mark a single notification as read
+// ─── PATCH /api/notifications/[id] ──────────────────────────────────────
 export const PATCH = withAuthGuard(
-  "user:read",
+  'notification:update',
   async (
-    _req: NextRequest,
-    authCtx: AuthContext,
-    routeProps: RouteParams
+    req: NextRequest,
+    { agencyId, userId },
+    routeProps: { params: Promise<{ id: string }> } // ✅ id param
   ) => {
     try {
       const { id } = await routeProps.params;
-      const { userId, agencyId, role } = authCtx;
+      const db = getScopedPrisma(agencyId);
 
-      const isAdmin = role === "ADMIN" || role === "SUPERADMIN";
-
-      const updated = await prisma.notification.updateMany({
+      const notification = await db.notification.findFirst({
         where: {
           id,
+          userId,
           agencyId,
-          ...(isAdmin ? {} : { userId }),
-        },
-        data: {
-          isRead: true,
-          readAt: new Date(),
         },
       });
 
-      if (updated.count === 0) {
+      if (!notification) {
         return NextResponse.json(
-          { error: "Notification not found or unauthorized" },
+          { error: 'Notification not found' },
           { status: 404 }
         );
       }
 
-      return NextResponse.json({ message: "Notification marked as read", ok: true });
+      const updated = await db.notification.update({
+        where: { id },
+        data: { isRead: true, readAt: new Date() },
+      });
+
+      return NextResponse.json({ success: true, notification: updated });
     } catch (error: any) {
-      console.error("[NOTIFICATION_PATCH_ERROR]", error);
+      console.error('[UPDATE_NOTIFICATION_ERROR]', error);
       return NextResponse.json(
-        { error: "Failed to update notification" },
+        { error: error.message || 'Failed to update notification' },
         { status: 500 }
       );
     }
   }
 );
 
-// DELETE: Remove a notification
+// ─── DELETE /api/notifications/[id] ─────────────────────────────────────
 export const DELETE = withAuthGuard(
-  "user:read",
+  'notification:delete',
   async (
-    _req: NextRequest,
-    authCtx: AuthContext,
-    routeProps: RouteParams
+    req: NextRequest,
+    { agencyId, userId },
+    routeProps: { params: Promise<{ id: string }> } // ✅ id param
   ) => {
     try {
       const { id } = await routeProps.params;
-      const { userId, agencyId, role } = authCtx;
+      const db = getScopedPrisma(agencyId);
 
-      const isAdmin = role === "ADMIN" || role === "SUPERADMIN";
-
-      const deleted = await prisma.notification.deleteMany({
+      const notification = await db.notification.findFirst({
         where: {
           id,
+          userId,
           agencyId,
-          ...(isAdmin ? {} : { userId }),
         },
       });
 
-      if (deleted.count === 0) {
+      if (!notification) {
         return NextResponse.json(
-          { error: "Notification not found or unauthorized" },
+          { error: 'Notification not found' },
           { status: 404 }
         );
       }
 
-      return NextResponse.json({ message: "Notification deleted", ok: true });
+      await db.notification.delete({
+        where: { id },
+      });
+
+      return NextResponse.json({
+        success: true,
+        message: 'Notification deleted',
+      });
     } catch (error: any) {
-      console.error("[NOTIFICATION_DELETE_ERROR]", error);
+      console.error('[DELETE_NOTIFICATION_ERROR]', error);
       return NextResponse.json(
-        { error: "Failed to delete notification" },
+        { error: error.message || 'Failed to delete notification' },
         { status: 500 }
       );
     }
