@@ -1,19 +1,20 @@
 // app/api/clients/[clientId]/route.ts
 
-import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth/next";
-import prisma from "@/lib/prisma";
-import { authOptions } from "@/lib/authOptions";
+import { NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth/next';
+import prisma from '@/lib/prisma';
+import { authOptions } from '@/lib/authOptions';
 
+// ✅ Use the actual param name from the folder: clientId
 type RouteContext = {
-  params: Promise<{ id: string }> | { id: string };
+  params: Promise<{ clientId: string }>;
 };
 
 type PatchClientBody = {
   clientName?: string;
   accountType?: string;
   status?: string;
-  relationshipType?: "ONE_TIME" | "RECURRING";
+  relationshipType?: 'ONE_TIME' | 'RECURRING';
   email?: string;
   phoneNumber?: string;
   website?: string;
@@ -41,14 +42,14 @@ const clean = (value?: string | null) => {
 };
 
 const numberOrNull = (value: unknown) => {
-  if (value === null || value === "") return null;
+  if (value === null || value === '') return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
 };
 
 async function getRouteId(context: RouteContext) {
   const params = await context.params;
-  return params.id;
+  return params.clientId; // ✅ Use clientId
 }
 
 const formatClient = (client: any) => {
@@ -60,14 +61,18 @@ const formatClient = (client: any) => {
     (sum: number, invoice: any) => sum + (invoice.totalAmount || 0),
     0
   );
-  const totalPaid = client.payments.reduce((sum: number, payment: any) => sum + (payment.amount || 0), 0);
+  const totalPaid = client.payments.reduce(
+    (sum: number, payment: any) => sum + (payment.amount || 0),
+    0
+  );
   const unappliedCredit = client.payments.reduce(
     (sum: number, payment: any) => sum + (payment.unappliedAmount || 0),
     0
   );
   const totalDue = Math.max(
     client.clientInvoices.reduce((sum: number, invoice: any) => {
-      const calculatedBalance = (invoice.totalAmount || 0) - (invoice.amountPaid || 0);
+      const calculatedBalance =
+        (invoice.totalAmount || 0) - (invoice.amountPaid || 0);
       return sum + Math.max(invoice.balanceDue ?? calculatedBalance, 0);
     }, 0) - unappliedCredit,
     client.outstandingBalance || 0,
@@ -75,9 +80,13 @@ const formatClient = (client: any) => {
   );
 
   const invoices = client.clientInvoices.map((invoice: any) => {
-    const invoicePayments = client.payments.filter((payment: any) => payment.invoiceId === invoice.id);
+    const invoicePayments = client.payments.filter(
+      (payment: any) => payment.invoiceId === invoice.id
+    );
     const projectPayments = invoice.projectId
-      ? client.payments.filter((payment: any) => payment.projectId === invoice.projectId)
+      ? client.payments.filter(
+          (payment: any) => payment.projectId === invoice.projectId
+        )
       : [];
     const paidFromPayments = [...invoicePayments, ...projectPayments].reduce(
       (sum: number, payment: any) => sum + (payment.amount || 0),
@@ -88,13 +97,20 @@ const formatClient = (client: any) => {
     return {
       ...invoice,
       amountPaid,
-      balanceDue: Math.max((invoice.totalAmount || 0) - amountPaid, invoice.balanceDue || 0, 0),
+      balanceDue: Math.max(
+        (invoice.totalAmount || 0) - amountPaid,
+        invoice.balanceDue || 0,
+        0
+      ),
     };
   });
 
   return {
     ...client,
-    primaryContact: client.contacts.find((contact: any) => contact.isPrimary) ?? client.contacts[0] ?? null,
+    primaryContact:
+      client.contacts.find((contact: any) => contact.isPrimary) ??
+      client.contacts[0] ??
+      null,
     activeBudget: client.clientBudgets[0] ?? null,
     latestStatement: client.statements[0] ?? null,
     invoices,
@@ -111,12 +127,14 @@ const formatClient = (client: any) => {
   };
 };
 
+// ─── GET ────────────────────────────────────────────────────────────────
+
 export async function GET(req: Request, context: RouteContext) {
   const session = await getServerSession(authOptions).catch(() => null);
   const agencyId = session?.user?.agencyId;
 
   if (!agencyId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   const id = await getRouteId(context);
@@ -126,20 +144,20 @@ export async function GET(req: Request, context: RouteContext) {
       where: {
         id,
         agencyId,
-        OR: [{ deletedAt: null }, { deletedAt: { isSet: false } }],
+        // ✅ Fixed: `deletedAt` accepts Date | null, not { isSet }
+        deletedAt: null,
       },
       include: {
         contacts: {
-          orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
+          orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
         },
         clientBudgets: {
           where: { isActive: true },
-          orderBy: { periodEnd: "desc" },
+          orderBy: { periodEnd: 'desc' },
         },
         projects: {
-          where: {
-            OR: [{ deletedAt: null }, { deletedAt: { isSet: false } }],
-          },
+          // ✅ Fixed: `deletedAt: null` only
+          where: { deletedAt: null },
           select: {
             id: true,
             projectNo: true,
@@ -152,10 +170,10 @@ export async function GET(req: Request, context: RouteContext) {
             targetDeadline: true,
             createdAt: true,
           },
-          orderBy: { createdAt: "desc" },
+          orderBy: { createdAt: 'desc' },
         },
         clientInvoices: {
-          where: { status: { not: "VOID" } },
+          where: { status: { not: 'VOID' } },
           select: {
             id: true,
             invoiceNo: true,
@@ -174,10 +192,10 @@ export async function GET(req: Request, context: RouteContext) {
             projectId: true,
             notes: true,
           },
-          orderBy: [{ issuedAt: "desc" }, { createdAt: "desc" }],
+          orderBy: [{ issuedAt: 'desc' }, { createdAt: 'desc' }],
         },
         payments: {
-          where: { status: "COMPLETED" },
+          where: { status: 'COMPLETED' },
           select: {
             id: true,
             paymentNo: true,
@@ -192,32 +210,40 @@ export async function GET(req: Request, context: RouteContext) {
             projectId: true,
             invoiceId: true,
           },
-          orderBy: { datePaid: "desc" },
+          orderBy: { datePaid: 'desc' },
         },
         statements: {
-          orderBy: { periodEnd: "desc" },
+          orderBy: { periodEnd: 'desc' },
           take: 5,
         },
       },
     });
 
     if (!client) {
-      return NextResponse.json({ error: "Client not found in your workspace" }, { status: 404 });
+      return NextResponse.json(
+        { error: 'Client not found in your workspace' },
+        { status: 404 }
+      );
     }
 
     return NextResponse.json(formatClient(client));
   } catch (error: any) {
-    console.error("GET_CLIENT_DETAIL_ERROR:", error?.message);
-    return NextResponse.json({ error: "Failed to fetch client" }, { status: 500 });
+    console.error('GET_CLIENT_DETAIL_ERROR:', error?.message);
+    return NextResponse.json(
+      { error: 'Failed to fetch client' },
+      { status: 500 }
+    );
   }
 }
+
+// ─── PATCH ──────────────────────────────────────────────────────────────
 
 export async function PATCH(req: Request, context: RouteContext) {
   const session = await getServerSession(authOptions).catch(() => null);
   const agencyId = session?.user?.agencyId;
 
   if (!agencyId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   const id = await getRouteId(context);
@@ -228,15 +254,19 @@ export async function PATCH(req: Request, context: RouteContext) {
       where: {
         id,
         agencyId,
-        OR: [{ deletedAt: null }, { deletedAt: { isSet: false } }],
+        deletedAt: null, // ✅ Fixed
       },
       select: { id: true },
     });
 
     if (!existingClient) {
-      return NextResponse.json({ error: "Client not found in your workspace" }, { status: 404 });
+      return NextResponse.json(
+        { error: 'Client not found in your workspace' },
+        { status: 404 }
+      );
     }
 
+    // ✅ Build only the billing address fields that are actually set
     const billingAddress = {
       line1: clean(body.billingLine1),
       line2: clean(body.billingLine2),
@@ -250,6 +280,27 @@ export async function PATCH(req: Request, context: RouteContext) {
     const creditLimit = numberOrNull(body.creditLimit);
     const creditLimitAlertPct = numberOrNull(body.creditLimitAlertPct);
 
+    // ✅ Safe email normalization (handle undefined)
+    const normalizedEmail = body.email
+      ? clean(body.email.toLowerCase().trim())
+      : undefined;
+
+    // ✅ Build the billing address relation input
+    // If the client already has a billing address, use `upsert`
+    // Otherwise, `create`
+    let billingAddressInput:
+      | { upsert: { create: any; update: any } }
+      | undefined = undefined;
+
+    if (hasBillingAddress) {
+      billingAddressInput = {
+        upsert: {
+          create: billingAddress,
+          update: billingAddress,
+        },
+      };
+    }
+
     const updatedClient = await prisma.client.update({
       where: { id },
       data: {
@@ -257,26 +308,34 @@ export async function PATCH(req: Request, context: RouteContext) {
         accountType: clean(body.accountType),
         status: clean(body.status),
         relationshipType: body.relationshipType,
-        email: clean(body.email.toLowerCase().trim()),
+        email: normalizedEmail,
         phoneNumber: clean(body.phoneNumber),
         website: clean(body.website),
         notes: clean(body.notes),
-        billingAddress: hasBillingAddress ? billingAddress : undefined,
+        billingAddress: billingAddressInput,
         creditLimit,
         isOnCreditHold: body.isOnCreditHold,
-        creditHoldReason: body.isOnCreditHold ? clean(body.creditHoldReason) : null,
+        creditHoldReason: body.isOnCreditHold
+          ? clean(body.creditHoldReason) ?? null
+          : null,
         creditLimitAlertPct,
       },
     });
 
+    // ─── Contact upsert ──────────────────────────────────────────────
     if (clean(body.contactName)) {
+      // ✅ Safe email normalization for the contact
+      const normalizedContactEmail = body.contactEmail
+        ? clean(body.contactEmail.toLowerCase().trim())
+        : undefined;
+
       if (body.primaryContactId) {
         await prisma.clientContact.update({
           where: { id: body.primaryContactId },
           data: {
             name: clean(body.contactName)!,
             title: clean(body.contactTitle),
-            email: clean(body.contactEmail.toLowerCase().trim()),
+            email: normalizedContactEmail,
             phoneNumber: clean(body.contactPhone),
             isPrimary: true,
           },
@@ -286,7 +345,7 @@ export async function PATCH(req: Request, context: RouteContext) {
           data: {
             name: clean(body.contactName)!,
             title: clean(body.contactTitle),
-            email: clean(body.contactEmail.toLowerCase().trim()),
+            email: normalizedContactEmail,
             phoneNumber: clean(body.contactPhone),
             isPrimary: true,
             clientId: id,
@@ -298,7 +357,10 @@ export async function PATCH(req: Request, context: RouteContext) {
 
     return NextResponse.json(updatedClient);
   } catch (error: any) {
-    console.error("PATCH_CLIENT_ERROR:", error?.message);
-    return NextResponse.json({ error: "Modification failed" }, { status: 500 });
+    console.error('PATCH_CLIENT_ERROR:', error?.message);
+    return NextResponse.json(
+      { error: 'Modification failed' },
+      { status: 500 }
+    );
   }
 }
