@@ -6,7 +6,7 @@ import { authOptions } from '@/lib/authOptions';
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { campaignId: string } }
+  { params }: { params: Promise<{ campaignId: string }> } // ✅ Promise
 ) {
   try {
     const session = await getServerSession(authOptions);
@@ -16,37 +16,45 @@ export async function GET(
 
     const agencyId = session.user.agencyId;
     if (!agencyId) {
-      return NextResponse.json({ error: 'Agency ID not found' }, { status: 400 });
+      return NextResponse.json(
+        { error: 'Agency ID not found' },
+        { status: 400 }
+      );
     }
 
+    // ✅ Await params before accessing
+    const { campaignId } = await params;
+
     // Verify campaign exists and belongs to agency
-    const campaign = await prisma.campaign.findUnique({
+    // ✅ Also changed findUnique → findFirst (agencyId/deletedAt are not unique)
+    const campaign = await prisma.campaign.findFirst({
       where: {
-        id: params.campaignId,
-        agencyId: agencyId,
+        id: campaignId,
+        agencyId,
         deletedAt: null,
       },
       select: { id: true },
     });
 
     if (!campaign) {
-      return NextResponse.json({ error: 'Campaign not found' }, { status: 404 });
+      return NextResponse.json(
+        { error: 'Campaign not found' },
+        { status: 404 }
+      );
     }
 
     // Get all projects under this campaign
     const projects = await prisma.project.findMany({
       where: {
-        campaignId: params.campaignId,
-        agencyId: agencyId,
+        campaigns: { some: { id: campaignId } }, // ✅ many-to-many relation
+        agencyId,
         deletedAt: null,
       },
       select: {
         id: true,
         name: true,
         digitalAdCampaigns: {
-          where: {
-            deletedAt: null,
-          },
+          where: { deletedAt: null },
           select: {
             id: true,
             name: true,
@@ -57,9 +65,7 @@ export async function GET(
             startDate: true,
             endDate: true,
             metrics: {
-              orderBy: {
-                date: 'desc',
-              },
+              orderBy: { date: 'desc' },
               take: 1,
               select: {
                 reach: true,
@@ -85,7 +91,10 @@ export async function GET(
     let totalAdCount = 0;
     let totalBudget = 0;
     const statusBreakdown: Record<string, number> = {};
-    const platformBreakdown: Record<string, { count: number; budget: number }> = {};
+    const platformBreakdown: Record<
+      string,
+      { count: number; budget: number }
+    > = {};
     let totalReach = 0;
     let totalImpressions = 0;
     let totalClicks = 0;
@@ -112,21 +121,21 @@ export async function GET(
 
         // Metrics
         if (ad.metrics.length > 0) {
-          const latestMetric = ad.metrics[0];
-          totalReach += latestMetric.reach || 0;
-          totalImpressions += latestMetric.impressions || 0;
-          totalClicks += latestMetric.clicks || 0;
-          totalSpend += latestMetric.spend || 0;
-          totalConversions += latestMetric.conversions || 0;
-          totalRevenue += latestMetric.revenue || 0;
-          totalLeads += latestMetric.leads || 0;
-          totalEngagement += latestMetric.engagement || 0;
+          const m = ad.metrics[0];
+          totalReach += m.reach || 0;
+          totalImpressions += m.impressions || 0;
+          totalClicks += m.clicks || 0;
+          totalSpend += m.spend || 0;
+          totalConversions += m.conversions || 0;
+          totalRevenue += m.revenue || 0;
+          totalLeads += m.leads || 0;
+          totalEngagement += m.engagement || 0;
         }
       });
     });
 
     return NextResponse.json({
-      campaignId: params.campaignId,
+      campaignId,
       summary: {
         totalAdCount,
         totalBudget,
@@ -143,17 +152,25 @@ export async function GET(
         totalRevenue,
         totalLeads,
         totalEngagement,
-        // Calculated metrics
-        averageCTR: totalImpressions > 0 ? (totalClicks / totalImpressions) * 100 : 0,
+        averageCTR:
+          totalImpressions > 0
+            ? (totalClicks / totalImpressions) * 100
+            : 0,
         averageCPC: totalClicks > 0 ? totalSpend / totalClicks : 0,
-        averageCPM: totalImpressions > 0 ? (totalSpend / totalImpressions) * 1000 : 0,
+        averageCPM:
+          totalImpressions > 0
+            ? (totalSpend / totalImpressions) * 1000
+            : 0,
         averageROAS: totalSpend > 0 ? totalRevenue / totalSpend : 0,
       },
       projects: projects.map((project) => ({
         id: project.id,
         name: project.name,
         adCount: project.digitalAdCampaigns.length,
-        totalBudget: project.digitalAdCampaigns.reduce((sum, ad) => sum + (ad.budget || 0), 0),
+        totalBudget: project.digitalAdCampaigns.reduce(
+          (sum, ad) => sum + (ad.budget || 0),
+          0
+        ),
         ads: project.digitalAdCampaigns.map((ad) => ({
           id: ad.id,
           name: ad.name,

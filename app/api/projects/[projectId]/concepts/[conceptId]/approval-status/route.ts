@@ -6,18 +6,6 @@ import { checkConceptApproval } from '@/lib/approval-gate';
 import { prisma } from '@/lib/prisma';
 
 // Define types for better type safety
-interface AssetWithVersion {
-  id: string;
-  name: string;
-  type: string;
-  versions: {
-    id: string;
-    versionNo: number;
-    status: string;
-    feedback: string | null;
-  }[];
-}
-
 interface AssetStatus {
   id: string;
   name: string;
@@ -29,7 +17,7 @@ interface AssetStatus {
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { conceptId: string } }
+  { params }: { params: Promise<{ conceptId: string }> } // ✅ Promise
 ) {
   try {
     const session = await getServerSession(authOptions);
@@ -37,7 +25,8 @@ export async function GET(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { conceptId } = params;
+    // ✅ Await params before accessing
+    const { conceptId } = await params;
     const agencyId = session.user.agencyId;
 
     // Verify concept belongs to agency
@@ -86,10 +75,12 @@ export async function GET(
       feedback: asset.versions[0]?.feedback || null,
     }));
 
-    // Calculate summary with proper typing
+    // Calculate summary
     const summary = {
       total: assets.length,
-      approved: assets.filter((a: any) => a.versions[0]?.status === 'APPROVED').length,
+      approved: assets.filter(
+        (a: any) => a.versions[0]?.status === 'APPROVED'
+      ).length,
       pending: assets.filter(
         (a: any) =>
           a.versions[0]?.status === 'CLIENT_REVIEW' ||
