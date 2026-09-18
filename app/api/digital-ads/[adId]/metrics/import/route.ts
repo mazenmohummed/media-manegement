@@ -158,7 +158,7 @@ export async function POST(
     // ─── Audit log ─────────────────────────────────────────────────────
     await prisma.auditLog.create({
       data: {
-        action: 'IMPORT',
+        action: 'CREATE',
         entityType: 'AD_METRIC_SNAPSHOT',
         entityId: adId,
         message: `Imported ${results.imported} metrics for campaign ${adId}`,

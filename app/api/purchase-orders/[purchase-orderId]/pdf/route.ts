@@ -7,8 +7,12 @@ import { InvoiceGenerator } from "@/lib/pdf/invoice-generator";
 
 // ─── Helper to convert Uint8Array → NextResponse-safe body ──────────────
 function pdfResponse(pdfBytes: Uint8Array, filename: string) {
-  // ✅ Blob is accepted by BodyInit, works in Node & Edge runtime
-  const blob = new Blob([pdfBytes], { type: "application/pdf" });
+  // ✅ Copy into a fresh ArrayBuffer to satisfy BlobPart's ArrayBuffer requirement.
+  // Uint8Array<ArrayBufferLike> may be backed by SharedArrayBuffer, which BlobPart rejects.
+  const arrayBuffer = new ArrayBuffer(pdfBytes.byteLength);
+  new Uint8Array(arrayBuffer).set(pdfBytes);
+
+  const blob = new Blob([arrayBuffer], { type: "application/pdf" });
 
   return new NextResponse(blob, {
     status: 200,
