@@ -1,6 +1,11 @@
 import { S3Client } from "@aws-sdk/client-s3";
 
-if (!process.env.R2_ACCOUNT_ID || !process.env.R2_ACCESS_KEY_ID || !process.env.R2_SECRET_ACCESS_KEY) {
+if (
+  !process.env.R2_ACCOUNT_ID ||
+  !process.env.R2_ACCESS_KEY_ID ||
+  !process.env.R2_SECRET_ACCESS_KEY ||
+  !process.env.R2_BUCKET_NAME
+) {
   throw new Error("Missing Cloudflare R2 environment variables");
 }
 
@@ -13,5 +18,6 @@ export const r2Client = new S3Client({
   },
 });
 
-export const R2_BUCKET_NAME = process.env.R2_BUCKET_NAME || "agency-assets";
-export const R2_PUBLIC_DOMAIN = process.env.R2_PUBLIC_DOMAIN; // e.g., "https://pub-xxx.r2.dev" or custom domain "https://assets.yourdomain.com"
+// ✅ No literal fallback — reads strictly from env
+export const R2_BUCKET_NAME = process.env.R2_BUCKET_NAME;
+export const R2_PUBLIC_DOMAIN = process.env.R2_PUBLIC_DOMAIN;
