@@ -1,4 +1,4 @@
-// app/api/campaigns/[campaignId]/digital-ads/stats/route.ts
+// app/api/projects/[projectId]/digital-ads/stats/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getServerSession } from 'next-auth';
@@ -6,7 +6,7 @@ import { authOptions } from '@/lib/authOptions';
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: Promise<{ campaignId: string }> } // ✅ Promise
+  { params }: { params: Promise<{ projectId: string }> }
 ) {
   try {
     const session = await getServerSession(authOptions);
@@ -22,66 +22,58 @@ export async function GET(
       );
     }
 
-    // ✅ Await params before accessing
-    const { campaignId } = await params;
+    // Await params before accessing (Next.js 16 requirement)
+    const { projectId } = await params;
 
-    // Verify campaign exists and belongs to agency
-    // ✅ Also changed findUnique → findFirst (agencyId/deletedAt are not unique)
-    const campaign = await prisma.campaign.findFirst({
+    // Verify project exists and belongs to agency
+    const project = await prisma.project.findFirst({
       where: {
-        id: campaignId,
+        id: projectId,
         agencyId,
         deletedAt: null,
       },
-      select: { id: true },
+      select: { id: true, name: true },
     });
 
-    if (!campaign) {
+    if (!project) {
       return NextResponse.json(
-        { error: 'Campaign not found' },
+        { error: 'Project not found' },
         { status: 404 }
       );
     }
 
-    // Get all projects under this campaign
-    const projects = await prisma.project.findMany({
+    // Get all digital ad campaigns under this project
+    const digitalAdCampaigns = await prisma.digitalAdCampaign.findMany({
       where: {
-        campaigns: { some: { id: campaignId } }, // ✅ many-to-many relation
+        projectId,
         agencyId,
         deletedAt: null,
       },
       select: {
         id: true,
         name: true,
-        digitalAdCampaigns: {
-          where: { deletedAt: null },
+        platform: true,
+        status: true,
+        budget: true,
+        currency: true,
+        startDate: true,
+        endDate: true,
+        metrics: {
+          orderBy: { date: 'desc' },
+          take: 1,
           select: {
-            id: true,
-            name: true,
-            platform: true,
-            status: true,
-            budget: true,
-            currency: true,
-            startDate: true,
-            endDate: true,
-            metrics: {
-              orderBy: { date: 'desc' },
-              take: 1,
-              select: {
-                reach: true,
-                impressions: true,
-                clicks: true,
-                ctr: true,
-                cpc: true,
-                cpm: true,
-                spend: true,
-                conversions: true,
-                revenue: true,
-                roas: true,
-                leads: true,
-                engagement: true,
-              },
-            },
+            reach: true,
+            impressions: true,
+            clicks: true,
+            ctr: true,
+            cpc: true,
+            cpm: true,
+            spend: true,
+            conversions: true,
+            revenue: true,
+            roas: true,
+            leads: true,
+            engagement: true,
           },
         },
       },
@@ -104,42 +96,40 @@ export async function GET(
     let totalLeads = 0;
     let totalEngagement = 0;
 
-    projects.forEach((project) => {
-      project.digitalAdCampaigns.forEach((ad) => {
-        totalAdCount++;
-        totalBudget += ad.budget || 0;
+    digitalAdCampaigns.forEach((ad) => {
+      totalAdCount++;
+      totalBudget += ad.budget || 0;
 
-        // Status breakdown
-        statusBreakdown[ad.status] = (statusBreakdown[ad.status] || 0) + 1;
+      // Status breakdown
+      statusBreakdown[ad.status] = (statusBreakdown[ad.status] || 0) + 1;
 
-        // Platform breakdown
-        if (!platformBreakdown[ad.platform]) {
-          platformBreakdown[ad.platform] = { count: 0, budget: 0 };
-        }
-        platformBreakdown[ad.platform].count += 1;
-        platformBreakdown[ad.platform].budget += ad.budget || 0;
+      // Platform breakdown
+      if (!platformBreakdown[ad.platform]) {
+        platformBreakdown[ad.platform] = { count: 0, budget: 0 };
+      }
+      platformBreakdown[ad.platform].count += 1;
+      platformBreakdown[ad.platform].budget += ad.budget || 0;
 
-        // Metrics
-        if (ad.metrics.length > 0) {
-          const m = ad.metrics[0];
-          totalReach += m.reach || 0;
-          totalImpressions += m.impressions || 0;
-          totalClicks += m.clicks || 0;
-          totalSpend += m.spend || 0;
-          totalConversions += m.conversions || 0;
-          totalRevenue += m.revenue || 0;
-          totalLeads += m.leads || 0;
-          totalEngagement += m.engagement || 0;
-        }
-      });
+      // Metrics (latest snapshot only)
+      if (ad.metrics.length > 0) {
+        const m = ad.metrics[0];
+        totalReach += m.reach || 0;
+        totalImpressions += m.impressions || 0;
+        totalClicks += m.clicks || 0;
+        totalSpend += m.spend || 0;
+        totalConversions += m.conversions || 0;
+        totalRevenue += m.revenue || 0;
+        totalLeads += m.leads || 0;
+        totalEngagement += m.engagement || 0;
+      }
     });
 
     return NextResponse.json({
-      campaignId,
+      projectId,
+      projectName: project.name,
       summary: {
         totalAdCount,
         totalBudget,
-        totalProjects: projects.length,
       },
       statusBreakdown,
       platformBreakdown,
@@ -163,29 +153,20 @@ export async function GET(
             : 0,
         averageROAS: totalSpend > 0 ? totalRevenue / totalSpend : 0,
       },
-      projects: projects.map((project) => ({
-        id: project.id,
-        name: project.name,
-        adCount: project.digitalAdCampaigns.length,
-        totalBudget: project.digitalAdCampaigns.reduce(
-          (sum, ad) => sum + (ad.budget || 0),
-          0
-        ),
-        ads: project.digitalAdCampaigns.map((ad) => ({
-          id: ad.id,
-          name: ad.name,
-          platform: ad.platform,
-          status: ad.status,
-          budget: ad.budget,
-          currency: ad.currency,
-          startDate: ad.startDate,
-          endDate: ad.endDate,
-          latestMetrics: ad.metrics.length > 0 ? ad.metrics[0] : null,
-        })),
+      ads: digitalAdCampaigns.map((ad) => ({
+        id: ad.id,
+        name: ad.name,
+        platform: ad.platform,
+        status: ad.status,
+        budget: ad.budget,
+        currency: ad.currency,
+        startDate: ad.startDate,
+        endDate: ad.endDate,
+        latestMetrics: ad.metrics.length > 0 ? ad.metrics[0] : null,
       })),
     });
   } catch (error) {
-    console.error('Error fetching campaign ad stats:', error);
+    console.error('Error fetching project ad stats:', error);
     return NextResponse.json(
       { error: 'Failed to fetch ad statistics' },
       { status: 500 }
