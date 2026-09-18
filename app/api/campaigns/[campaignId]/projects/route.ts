@@ -1,4 +1,4 @@
-// app/api/campaigns/[campaignId]/projects/route.ts (full version with POST)
+// app/api/campaigns/[campaignId]/projects/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getServerSession } from 'next-auth';
@@ -9,16 +9,20 @@ const createProjectSchema = z.object({
   name: z.string().min(1, 'Project name is required'),
   projectName: z.string().optional(),
   clientId: z.string().min(1, 'Client is required'),
-  status: z.enum(['DRAFT', 'ACTIVE', 'ON_HOLD', 'COMPLETED', 'CANCELLED', 'ARCHIVED']).default('DRAFT'),
+  status: z
+    .enum(['DRAFT', 'ACTIVE', 'ON_HOLD', 'COMPLETED', 'CANCELLED', 'ARCHIVED'])
+    .default('DRAFT'),
   totalValue: z.number().min(0).default(0),
   currency: z.string().default('EGP'),
-  targetDeadline: z.string().transform(str => new Date(str)).optional(),
+  targetDeadline: z.string().transform((str) => new Date(str)).optional(),
   projectStory: z.string().optional(),
 });
 
+// ─── GET ────────────────────────────────────────────────────────────────
+
 export async function GET(
   req: NextRequest,
-  { params }: { params: { campaignId: string } }
+  { params }: { params: Promise<{ campaignId: string }> } // ✅ Promise
 ) {
   try {
     const session = await getServerSession(authOptions);
@@ -31,15 +35,21 @@ export async function GET(
       return NextResponse.json({ error: 'Agency ID not found' }, { status: 400 });
     }
 
-    if (!params.campaignId) {
-      return NextResponse.json({ error: 'Campaign ID is required' }, { status: 400 });
+    // ✅ Await params
+    const { campaignId } = await params;
+
+    if (!campaignId) {
+      return NextResponse.json(
+        { error: 'Campaign ID is required' },
+        { status: 400 }
+      );
     }
 
     // Verify campaign exists and belongs to the agency
-    const campaign = await prisma.campaign.findUnique({
+    const campaign = await prisma.campaign.findFirst({
       where: {
-        id: params.campaignId,
-        agencyId: agencyId,
+        id: campaignId,
+        agencyId,
         deletedAt: null,
       },
       select: {
@@ -58,8 +68,8 @@ export async function GET(
     const search = searchParams.get('search');
 
     const where: any = {
-      campaignId: params.campaignId,
-      agencyId: agencyId,
+      campaignId,
+      agencyId,
       deletedAt: null,
     };
 
@@ -86,9 +96,7 @@ export async function GET(
           },
         },
         digitalAdCampaigns: {
-          where: {
-            deletedAt: null,
-          },
+          where: { deletedAt: null },
           select: {
             id: true,
             name: true,
@@ -99,9 +107,7 @@ export async function GET(
           },
         },
         tasks: {
-          where: {
-            deletedAt: null,
-          },
+          where: { deletedAt: null },
           select: {
             id: true,
             status: true,
@@ -137,9 +143,11 @@ export async function GET(
   }
 }
 
+// ─── POST ───────────────────────────────────────────────────────────────
+
 export async function POST(
   req: NextRequest,
-  { params }: { params: { campaignId: string } }
+  { params }: { params: Promise<{ campaignId: string }> } // ✅ Promise
 ) {
   try {
     const session = await getServerSession(authOptions);
@@ -152,18 +160,24 @@ export async function POST(
       return NextResponse.json({ error: 'Agency ID not found' }, { status: 400 });
     }
 
-    if (!params.campaignId) {
-      return NextResponse.json({ error: 'Campaign ID is required' }, { status: 400 });
+    // ✅ Await params
+    const { campaignId } = await params;
+
+    if (!campaignId) {
+      return NextResponse.json(
+        { error: 'Campaign ID is required' },
+        { status: 400 }
+      );
     }
 
     const body = await req.json();
     const validatedData = createProjectSchema.parse(body);
 
     // Verify campaign exists and belongs to the agency
-    const campaign = await prisma.campaign.findUnique({
+    const campaign = await prisma.campaign.findFirst({
       where: {
-        id: params.campaignId,
-        agencyId: agencyId,
+        id: campaignId,
+        agencyId,
         deletedAt: null,
       },
       select: {
@@ -178,10 +192,10 @@ export async function POST(
     }
 
     // Verify client exists and belongs to the agency
-    const client = await prisma.client.findUnique({
+    const client = await prisma.client.findFirst({
       where: {
         id: validatedData.clientId,
-        agencyId: agencyId,
+        agencyId,
         deletedAt: null,
       },
       select: {
@@ -196,14 +210,14 @@ export async function POST(
 
     // Generate project number
     const count = await prisma.project.count({
-      where: { agencyId: agencyId },
+      where: { agencyId },
     });
     const projectNo = `PRJ-${String(count + 1).padStart(4, '0')}`;
 
     // Create project
     const project = await prisma.project.create({
       data: {
-        projectNo: projectNo,
+        projectNo,
         name: validatedData.name,
         projectName: validatedData.projectName || validatedData.name,
         status: validatedData.status,
@@ -211,9 +225,12 @@ export async function POST(
         currency: validatedData.currency,
         targetDeadline: validatedData.targetDeadline,
         projectStory: validatedData.projectStory,
-        agencyId: agencyId,
+        agencyId,
         clientId: validatedData.clientId,
-        campaignId: params.campaignId,
+        // ✅ Connect campaign via the many-to-many relation
+        campaigns: {
+          connect: { id: campaignId },
+        },
       },
       include: {
         client: {
@@ -222,7 +239,7 @@ export async function POST(
             clientName: true,
           },
         },
-        campaign: {
+        campaigns: {
           select: {
             id: true,
             name: true,
@@ -231,18 +248,18 @@ export async function POST(
       },
     });
 
-    // Log audit
+    // Audit log
     await prisma.auditLog.create({
       data: {
         action: 'CREATE',
         entityType: 'PROJECT',
         entityId: project.id,
         message: `Created project ${project.name} under campaign ${campaign.name}`,
-        agencyId: agencyId,
+        agencyId,
         actorId: session.user.id,
         metadata: {
           projectNo: project.projectNo,
-          campaignId: params.campaignId,
+          campaignId,
           clientId: validatedData.clientId,
         },
       },
@@ -252,8 +269,8 @@ export async function POST(
   } catch (error) {
     if (error instanceof ZodError) {
       return NextResponse.json(
-        { 
-          error: 'Validation failed', 
+        {
+          error: 'Validation failed',
           details: error.issues.map((issue) => ({
             path: issue.path.join('.'),
             message: issue.message,
