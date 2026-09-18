@@ -7,7 +7,19 @@ import { z, ZodError } from 'zod';
 
 const updateDigitalAdSchema = z.object({
   name: z.string().min(1).optional(),
-  platform: z.enum(['FACEBOOK', 'INSTAGRAM', 'TIKTOK', 'GOOGLE', 'YOUTUBE', 'SNAPCHAT', 'X', 'LINKEDIN', 'OTHER']).optional(),
+  platform: z
+    .enum([
+      'FACEBOOK',
+      'INSTAGRAM',
+      'TIKTOK',
+      'GOOGLE',
+      'YOUTUBE',
+      'SNAPCHAT',
+      'X',
+      'LINKEDIN',
+      'OTHER',
+    ])
+    .optional(),
   budget: z.number().min(0).optional(),
   currency: z.string().optional(),
   landingPageUrl: z.string().url().optional(),
@@ -18,14 +30,16 @@ const updateDigitalAdSchema = z.object({
   utmContent: z.string().optional(),
   pixelId: z.string().optional(),
   audienceSegment: z.string().optional(),
-  startDate: z.string().transform(str => new Date(str)).optional(),
-  endDate: z.string().transform(str => new Date(str)).optional(),
+  startDate: z.string().transform((str) => new Date(str)).optional(),
+  endDate: z.string().transform((str) => new Date(str)).optional(),
   status: z.enum(['DRAFT', 'ACTIVE', 'PAUSED', 'COMPLETED']).optional(),
 });
 
+// ─── GET ────────────────────────────────────────────────────────────────
+
 export async function GET(
   req: NextRequest,
-  { params }: { params: { projectId: string; adId: string } }
+  { params }: { params: Promise<{ projectId: string; adId: string }> } // ✅ Promise
 ) {
   try {
     const session = await getServerSession(authOptions);
@@ -35,14 +49,21 @@ export async function GET(
 
     const agencyId = session.user.agencyId;
     if (!agencyId) {
-      return NextResponse.json({ error: 'Agency ID not found' }, { status: 400 });
+      return NextResponse.json(
+        { error: 'Agency ID not found' },
+        { status: 400 }
+      );
     }
 
-    const adCampaign = await prisma.digitalAdCampaign.findUnique({
+    // ✅ Await params before accessing
+    const { projectId, adId } = await params;
+
+    // ✅ Use findFirst — projectId, agencyId, deletedAt are not unique
+    const adCampaign = await prisma.digitalAdCampaign.findFirst({
       where: {
-        id: params.adId,
-        projectId: params.projectId,
-        agencyId: agencyId,
+        id: adId,
+        projectId,
+        agencyId,
         deletedAt: null,
       },
       include: {
@@ -81,7 +102,10 @@ export async function GET(
     });
 
     if (!adCampaign) {
-      return NextResponse.json({ error: 'Ad campaign not found' }, { status: 404 });
+      return NextResponse.json(
+        { error: 'Ad campaign not found' },
+        { status: 404 }
+      );
     }
 
     return NextResponse.json({ adCampaign });
@@ -94,9 +118,11 @@ export async function GET(
   }
 }
 
+// ─── PUT ────────────────────────────────────────────────────────────────
+
 export async function PUT(
   req: NextRequest,
-  { params }: { params: { projectId: string; adId: string } }
+  { params }: { params: Promise<{ projectId: string; adId: string }> } // ✅ Promise
 ) {
   try {
     const session = await getServerSession(authOptions);
@@ -106,8 +132,14 @@ export async function PUT(
 
     const agencyId = session.user.agencyId;
     if (!agencyId) {
-      return NextResponse.json({ error: 'Agency ID not found' }, { status: 400 });
+      return NextResponse.json(
+        { error: 'Agency ID not found' },
+        { status: 400 }
+      );
     }
+
+    // ✅ Await params before accessing
+    const { projectId, adId } = await params;
 
     const actorId = session.user.id ?? 'system';
 
@@ -115,11 +147,11 @@ export async function PUT(
     const validatedData = updateDigitalAdSchema.parse(body);
 
     // Check if ad campaign exists with all fields
-    const existingAd = await prisma.digitalAdCampaign.findUnique({
+    const existingAd = await prisma.digitalAdCampaign.findFirst({
       where: {
-        id: params.adId,
-        projectId: params.projectId,
-        agencyId: agencyId,
+        id: adId,
+        projectId,
+        agencyId,
         deletedAt: null,
       },
       include: {
@@ -128,7 +160,10 @@ export async function PUT(
     });
 
     if (!existingAd) {
-      return NextResponse.json({ error: 'Ad campaign not found' }, { status: 404 });
+      return NextResponse.json(
+        { error: 'Ad campaign not found' },
+        { status: 404 }
+      );
     }
 
     // Validate status transition
@@ -143,21 +178,39 @@ export async function PUT(
       const allowedTransitions = statusFlow[existingAd.status] || [];
       if (!allowedTransitions.includes(validatedData.status)) {
         return NextResponse.json(
-          { error: `Invalid status transition from ${existingAd.status} to ${validatedData.status}` },
+          {
+            error: `Invalid status transition from ${existingAd.status} to ${validatedData.status}`,
+          },
           { status: 400 }
         );
       }
     }
 
     // Get UTM values from validated data or existing ad
-    const utmSource = validatedData.utmSource !== undefined ? validatedData.utmSource : existingAd.utmSource;
-    const utmMedium = validatedData.utmMedium !== undefined ? validatedData.utmMedium : existingAd.utmMedium;
-    const utmCampaign = validatedData.utmCampaign !== undefined ? validatedData.utmCampaign : existingAd.utmCampaign;
-    const utmTerm = validatedData.utmTerm !== undefined ? validatedData.utmTerm : existingAd.utmTerm;
-    const utmContent = validatedData.utmContent !== undefined ? validatedData.utmContent : existingAd.utmContent;
+    const utmSource =
+      validatedData.utmSource !== undefined
+        ? validatedData.utmSource
+        : existingAd.utmSource;
+    const utmMedium =
+      validatedData.utmMedium !== undefined
+        ? validatedData.utmMedium
+        : existingAd.utmMedium;
+    const utmCampaign =
+      validatedData.utmCampaign !== undefined
+        ? validatedData.utmCampaign
+        : existingAd.utmCampaign;
+    const utmTerm =
+      validatedData.utmTerm !== undefined
+        ? validatedData.utmTerm
+        : existingAd.utmTerm;
+    const utmContent =
+      validatedData.utmContent !== undefined
+        ? validatedData.utmContent
+        : existingAd.utmContent;
 
     // Rebuild tracking URL if UTM fields changed
-    let trackingUrl = validatedData.landingPageUrl || existingAd.landingPageUrl;
+    let trackingUrl =
+      validatedData.landingPageUrl || existingAd.landingPageUrl;
     if (trackingUrl) {
       try {
         const url = new URL(trackingUrl);
@@ -167,35 +220,49 @@ export async function PUT(
         if (utmCampaign) url.searchParams.set('utm_campaign', utmCampaign);
         if (utmTerm) url.searchParams.set('utm_term', utmTerm);
         if (utmContent) url.searchParams.set('utm_content', utmContent);
-        
+
         trackingUrl = url.toString();
       } catch (urlError) {
-        // If URL is invalid, keep the original
         console.warn('Invalid URL for tracking:', trackingUrl);
-        trackingUrl = validatedData.landingPageUrl || existingAd.landingPageUrl;
+        trackingUrl =
+          validatedData.landingPageUrl || existingAd.landingPageUrl;
       }
     }
 
     // Build update data
     const updateData: any = {};
     if (validatedData.name !== undefined) updateData.name = validatedData.name;
-    if (validatedData.platform !== undefined) updateData.platform = validatedData.platform;
-    if (validatedData.budget !== undefined) updateData.budget = validatedData.budget;
-    if (validatedData.currency !== undefined) updateData.currency = validatedData.currency;
-    if (validatedData.utmSource !== undefined) updateData.utmSource = validatedData.utmSource;
-    if (validatedData.utmMedium !== undefined) updateData.utmMedium = validatedData.utmMedium;
-    if (validatedData.utmCampaign !== undefined) updateData.utmCampaign = validatedData.utmCampaign;
-    if (validatedData.utmTerm !== undefined) updateData.utmTerm = validatedData.utmTerm;
-    if (validatedData.utmContent !== undefined) updateData.utmContent = validatedData.utmContent;
-    if (validatedData.pixelId !== undefined) updateData.pixelId = validatedData.pixelId;
-    if (validatedData.audienceSegment !== undefined) updateData.audienceSegment = validatedData.audienceSegment;
-    if (validatedData.startDate !== undefined) updateData.startDate = validatedData.startDate;
-    if (validatedData.endDate !== undefined) updateData.endDate = validatedData.endDate;
-    if (validatedData.status !== undefined) updateData.status = validatedData.status;
+    if (validatedData.platform !== undefined)
+      updateData.platform = validatedData.platform;
+    if (validatedData.budget !== undefined)
+      updateData.budget = validatedData.budget;
+    if (validatedData.currency !== undefined)
+      updateData.currency = validatedData.currency;
+    if (validatedData.utmSource !== undefined)
+      updateData.utmSource = validatedData.utmSource;
+    if (validatedData.utmMedium !== undefined)
+      updateData.utmMedium = validatedData.utmMedium;
+    if (validatedData.utmCampaign !== undefined)
+      updateData.utmCampaign = validatedData.utmCampaign;
+    if (validatedData.utmTerm !== undefined)
+      updateData.utmTerm = validatedData.utmTerm;
+    if (validatedData.utmContent !== undefined)
+      updateData.utmContent = validatedData.utmContent;
+    if (validatedData.pixelId !== undefined)
+      updateData.pixelId = validatedData.pixelId;
+    if (validatedData.audienceSegment !== undefined)
+      updateData.audienceSegment = validatedData.audienceSegment;
+    if (validatedData.startDate !== undefined)
+      updateData.startDate = validatedData.startDate;
+    if (validatedData.endDate !== undefined)
+      updateData.endDate = validatedData.endDate;
+    if (validatedData.status !== undefined)
+      updateData.status = validatedData.status;
     if (trackingUrl !== undefined) updateData.landingPageUrl = trackingUrl;
 
+    // ✅ `update` requires a unique `where`, so only pass `id`
     const adCampaign = await prisma.digitalAdCampaign.update({
-      where: { id: params.adId },
+      where: { id: adId },
       data: updateData,
       include: {
         project: {
@@ -214,8 +281,8 @@ export async function PUT(
         entityType: 'DIGITAL_AD_CAMPAIGN',
         entityId: adCampaign.id,
         message: `Updated digital ad campaign ${adCampaign.name}`,
-        agencyId: agencyId,
-        actorId: actorId,
+        agencyId,
+        actorId,
         metadata: {
           changes: Object.keys(updateData),
           utm: {
@@ -233,8 +300,8 @@ export async function PUT(
   } catch (error) {
     if (error instanceof ZodError) {
       return NextResponse.json(
-        { 
-          error: 'Validation failed', 
+        {
+          error: 'Validation failed',
           details: error.issues.map((issue) => ({
             path: issue.path.join('.'),
             message: issue.message,
@@ -251,9 +318,11 @@ export async function PUT(
   }
 }
 
+// ─── DELETE ─────────────────────────────────────────────────────────────
+
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: { projectId: string; adId: string } }
+  { params }: { params: Promise<{ projectId: string; adId: string }> } // ✅ Promise
 ) {
   try {
     const session = await getServerSession(authOptions);
@@ -263,42 +332,54 @@ export async function DELETE(
 
     const agencyId = session.user.agencyId;
     if (!agencyId) {
-      return NextResponse.json({ error: 'Agency ID not found' }, { status: 400 });
+      return NextResponse.json(
+        { error: 'Agency ID not found' },
+        { status: 400 }
+      );
     }
+
+    // ✅ Await params before accessing
+    const { projectId, adId } = await params;
 
     const actorId = session.user.id ?? 'system';
 
     // Check if ad campaign exists
-    const existingAd = await prisma.digitalAdCampaign.findUnique({
+    const existingAd = await prisma.digitalAdCampaign.findFirst({
       where: {
-        id: params.adId,
-        projectId: params.projectId,
-        agencyId: agencyId,
+        id: adId,
+        projectId,
+        agencyId,
         deletedAt: null,
       },
     });
 
     if (!existingAd) {
-      return NextResponse.json({ error: 'Ad campaign not found' }, { status: 404 });
+      return NextResponse.json(
+        { error: 'Ad campaign not found' },
+        { status: 404 }
+      );
     }
 
     // Check if ad campaign has metrics (prevent deletion if it has data)
     const metricCount = await prisma.adMetricSnapshot.count({
       where: {
-        adCampaignId: params.adId,
+        adCampaignId: adId,
       },
     });
 
     if (metricCount > 0) {
       return NextResponse.json(
-        { error: 'Cannot delete ad campaign with existing metrics data. Archive it instead.' },
+        {
+          error:
+            'Cannot delete ad campaign with existing metrics data. Archive it instead.',
+        },
         { status: 400 }
       );
     }
 
     // Soft delete
     await prisma.digitalAdCampaign.update({
-      where: { id: params.adId },
+      where: { id: adId },
       data: { deletedAt: new Date() },
     });
 
@@ -307,10 +388,10 @@ export async function DELETE(
       data: {
         action: 'DELETE',
         entityType: 'DIGITAL_AD_CAMPAIGN',
-        entityId: params.adId,
+        entityId: adId,
         message: `Deleted digital ad campaign ${existingAd.name}`,
-        agencyId: agencyId,
-        actorId: actorId,
+        agencyId,
+        actorId,
         metadata: {
           platform: existingAd.platform,
           budget: existingAd.budget,

@@ -6,7 +6,7 @@ import { authOptions } from '@/lib/authOptions';
 
 export async function POST(
   req: NextRequest,
-  { params }: { params: { projectId: string; adId: string } }
+  { params }: { params: Promise<{ projectId: string; adId: string }> } // ✅ Promise
 ) {
   try {
     const session = await getServerSession(authOptions);
@@ -16,11 +16,24 @@ export async function POST(
 
     const agencyId = session.user.agencyId;
     if (!agencyId) {
-      return NextResponse.json({ error: 'Agency ID not found' }, { status: 400 });
+      return NextResponse.json(
+        { error: 'Agency ID not found' },
+        { status: 400 }
+      );
     }
 
+    // ✅ Await params before accessing
+    const { projectId, adId } = await params;
+
     const body = await req.json();
-    const { landingPageUrl, utmSource, utmMedium, utmCampaign, utmTerm, utmContent } = body;
+    const {
+      landingPageUrl,
+      utmSource,
+      utmMedium,
+      utmCampaign,
+      utmTerm,
+      utmContent,
+    } = body;
 
     if (!landingPageUrl) {
       return NextResponse.json(
@@ -30,17 +43,21 @@ export async function POST(
     }
 
     // Check if ad campaign exists and belongs to agency
-    const existingAd = await prisma.digitalAdCampaign.findUnique({
+    // ✅ Use findFirst — projectId, agencyId, deletedAt are not unique
+    const existingAd = await prisma.digitalAdCampaign.findFirst({
       where: {
-        id: params.adId,
-        projectId: params.projectId,
-        agencyId: agencyId,
+        id: adId,
+        projectId,
+        agencyId,
         deletedAt: null,
       },
     });
 
     if (!existingAd) {
-      return NextResponse.json({ error: 'Ad campaign not found' }, { status: 404 });
+      return NextResponse.json(
+        { error: 'Ad campaign not found' },
+        { status: 404 }
+      );
     }
 
     // Build tracking URL
@@ -60,20 +77,16 @@ export async function POST(
       );
     }
 
-    // Update the ad campaign with the new tracking URL
+    // ✅ Update — `where` must be `{ id }` only (unique field)
     const updatedAd = await prisma.digitalAdCampaign.update({
-      where: {
-        id: params.adId,
-        projectId: params.projectId,
-        agencyId: agencyId,
-      },
+      where: { id: adId },
       data: {
         landingPageUrl: trackingUrl,
-        utmSource: utmSource || undefined,
-        utmMedium: utmMedium || undefined,
-        utmCampaign: utmCampaign || undefined,
-        utmTerm: utmTerm || undefined,
-        utmContent: utmContent || undefined,
+        utmSource: utmSource || null,
+        utmMedium: utmMedium || null,
+        utmCampaign: utmCampaign || null,
+        utmTerm: utmTerm || null,
+        utmContent: utmContent || null,
       },
     });
 
@@ -83,10 +96,10 @@ export async function POST(
       data: {
         action: 'UPDATE',
         entityType: 'DIGITAL_AD_CAMPAIGN',
-        entityId: params.adId,
+        entityId: adId,
         message: `Generated tracking URL for ad campaign ${updatedAd.name}`,
-        agencyId: agencyId,
-        actorId: actorId,
+        agencyId,
+        actorId,
         metadata: {
           trackingUrl,
           utmSource,
@@ -98,10 +111,10 @@ export async function POST(
       },
     });
 
-    return NextResponse.json({ 
+    return NextResponse.json({
       success: true,
       trackingUrl,
-      message: 'Tracking URL generated and saved successfully'
+      message: 'Tracking URL generated and saved successfully',
     });
   } catch (error) {
     console.error('Error generating tracking URL:', error);

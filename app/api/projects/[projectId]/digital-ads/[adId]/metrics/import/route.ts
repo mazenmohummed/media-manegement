@@ -6,7 +6,7 @@ import { authOptions } from '@/lib/authOptions';
 import { z } from 'zod';
 
 const importRowSchema = z.object({
-  date: z.string().transform(str => new Date(str)),
+  date: z.string().transform((str) => new Date(str)),
   reach: z.number().min(0).default(0),
   impressions: z.number().min(0).default(0),
   clicks: z.number().min(0).default(0),
@@ -27,7 +27,7 @@ interface ImportResult {
 
 export async function POST(
   req: NextRequest,
-  { params }: { params: { projectId: string; adId: string } }
+  { params }: { params: Promise<{ projectId: string; adId: string }> } // ✅ Promise
 ) {
   try {
     const session = await getServerSession(authOptions);
@@ -37,8 +37,14 @@ export async function POST(
 
     const agencyId = session.user.agencyId;
     if (!agencyId) {
-      return NextResponse.json({ error: 'Agency ID not found' }, { status: 400 });
+      return NextResponse.json(
+        { error: 'Agency ID not found' },
+        { status: 400 }
+      );
     }
+
+    // ✅ Await params before accessing
+    const { projectId, adId } = await params;
 
     const body = await req.json();
     const { rows, skipDuplicates = false, updateExisting = true } = body;
@@ -51,17 +57,21 @@ export async function POST(
     }
 
     // Verify ad campaign exists
-    const adCampaign = await prisma.digitalAdCampaign.findUnique({
+    // ✅ Use findFirst — projectId, agencyId, deletedAt are not unique
+    const adCampaign = await prisma.digitalAdCampaign.findFirst({
       where: {
-        id: params.adId,
-        projectId: params.projectId,
-        agencyId: agencyId,
+        id: adId,
+        projectId,
+        agencyId,
         deletedAt: null,
       },
     });
 
     if (!adCampaign) {
-      return NextResponse.json({ error: 'Ad campaign not found' }, { status: 404 });
+      return NextResponse.json(
+        { error: 'Ad campaign not found' },
+        { status: 404 }
+      );
     }
 
     const results: ImportResult[] = [];
@@ -75,17 +85,33 @@ export async function POST(
         const validatedData = importRowSchema.parse(row);
 
         // Compute derived metrics
-        const ctr = validatedData.impressions > 0 ? (validatedData.clicks / validatedData.impressions) * 100 : 0;
-        const cpc = validatedData.clicks > 0 ? validatedData.spend / validatedData.clicks : 0;
-        const cpm = validatedData.impressions > 0 ? (validatedData.spend / validatedData.impressions) * 1000 : 0;
-        const roas = validatedData.spend > 0 ? validatedData.revenue / validatedData.spend : 0;
+        const ctr =
+          validatedData.impressions > 0
+            ? (validatedData.clicks / validatedData.impressions) * 100
+            : 0;
+        const cpc =
+          validatedData.clicks > 0
+            ? validatedData.spend / validatedData.clicks
+            : 0;
+        const cpm =
+          validatedData.impressions > 0
+            ? (validatedData.spend / validatedData.impressions) * 1000
+            : 0;
+        const roas =
+          validatedData.spend > 0
+            ? validatedData.revenue / validatedData.spend
+            : 0;
+
+        // Normalize date to UTC midnight to match the unique constraint
+        const metricDate = new Date(validatedData.date);
+        metricDate.setUTCHours(0, 0, 0, 0);
 
         // Check for existing metric
         const existingMetric = await prisma.adMetricSnapshot.findUnique({
           where: {
             adCampaignId_date: {
-              adCampaignId: params.adId,
-              date: validatedData.date,
+              adCampaignId: adId,
+              date: metricDate,
             },
           },
         });
@@ -95,7 +121,6 @@ export async function POST(
 
         if (existingMetric) {
           if (skipDuplicates) {
-            action = 'skipped';
             results.push({
               success: true,
               rowIndex: i,
@@ -121,11 +146,12 @@ export async function POST(
                 cpc,
                 cpm,
                 roas,
+                source: 'csv_import',
+                syncedAt: new Date(),
               },
             });
             action = 'updated';
           } else {
-            action = 'skipped';
             results.push({
               success: true,
               rowIndex: i,
@@ -138,7 +164,7 @@ export async function POST(
           // Create new metric
           metric = await prisma.adMetricSnapshot.create({
             data: {
-              date: validatedData.date,
+              date: metricDate,
               reach: validatedData.reach,
               impressions: validatedData.impressions,
               clicks: validatedData.clicks,
@@ -151,8 +177,10 @@ export async function POST(
               cpc,
               cpm,
               roas,
-              adCampaignId: params.adId,
-              agencyId: agencyId,
+              adCampaignId: adId,
+              agencyId,
+              source: 'csv_import',
+              syncedAt: new Date(),
             },
           });
           action = 'created';
@@ -165,10 +193,15 @@ export async function POST(
           action,
         });
       } catch (error) {
-        const errorMessage = error instanceof z.ZodError 
-          ? error.issues.map((e) => `${e.path.join('.')}: ${e.message}`).join(', ')
-          : error instanceof Error ? error.message : 'Unknown error';
-        
+        const errorMessage =
+          error instanceof z.ZodError
+            ? error.issues
+                .map((e) => `${e.path.join('.')}: ${e.message}`)
+                .join(', ')
+            : error instanceof Error
+            ? error.message
+            : 'Unknown error';
+
         errors.push({
           success: false,
           rowIndex: i,
@@ -182,9 +215,9 @@ export async function POST(
       data: {
         action: 'CREATE',
         entityType: 'AD_METRIC_IMPORT',
-        entityId: params.adId,
+        entityId: adId,
         message: `Imported ${results.length} metrics for ad campaign ${adCampaign.name}`,
-        agencyId: agencyId,
+        agencyId,
         actorId: session.user.id || 'system',
         metadata: {
           totalRows: rows.length,
@@ -203,9 +236,10 @@ export async function POST(
       results,
       errorDetails: errors,
       hasErrors: errors.length > 0,
-      message: errors.length > 0 
-        ? `${results.length} rows imported successfully, ${errors.length} rows had errors` 
-        : `All ${results.length} rows imported successfully`,
+      message:
+        errors.length > 0
+          ? `${results.length} rows imported successfully, ${errors.length} rows had errors`
+          : `All ${results.length} rows imported successfully`,
     });
   } catch (error) {
     console.error('Error importing metrics:', error);
