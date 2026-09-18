@@ -1,12 +1,11 @@
+// app/api/vendors/[vendorId]/route.ts
 import { NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
 interface Params {
-  params: Promise<{
-    vendorId: string;
-  }>;
+  params: Promise<{ vendorId: string }>;
 }
 
 // GET: Fetch a single vendor by ID with relations including category relation
@@ -23,7 +22,8 @@ export async function GET(request: Request, { params }: Params) {
         plannedExpenses: {
           include: { project: true },
         },
-        expenses: {
+        // ✅ `taskExpenses`, not `expenses`
+        taskExpenses: {
           include: { project: true },
         },
         quotations: {
@@ -57,7 +57,17 @@ export async function PATCH(request: Request, { params }: Params) {
   try {
     const { vendorId } = await params;
     const body = await request.json();
-    const { name, email, phoneNumber, status, categoryId, taxNumber, notes, paymentTerms, address } = body;
+    const {
+      name,
+      email,
+      phoneNumber,
+      status,
+      categoryId,
+      taxNumber,
+      notes,
+      paymentTerms,
+      address,
+    } = body;
 
     const updatedVendor = await prisma.vendor.update({
       where: { id: vendorId },
@@ -118,7 +128,10 @@ export async function DELETE(request: Request, { params }: Params) {
       where: { id: vendorId },
     });
 
-    return NextResponse.json({ message: 'Vendor deleted successfully' }, { status: 200 });
+    return NextResponse.json(
+      { message: 'Vendor deleted successfully' },
+      { status: 200 }
+    );
   } catch (error) {
     console.error('Error deleting vendor:', error);
     return NextResponse.json(

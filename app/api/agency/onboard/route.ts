@@ -47,7 +47,9 @@ export async function POST(req: Request) {
           agencyName,
           operatorName: session.user.name || "System Admin",
           email: session.user.email!,
-          workingHours: DEFAULT_WORKING_HOURS,
+           workingHours: {
+            create: DEFAULT_WORKING_HOURS,       // ✅ nested create
+          },
         },
       });
 

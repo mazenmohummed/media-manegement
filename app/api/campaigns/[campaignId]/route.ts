@@ -10,10 +10,12 @@ const updateCampaignSchema = z.object({
   objective: z.string().optional(),
   budget: z.number().min(0).optional(),
   currency: z.string().optional(),
-  startDate: z.string().transform(str => new Date(str)).optional(),
-  endDate: z.string().transform(str => new Date(str)).optional(),
+  startDate: z.string().transform((str) => new Date(str)).optional(),
+  endDate: z.string().transform((str) => new Date(str)).optional(),
   clientId: z.string().optional(),
-  status: z.enum(['PLANNED', 'ACTIVE', 'PAUSED', 'COMPLETED', 'CANCELLED']).optional(),
+  status: z
+    .enum(['PLANNED', 'ACTIVE', 'PAUSED', 'COMPLETED', 'CANCELLED'])
+    .optional(),
 });
 
 export async function GET(
@@ -25,15 +27,16 @@ export async function GET(
     if (!session?.user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-
     if (!session.user.agencyId) {
-      return NextResponse.json({ error: 'Agency ID not found' }, { status: 400 });
+      return NextResponse.json(
+        { error: 'Agency ID not found' },
+        { status: 400 }
+      );
     }
 
-    // ✅ Await params
     const { campaignId } = await params;
 
-    const campaign = await prisma.campaign.findUnique({
+    const campaign = await prisma.campaign.findFirst({
       where: {
         id: campaignId,
         agencyId: session.user.agencyId,
@@ -44,27 +47,17 @@ export async function GET(
         projects: {
           include: {
             digitalAdCampaigns: {
-              where: {
-                deletedAt: null,
-              },
+              where: { deletedAt: null },
               include: {
                 metrics: {
-                  orderBy: {
-                    date: 'desc',
-                  },
+                  orderBy: { date: 'desc' },
                   take: 1,
                 },
               },
             },
             tasks: {
-              where: {
-                deletedAt: null,
-              },
-              select: {
-                id: true,
-                title: true,
-                status: true,
-              },
+              where: { deletedAt: null },
+              select: { id: true, title: true, status: true },
             },
           },
         },
@@ -78,7 +71,10 @@ export async function GET(
     });
 
     if (!campaign) {
-      return NextResponse.json({ error: 'Campaign not found' }, { status: 404 });
+      return NextResponse.json(
+        { error: 'Campaign not found' },
+        { status: 404 }
+      );
     }
 
     return NextResponse.json({ campaign });
@@ -100,17 +96,18 @@ export async function PUT(
     if (!session?.user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-
     if (!session.user.agencyId) {
-      return NextResponse.json({ error: 'Agency ID not found' }, { status: 400 });
+      return NextResponse.json(
+        { error: 'Agency ID not found' },
+        { status: 400 }
+      );
     }
 
     const { campaignId } = await params;
     const body = await req.json();
     const validatedData = updateCampaignSchema.parse(body);
 
-    // Check if campaign exists
-    const existingCampaign = await prisma.campaign.findUnique({
+    const existingCampaign = await prisma.campaign.findFirst({
       where: {
         id: campaignId,
         agencyId: session.user.agencyId,
@@ -119,34 +116,39 @@ export async function PUT(
     });
 
     if (!existingCampaign) {
-      return NextResponse.json({ error: 'Campaign not found' }, { status: 404 });
+      return NextResponse.json(
+        { error: 'Campaign not found' },
+        { status: 404 }
+      );
     }
 
-    // Build update data, handling optional fields
     const updateData: any = {};
     if (validatedData.name !== undefined) updateData.name = validatedData.name;
-    if (validatedData.objective !== undefined) updateData.objective = validatedData.objective;
-    if (validatedData.budget !== undefined) updateData.budget = validatedData.budget;
-    if (validatedData.currency !== undefined) updateData.currency = validatedData.currency;
-    if (validatedData.startDate !== undefined) updateData.startDate = validatedData.startDate;
-    if (validatedData.endDate !== undefined) updateData.endDate = validatedData.endDate;
-    if (validatedData.clientId !== undefined) updateData.clientId = validatedData.clientId;
-    if (validatedData.status !== undefined) updateData.status = validatedData.status;
+    if (validatedData.objective !== undefined)
+      updateData.objective = validatedData.objective;
+    if (validatedData.budget !== undefined)
+      updateData.budget = validatedData.budget;
+    if (validatedData.currency !== undefined)
+      updateData.currency = validatedData.currency;
+    if (validatedData.startDate !== undefined)
+      updateData.startDate = validatedData.startDate;
+    if (validatedData.endDate !== undefined)
+      updateData.endDate = validatedData.endDate;
+    if (validatedData.clientId !== undefined)
+      updateData.clientId = validatedData.clientId;
+    if (validatedData.status !== undefined)
+      updateData.status = validatedData.status;
 
     const campaign = await prisma.campaign.update({
       where: { id: campaignId },
       data: updateData,
       include: {
         client: {
-          select: {
-            id: true,
-            clientName: true,
-          },
+          select: { id: true, clientName: true },
         },
       },
     });
 
-    // Log audit
     await prisma.auditLog.create({
       data: {
         action: 'UPDATE',
@@ -162,8 +164,8 @@ export async function PUT(
   } catch (error) {
     if (error instanceof ZodError) {
       return NextResponse.json(
-        { 
-          error: 'Validation failed', 
+        {
+          error: 'Validation failed',
           details: error.issues.map((issue) => ({
             path: issue.path.join('.'),
             message: issue.message,
@@ -189,15 +191,16 @@ export async function DELETE(
     if (!session?.user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-
     if (!session.user.agencyId) {
-      return NextResponse.json({ error: 'Agency ID not found' }, { status: 400 });
+      return NextResponse.json(
+        { error: 'Agency ID not found' },
+        { status: 400 }
+      );
     }
 
     const { campaignId } = await params;
 
-    // Check if campaign exists
-    const existingCampaign = await prisma.campaign.findUnique({
+    const existingCampaign = await prisma.campaign.findFirst({
       where: {
         id: campaignId,
         agencyId: session.user.agencyId,
@@ -206,13 +209,16 @@ export async function DELETE(
     });
 
     if (!existingCampaign) {
-      return NextResponse.json({ error: 'Campaign not found' }, { status: 404 });
+      return NextResponse.json(
+        { error: 'Campaign not found' },
+        { status: 404 }
+      );
     }
 
-    // Check if campaign has active projects
+    // ✅ many-to-many: filter Project via `campaigns.some`
     const activeProjectCount = await prisma.project.count({
       where: {
-        campaignId: campaignId,
+        campaigns: { some: { id: campaignId } },
         deletedAt: null,
         status: {
           notIn: ['COMPLETED', 'CANCELLED', 'ARCHIVED'],
@@ -222,21 +228,20 @@ export async function DELETE(
 
     if (activeProjectCount > 0) {
       return NextResponse.json(
-        { 
-          error: 'Cannot delete campaign with active projects. Archive or complete projects first.',
+        {
+          error:
+            'Cannot delete campaign with active projects. Archive or complete projects first.',
           activeProjectCount,
         },
         { status: 400 }
       );
     }
 
-    // Soft delete
     await prisma.campaign.update({
       where: { id: campaignId },
       data: { deletedAt: new Date() },
     });
 
-    // Log audit
     await prisma.auditLog.create({
       data: {
         action: 'DELETE',

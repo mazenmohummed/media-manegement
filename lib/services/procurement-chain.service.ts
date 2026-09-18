@@ -511,56 +511,45 @@ export class ProcurementChainService {
    * Get procurement metrics for dashboard
    */
   static async getProcurementMetrics(agencyId: string) {
-    const [quotations, plannedOrders, purchaseOrders] = await Promise.all([
-      db.quotation.count({ where: { agencyId } }),
-      db.plannedPurchaseOrder.count({ where: { agencyId } }),
-      db.purchaseOrder.count({ where: { agencyId } }),
-    ]);
+  const [quotations, plannedOrders, purchaseOrders] = await Promise.all([
+    db.quotation.count({ where: { agencyId } }),
+    db.plannedPurchaseOrder.count({ where: { agencyId } }),
+    db.purchaseOrder.count({ where: { agencyId } }),
+  ]);
 
-    const [pendingApprovals, totalSpent] = await Promise.all([
-      db.plannedPurchaseOrder.count({
-        where: {
-          agencyId,
-          status: "PLANNED",
-        },
-      }),
-      db.purchaseOrder.aggregate({
-        where: {
-          agencyId,
-          status: "DELIVERED",
-        },
-        _sum: {
-          totalAmount: true,
-        },
-      }),
-    ]);
+  const [pendingApprovals, totalSpentAgg] = await Promise.all([
+    db.plannedPurchaseOrder.count({
+      where: { agencyId, status: "PLANNED" },
+    }),
+    db.purchaseOrder.aggregate({
+      where: { agencyId, status: "DELIVERED" },
+      _sum: { totalAmount: true },
+    }),
+  ]);
 
-    const [pendingQuotations, completedPurchases] = await Promise.all([
-      db.quotation.count({
-        where: {
-          agencyId,
-          status: "REQUESTED",
-        },
-      }),
-      db.purchaseOrder.count({
-        where: {
-          agencyId,
-          status: "DELIVERED",
-        },
-      }),
-    ]);
+  const totalSpent = totalSpentAgg._sum.totalAmount ?? 0;
 
-    return {
-      totalQuotations: quotations,
-      totalPlannedOrders: plannedOrders,
-      totalPurchaseOrders: purchaseOrders,
-      pendingApprovals,
-      pendingQuotations,
-      completedPurchases,
-      totalSpent: totalSpent._sum.totalAmount || 0,
-      conversionRate: totalSpent > 0 
-        ? (completedPurchases / purchaseOrders) * 100 
+  const [pendingQuotations, completedPurchases] = await Promise.all([
+    db.quotation.count({
+      where: { agencyId, status: "REQUESTED" },
+    }),
+    db.purchaseOrder.count({
+      where: { agencyId, status: "DELIVERED" },
+    }),
+  ]);
+
+  return {
+    totalQuotations: quotations,
+    totalPlannedOrders: plannedOrders,
+    totalPurchaseOrders: purchaseOrders,
+    pendingApprovals,
+    pendingQuotations,
+    completedPurchases,
+    totalSpent,
+    conversionRate:
+      purchaseOrders > 0
+        ? (completedPurchases / purchaseOrders) * 100
         : 0,
-    };
-  }
+  };
+}
 }

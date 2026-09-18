@@ -129,11 +129,11 @@ export class SyncService {
 
     // Upload to cloud
     const cloudKey = `${agency.id}/${version.creativeAssetId}/v${version.versionNo}`;
-    const cloudUrl = await this.cloudStorage.upload(
-      fileContent, 
-      cloudKey,
-      'application/octet-stream'
-    );
+    const cloudUrl = await this.cloudStorage.uploadFile(
+    fileContent,
+    cloudKey,
+    { mimeType: 'application/octet-stream' }
+  );
 
     // Update database
     await prisma.creativeAssetVersion.update({

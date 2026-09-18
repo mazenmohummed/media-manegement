@@ -1,13 +1,19 @@
 // lib/services/campaign-health.service.ts
 import { prisma } from '@/lib/prisma';
-import { DigitalCampaignStatus, TaskPriority, TaskStatus, NotificationType, UserRole } from '@prisma/client';
+import {
+  DigitalCampaignStatus,
+  TaskPriority,
+  TaskStatus,
+  NotificationType,
+  UserRole,
+} from '@prisma/client';
 
 export interface HealthThresholds {
-  minCTR?: number; // Minimum acceptable CTR (as percentage, e.g., 2 = 2%)
-  minROAS?: number; // Minimum acceptable ROAS (e.g., 2 = 2x return)
-  maxCPC?: number; // Maximum acceptable CPC
-  minReach?: number; // Minimum daily reach
-  minConversions?: number; // Minimum daily conversions
+  minCTR?: number;
+  minROAS?: number;
+  maxCPC?: number;
+  minReach?: number;
+  minConversions?: number;
 }
 
 export interface CampaignHealthStatus {
@@ -36,12 +42,7 @@ export class CampaignHealthService {
     this.agencyId = agencyId;
   }
 
-  /**
-   * Get or create agency-wide default thresholds
-   */
   async getAgencyThresholds(): Promise<HealthThresholds> {
-    // Check if agency has custom thresholds stored in settings
-    // For now, return defaults
     return {
       minCTR: 1.5,
       minROAS: 2.0,
@@ -51,20 +52,14 @@ export class CampaignHealthService {
     };
   }
 
-  /**
-   * Get thresholds for a specific campaign (campaign-specific overrides)
-   */
   async getCampaignThresholds(campaignId: string): Promise<HealthThresholds> {
-    // Check if campaign has custom thresholds stored in metadata
-    // For now, return agency defaults
     return this.getAgencyThresholds();
   }
 
-  /**
-   * Check health of a single campaign
-   */
-  async checkCampaignHealth(campaignId: string): Promise<CampaignHealthStatus | null> {
-    const campaign = await prisma.digitalAdCampaign.findUnique({
+  async checkCampaignHealth(
+    campaignId: string
+  ): Promise<CampaignHealthStatus | null> {
+    const campaign = await prisma.digitalAdCampaign.findFirst({
       where: {
         id: campaignId,
         agencyId: this.agencyId,
@@ -73,9 +68,7 @@ export class CampaignHealthService {
       },
       include: {
         metrics: {
-          orderBy: {
-            date: 'desc',
-          },
+          orderBy: { date: 'desc' },
           take: 1,
         },
         project: {
@@ -102,39 +95,51 @@ export class CampaignHealthService {
     const breaches: string[] = [];
     let status: 'green' | 'amber' | 'red' = 'green';
 
-    // Check each threshold
     if (thresholds.minCTR && latestMetric.ctr < thresholds.minCTR) {
-      breaches.push(`CTR (${latestMetric.ctr.toFixed(2)}%) below threshold (${thresholds.minCTR}%)`);
+      breaches.push(
+        `CTR (${latestMetric.ctr.toFixed(2)}%) below threshold (${thresholds.minCTR}%)`
+      );
       status = 'amber';
     }
 
     if (thresholds.minROAS && latestMetric.roas < thresholds.minROAS) {
-      breaches.push(`ROAS (${latestMetric.roas.toFixed(2)}x) below threshold (${thresholds.minROAS}x)`);
+      breaches.push(
+        `ROAS (${latestMetric.roas.toFixed(2)}x) below threshold (${thresholds.minROAS}x)`
+      );
       status = 'amber';
     }
 
     if (thresholds.maxCPC && latestMetric.cpc > thresholds.maxCPC) {
-      breaches.push(`CPC ($${latestMetric.cpc.toFixed(2)}) above threshold ($${thresholds.maxCPC})`);
+      breaches.push(
+        `CPC ($${latestMetric.cpc.toFixed(2)}) above threshold ($${thresholds.maxCPC})`
+      );
       status = 'amber';
     }
 
     if (thresholds.minReach && latestMetric.reach < thresholds.minReach) {
-      breaches.push(`Reach (${latestMetric.reach}) below threshold (${thresholds.minReach})`);
+      breaches.push(
+        `Reach (${latestMetric.reach}) below threshold (${thresholds.minReach})`
+      );
       status = 'amber';
     }
 
-    if (thresholds.minConversions && latestMetric.conversions < thresholds.minConversions) {
-      breaches.push(`Conversions (${latestMetric.conversions}) below threshold (${thresholds.minConversions})`);
+    if (
+      thresholds.minConversions &&
+      latestMetric.conversions < thresholds.minConversions
+    ) {
+      breaches.push(
+        `Conversions (${latestMetric.conversions}) below threshold (${thresholds.minConversions})`
+      );
       status = 'amber';
     }
 
-    // If there are 2+ breaches, escalate to red
     if (breaches.length >= 2) {
       status = 'red';
     }
 
-    // Check if there's an existing optimization task
-    const hasOpenTask = campaign.project.tasks.length > 0;
+    // ✅ Null-safe: project is optional on DigitalAdCampaign
+    const projectTasks = campaign.project?.tasks ?? [];
+    const hasOpenTask = projectTasks.length > 0;
 
     return {
       campaignId: campaign.id,
@@ -151,14 +156,11 @@ export class CampaignHealthService {
       },
       thresholds,
       breaches,
-      lastOptimizationTaskId: campaign.project.tasks[0]?.id,
+      lastOptimizationTaskId: projectTasks[0]?.id,
       optimizationTaskOpen: hasOpenTask,
     };
   }
 
-  /**
-   * Check all active campaigns and create optimization tasks where needed
-   */
   async checkAllActiveCampaigns(): Promise<{
     checked: number;
     breached: number;
@@ -174,9 +176,7 @@ export class CampaignHealthService {
       },
       include: {
         metrics: {
-          orderBy: {
-            date: 'desc',
-          },
+          orderBy: { date: 'desc' },
           take: 1,
         },
       },
@@ -197,14 +197,18 @@ export class CampaignHealthService {
 
       if (healthStatus.breaches.length > 0) {
         breachedCount++;
-        
+
         if (healthStatus.optimizationTaskOpen) {
-          // Update existing task
-          const updated = await this.updateOptimizationTask(campaign.id, healthStatus);
+          const updated = await this.updateOptimizationTask(
+            campaign.id,
+            healthStatus
+          );
           if (updated) tasksUpdated++;
         } else {
-          // Create new task
-          const created = await this.createOptimizationTask(campaign.id, healthStatus);
+          const created = await this.createOptimizationTask(
+            campaign.id,
+            healthStatus
+          );
           if (created) tasksCreated++;
         }
       }
@@ -219,12 +223,11 @@ export class CampaignHealthService {
     };
   }
 
-  /**
-   * Create an optimization task for a breached campaign
-   */
-  async createOptimizationTask(campaignId: string, healthStatus: CampaignHealthStatus): Promise<boolean> {
+  async createOptimizationTask(
+    campaignId: string,
+    healthStatus: CampaignHealthStatus
+  ): Promise<boolean> {
     try {
-      // First, get the campaign with its project and related users
       const campaign = await prisma.digitalAdCampaign.findUnique({
         where: { id: campaignId },
         include: {
@@ -244,8 +247,14 @@ export class CampaignHealthService {
         return false;
       }
 
-      // Find media buyer from users with appropriate roles
-      // Get all users in the agency with media buying roles
+      // ✅ projectId is required on Task — bail if the campaign has no project
+      if (!campaign.projectId) {
+        console.warn(
+          `Campaign ${campaignId} has no linked project; skipping optimization task creation.`
+        );
+        return false;
+      }
+
       const potentialAssignees = await prisma.user.findMany({
         where: {
           agencyId: this.agencyId,
@@ -257,7 +266,6 @@ export class CampaignHealthService {
 
       const mediaBuyer = potentialAssignees[0] || null;
 
-      const breachDescriptions = healthStatus.breaches.join('\n');
       const taskTitle = `[Optimization] Performance drop for ${campaign.name} on ${campaign.platform}`;
       const taskDescription = `
 ## Optimization Required
@@ -267,7 +275,7 @@ Platform: ${campaign.platform}
 Date: ${new Date().toLocaleDateString()}
 
 ### Breaches Detected:
-${healthStatus.breaches.map(b => `- ${b}`).join('\n')}
+${healthStatus.breaches.map((b) => `- ${b}`).join('\n')}
 
 ### Current Metrics:
 - CTR: ${healthStatus.metrics.ctr.toFixed(2)}%
@@ -289,7 +297,6 @@ ${healthStatus.breaches.map(b => `- ${b}`).join('\n')}
 - Max CPC: $${healthStatus.thresholds.maxCPC || 'N/A'}
 `;
 
-      // Create the optimization task
       const task = await prisma.task.create({
         data: {
           taskNo: `OPT-${Date.now()}`,
@@ -301,13 +308,12 @@ ${healthStatus.breaches.map(b => `- ${b}`).join('\n')}
           dueDate: new Date(),
           estimatedHours: 2,
           agencyId: this.agencyId,
+          // ✅ narrowed to non-null by the guard above
           projectId: campaign.projectId,
         },
       });
 
-      // If we have a media buyer, assign them to the task
       if (mediaBuyer) {
-        // Check if TaskAssignees relation exists
         await prisma.$executeRaw`
           INSERT INTO "_TaskAssignees" ("A", "B")
           VALUES (${task.id}, ${mediaBuyer.id})
@@ -315,7 +321,6 @@ ${healthStatus.breaches.map(b => `- ${b}`).join('\n')}
         `;
       }
 
-      // Create a comment linking the task to the campaign
       await prisma.comment.create({
         data: {
           text: `Auto-generated from campaign health check for "${campaign.name}" (${campaign.platform})`,
@@ -325,10 +330,8 @@ ${healthStatus.breaches.map(b => `- ${b}`).join('\n')}
         },
       });
 
-      // Send notifications
       await this.sendOptimizationNotifications(task, campaign, healthStatus);
 
-      // Log audit
       await prisma.auditLog.create({
         data: {
           action: 'CREATE',
@@ -354,12 +357,11 @@ ${healthStatus.breaches.map(b => `- ${b}`).join('\n')}
     }
   }
 
-  /**
-   * Update an existing optimization task with new breach information
-   */
-  async updateOptimizationTask(campaignId: string, healthStatus: CampaignHealthStatus): Promise<boolean> {
+  async updateOptimizationTask(
+    campaignId: string,
+    healthStatus: CampaignHealthStatus
+  ): Promise<boolean> {
     try {
-      // Find existing optimization task
       const existingTask = await prisma.task.findFirst({
         where: {
           project: {
@@ -381,17 +383,21 @@ ${healthStatus.breaches.map(b => `- ${b}`).join('\n')}
 
       if (!existingTask) return false;
 
-      // Add a comment with updated metrics
       await prisma.comment.create({
         data: {
-          text: `⚠️ Performance update (${new Date().toLocaleDateString()}):\n\n${healthStatus.breaches.map(b => `- ${b}`).join('\n')}\n\nCurrent Metrics:\n- CTR: ${healthStatus.metrics.ctr.toFixed(2)}%\n- ROAS: ${healthStatus.metrics.roas.toFixed(2)}x\n- CPC: $${healthStatus.metrics.cpc.toFixed(2)}`,
+          text: `⚠️ Performance update (${new Date().toLocaleDateString()}):\n\n${healthStatus.breaches
+            .map((b) => `- ${b}`)
+            .join('\n')}\n\nCurrent Metrics:\n- CTR: ${healthStatus.metrics.ctr.toFixed(
+            2
+          )}%\n- ROAS: ${healthStatus.metrics.roas.toFixed(
+            2
+          )}x\n- CPC: $${healthStatus.metrics.cpc.toFixed(2)}`,
           taskId: existingTask.id,
           projectId: existingTask.projectId,
           agencyId: this.agencyId,
         },
       });
 
-      // Update task priority if status is red
       if (healthStatus.status === 'red') {
         await prisma.task.update({
           where: { id: existingTask.id },
@@ -406,11 +412,11 @@ ${healthStatus.breaches.map(b => `- ${b}`).join('\n')}
     }
   }
 
-  /**
-   * Send notifications for optimization task
-   */
-  async sendOptimizationNotifications(task: any, campaign: any, healthStatus: CampaignHealthStatus): Promise<void> {
-    // Get assignees for this task
+  async sendOptimizationNotifications(
+    task: any,
+    campaign: any,
+    healthStatus: CampaignHealthStatus
+  ): Promise<void> {
     const assignees = await prisma.user.findMany({
       where: {
         agencyId: this.agencyId,
@@ -419,8 +425,7 @@ ${healthStatus.breaches.map(b => `- ${b}`).join('\n')}
       },
       take: 3,
     });
-    
-    // Notify assignees
+
     for (const assignee of assignees) {
       await prisma.notification.create({
         data: {
@@ -434,7 +439,6 @@ ${healthStatus.breaches.map(b => `- ${b}`).join('\n')}
       });
     }
 
-    // Notify team lead (if different from assignees)
     const teamLead = await prisma.user.findFirst({
       where: {
         agencyId: this.agencyId,
@@ -443,11 +447,13 @@ ${healthStatus.breaches.map(b => `- ${b}`).join('\n')}
       },
     });
 
-    if (teamLead && !assignees.some((a: any) => a.id === teamLead.id)) {
+    if (teamLead && !assignees.some((a) => a.id === teamLead.id)) {
       await prisma.notification.create({
         data: {
           title: '⚠️ Campaign Performance Alert',
-          message: `${campaign.name} (${campaign.platform}) requires optimization. Task created for ${assignees.map((a: any) => a.name).join(', ')}.`,
+          message: `${campaign.name} (${campaign.platform}) requires optimization. Task created for ${assignees
+            .map((a) => a.name)
+            .join(', ')}.`,
           type: 'ALERT',
           userId: teamLead.id,
           agencyId: this.agencyId,
@@ -457,9 +463,6 @@ ${healthStatus.breaches.map(b => `- ${b}`).join('\n')}
     }
   }
 
-  /**
-   * Get health dashboard data for all active campaigns
-   */
   async getHealthDashboard(): Promise<{
     summary: {
       total: number;
@@ -478,9 +481,7 @@ ${healthStatus.breaches.map(b => `- ${b}`).join('\n')}
       },
       include: {
         metrics: {
-          orderBy: {
-            date: 'desc',
-          },
+          orderBy: { date: 'desc' },
           take: 1,
         },
       },
@@ -493,7 +494,6 @@ ${healthStatus.breaches.map(b => `- ${b}`).join('\n')}
 
     for (const campaign of activeCampaigns) {
       if (campaign.metrics.length === 0) {
-        // No metrics yet - treat as unknown/green
         campaignStatuses.push({
           campaignId: campaign.id,
           campaignName: campaign.name,

@@ -51,16 +51,33 @@ export async function POST(req: NextRequest) {
 
     // Verify project belongs to agency
     const project = await prisma.project.findFirst({
-      where: {
-        id: projectId,
-        agencyId,
-      },
+      where: { id: projectId, agencyId },
     });
 
     if (!project) {
       return NextResponse.json(
         { error: 'Project not found' },
         { status: 404 }
+      );
+    }
+
+    // Verify the concept belongs to this project & agency before linking
+    const concept = await prisma.concept.findFirst({
+      where: { id: conceptId, projectId, agencyId },
+      select: { id: true, taskId: true },
+    });
+
+    if (!concept) {
+      return NextResponse.json(
+        { error: 'Concept not found' },
+        { status: 404 }
+      );
+    }
+
+    if (concept.taskId) {
+      return NextResponse.json(
+        { error: 'Concept is already linked to a production task' },
+        { status: 409 }
       );
     }
 
@@ -78,47 +95,61 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Create the production task
-    const task = await prisma.task.create({
-      data: {
-        taskNo: `PRD-${Date.now()}`,
-        title: title.trim(),
-        description: description?.trim() || null,
-        taskType: 'PRODUCTION',
-        status: 'PENDING',
-        priority: priority || 'MEDIUM',
-        projectId,
-        conceptId,
-        milestoneId: milestoneId || null,
-        categoryId: categoryId || null,
-        dueDate: dueDate ? new Date(dueDate) : null,
-        agencyId,
-        assignees: {
-          connect: assigneeIds?.map((id: string) => ({ id })) || [],
-        },
-      },
-      include: {
-        assignees: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
+    // ✅ Create task and link concept atomically.
+    //    `conceptId` is not on Task — we set `Concept.taskId` instead.
+    const task = await prisma.$transaction(async (tx) => {
+      const created = await tx.task.create({
+        data: {
+          taskNo: `PRD-${Date.now()}`,
+          title: title.trim(),
+          description: description?.trim() || null,
+          taskType: 'PRODUCTION',
+          status: 'PENDING',
+          priority: priority || 'MEDIUM',
+          projectId,
+          milestoneId: milestoneId || null,
+          categoryId: categoryId || null,
+          dueDate: dueDate ? new Date(dueDate) : null,
+          agencyId,
+          assignees: {
+            connect: assigneeIds?.map((id: string) => ({ id })) || [],
           },
         },
-        project: {
-          select: {
-            id: true,
-            name: true,
+        include: {
+          assignees: {
+            select: { id: true, name: true, email: true },
+          },
+          project: {
+            select: { id: true, name: true },
+          },
+          // ✅ plural: Task has `concepts Concept[]`
+          concepts: {
+            select: { id: true, name: true, status: true },
           },
         },
-        concept: {
-          select: {
-            id: true,
-            name: true,
-            status: true,
+      });
+
+      // Link the concept to the new task (FK lives on Concept.taskId)
+      await tx.concept.update({
+        where: { id: conceptId },
+        data: { taskId: created.id },
+      });
+
+      // Re-read to include the now-linked concept
+      return tx.task.findUniqueOrThrow({
+        where: { id: created.id },
+        include: {
+          assignees: {
+            select: { id: true, name: true, email: true },
+          },
+          project: {
+            select: { id: true, name: true },
+          },
+          concepts: {
+            select: { id: true, name: true, status: true },
           },
         },
-      },
+      });
     });
 
     // Create notification for assignees

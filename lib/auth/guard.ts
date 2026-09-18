@@ -19,9 +19,9 @@ export type GuardedHandler<T = any> = (
 
 export function withAuthGuard<T = any>(action: Action, handler: GuardedHandler<T>) {
   return async (req: NextRequest, routeProps: T) => {
-    // ✅ Get session instead of headers
+    // Get session instead of headers
     const session = await getServerSession(authOptions);
-    
+
     if (!session?.user) {
       return NextResponse.json(
         { error: "Unauthorized: Not authenticated" },
@@ -54,7 +54,7 @@ export function withAuthGuard<T = any>(action: Action, handler: GuardedHandler<T
 
     const userAgent = req.headers.get("user-agent") || undefined;
 
-    // Wrap the request context in AsyncLocalStorage for the Prisma Extension to pick up
+    // Wrap the request context in AsyncLocalStorage for the Prisma Extension
     return auditContextStore.run(
       { actorId: userId, agencyId, ipAddress, userAgent },
       async () => {

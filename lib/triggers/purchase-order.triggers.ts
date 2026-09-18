@@ -252,15 +252,15 @@ export class PurchaseOrderTriggers {
     // Notify project manager if project is linked
     if (po.projectId) {
       const projectManager = await db.user.findFirst({
-        where: {
-          agencyId: context.agencyId,
-          projects: {
-            some: {
-              id: po.projectId,
-            },
-          },
+      where: {
+        agencyId: context.agencyId,
+        isActive: true,
+        role: { in: ['ADMIN', 'OPERATOR', 'TEAMLEADER'] },
+        resourceAllocations: {
+          some: { projectId: po.projectId },
         },
-      });
+      },
+    });
 
       if (projectManager && projectManager.id !== context.userId) {
         notifications.push({

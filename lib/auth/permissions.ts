@@ -8,7 +8,8 @@ export type UserRole =
   | "FINANCE"
   | "CLIENT";
 
-export type SubscriptionPlan = "FREE" | "STARTER" | "PRO" | "ENTERPRISE";
+// ✅ Aligned with the Prisma `SubscriptionPlan` enum
+export type SubscriptionPlan = "FREE" | "PRO" | "UNLIMITED";
 
 // ── 1. ACTION-BASED PERMISSION MATRIX ──────────────────────────────────────
 export const ACTION_PERMISSIONS = {
@@ -104,6 +105,13 @@ export const ACTION_PERMISSIONS = {
   "attendance:delete": ["SUPERADMIN", "ADMIN"],
   "attendance:manage": ["SUPERADMIN", "ADMIN"],
 
+  // ─── Payroll Management ─────────────────────────────────────────────────
+  "payroll:create": ["SUPERADMIN", "ADMIN", "FINANCE"],
+  "payroll:read":   ["SUPERADMIN", "ADMIN", "FINANCE"],
+  "payroll:update": ["SUPERADMIN", "ADMIN", "FINANCE"],
+  "payroll:delete": ["SUPERADMIN", "ADMIN"],
+  "payroll:manage": ["SUPERADMIN", "ADMIN"],
+
   // Purchase Order Management
   "purchase:create": ["SUPERADMIN", "ADMIN", "OPERATOR"],
   "purchase:read": ["SUPERADMIN", "ADMIN", "OPERATOR", "TEAMLEADER", "FINANCE"],
@@ -116,18 +124,25 @@ export const ACTION_PERMISSIONS = {
   "milestone:update": ["SUPERADMIN", "ADMIN", "OPERATOR"],
   "milestone:delete": ["SUPERADMIN", "ADMIN"],
 
-    
-
+    // ─── Procurement / Purchase Orders ──────────────────────────────────────
+  "procurement:read":    ["SUPERADMIN", "ADMIN", "OPERATOR", "FINANCE"],
+  "procurement:create":  ["SUPERADMIN", "ADMIN", "OPERATOR"],
+  "procurement:update":  ["SUPERADMIN", "ADMIN", "OPERATOR"],
+  "procurement:delete":  ["SUPERADMIN", "ADMIN"],
+  "procurement:approve": ["SUPERADMIN", "ADMIN", "FINANCE"],
+  "procurement:convert": ["SUPERADMIN", "ADMIN", "OPERATOR", "FINANCE"],
 } as const;
 
 export type Action = keyof typeof ACTION_PERMISSIONS;
 
 // ── 2. SUBSCRIPTION FEATURE LIMITS & GATES ──────────────────────────────────
-export const PLAN_LIMITS: Record<SubscriptionPlan, { maxUsers: number; geoFencing: boolean; customReports: boolean }> = {
-  FREE: { maxUsers: 3, geoFencing: false, customReports: false },
-  STARTER: { maxUsers: 10, geoFencing: false, customReports: false },
-  PRO: { maxUsers: 25, geoFencing: true, customReports: true },
-  ENTERPRISE: { maxUsers: 999, geoFencing: true, customReports: true },
+export const PLAN_LIMITS: Record<
+  SubscriptionPlan,
+  { maxUsers: number; geoFencing: boolean; customReports: boolean }
+> = {
+  FREE:      { maxUsers: 3,   geoFencing: false, customReports: false },
+  PRO:       { maxUsers: 25,  geoFencing: true,  customReports: true  },
+  UNLIMITED: { maxUsers: 999, geoFencing: true,  customReports: true  },
 };
 
 // ── 3. GUARD HELPERS ────────────────────────────────────────────────────────
@@ -137,6 +152,9 @@ export function hasPermission(role: string | null, action: Action): boolean {
   return allowedRoles?.includes(role) ?? false;
 }
 
-export function enforcePlanLimit(plan: SubscriptionPlan, feature: keyof typeof PLAN_LIMITS.FREE): boolean | number {
+export function enforcePlanLimit(
+  plan: SubscriptionPlan,
+  feature: keyof typeof PLAN_LIMITS.FREE
+): boolean | number {
   return PLAN_LIMITS[plan]?.[feature] ?? false;
 }

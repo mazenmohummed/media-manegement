@@ -10,7 +10,7 @@ export const POST = withAuthGuard("procurement:convert", async (
 ) => {
   try {
     const params = await context.params;
-    const orderId = params.orderId;
+    const orderId = params["planned-purchase-ordersId"];
 
     if (!orderId) {
       return NextResponse.json(

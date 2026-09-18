@@ -107,14 +107,12 @@ export default async function VendorsPage() {
       OR: [
         { plannedExpenses: { some: {} } },
         { quotations: { some: {} } },
-        { purchaseOrders: { some: {} } },
       ],
     },
     select: { id: true },
     take: 20,
     orderBy: { updatedAt: 'desc' },
   });
-
   const taskIds = procurementTasks.map((t) => t.id);
 
   // ─── Calculate vendor metrics ───────────────────────────────────────────────

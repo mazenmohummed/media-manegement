@@ -195,65 +195,65 @@ export class ReviewLinkSecurityService {
    * Get review link details with access status
    */
   async getLinkDetails(token: string, clientId: string): Promise<{
-    exists: boolean;
-    accessible: boolean;
-    link?: any;
-    reason?: string;
-  }> {
-    try {
-      const isValid = await this.validateAccess(token, clientId);
-      const link = await prisma.reviewLink.findUnique({
-        where: { token },
-        include: {
-          concept: {
-            select: {
-              id: true,
-              name: true,
-              description: true,
-            },
+  exists: boolean;
+  accessible: boolean;
+  link?: any;
+  reason?: string;
+}> {
+  try {
+    const isValid = await this.validateAccess(token, clientId);
+
+    const link = await prisma.reviewLink.findUnique({
+      where: { token },
+      include: {
+        concept: {
+          select: {
+            id: true,
+            name: true,
+            description: true,
           },
-          reviewLinkAssetApprovals: {
-            include: {
-              creativeAsset: {
-                select: {
-                  id: true,
-                  name: true,
-                  type: true,
-                  thumbnailUrl: true,
-                },
+        },
+        reviewLinkAssetApprovals: {
+          include: {
+            creativeAsset: {
+              select: {
+                id: true,
+                name: true,
+                type: true,
               },
-              creativeAssetVersion: {
-                select: {
-                  id: true,
-                  versionNo: true,
-                  fileUrl: true,
-                },
+            },
+            creativeAssetVersion: {
+              select: {
+                id: true,
+                versionNo: true,
+                fileUrl: true,
+                thumbnailUrl: true,   // ✅ moved here
               },
             },
           },
         },
-      });
+      },
+    });
 
-      if (!link) {
-        return { exists: false, accessible: false, reason: 'Link not found' };
-      }
-
-      return {
-        exists: true,
-        accessible: isValid,
-        link,
-        reason: isValid ? undefined : 'Access denied',
-      };
-
-    } catch (error) {
-      console.error('Error getting link details:', error);
-      return {
-        exists: false,
-        accessible: false,
-        reason: 'Error retrieving link',
-      };
+    if (!link) {
+      return { exists: false, accessible: false, reason: 'Link not found' };
     }
+
+    return {
+      exists: true,
+      accessible: isValid,
+      link,
+      reason: isValid ? undefined : 'Access denied',
+    };
+  } catch (error) {
+    console.error('Error getting link details:', error);
+    return {
+      exists: false,
+      accessible: false,
+      reason: 'Error retrieving link',
+    };
   }
+}
 
   /**
    * Generate a secure token for review link

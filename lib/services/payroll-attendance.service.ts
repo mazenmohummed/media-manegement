@@ -266,52 +266,64 @@ export class PayrollAttendanceService {
    * Get payroll summary for an employee
    */
   static async getEmployeePayrollSummary(employeeId: string) {
-    const employee = await db.user.findUnique({
-      where: { id: employeeId },
-      select: {
-        id: true,
-        name: true,
-        userType: true,
-        baseSalary: true,
-        walletBalance: true,
-        totalPayouts: true,
+  const employee = await db.user.findUnique({
+    where: { id: employeeId },
+    select: {
+      id: true,
+      name: true,
+      userType: true,
+      baseSalary: true,
+      walletBalance: true,
+      // ✅ compute totalPayouts from the relation
+      payouts: {
+        select: { amount: true, status: true },
       },
-    });
+    },
+  });
 
-    if (!employee) {
-      throw new Error("Employee not found");
-    }
-
-    // Get all attendance logs for the last 30 days
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-
-    const logs = await db.attendanceLog.findMany({
-      where: {
-        userId: employeeId,
-        date: { gte: thirtyDaysAgo },
-      },
-    });
-
-    const totalHours = logs.reduce((sum, log) => sum + (log.totalHours || 0), 0);
-    const lateDays = logs.filter(log => log.isLate).length;
-    const presentDays = logs.filter(log => log.status === "PRESENT").length;
-    
-    // Handle null baseSalary
-    const baseSalary = employee.baseSalary || 0;
-
-    return {
-      ...employee,
-      baseSalary,
-      totalHoursLast30Days: totalHours,
-      lateDaysLast30Days: lateDays,
-      presentDaysLast30Days: presentDays,
-      averageDailyHours: presentDays > 0 ? totalHours / presentDays : 0,
-      efficiencyRate: baseSalary > 0 
-        ? (totalHours / (20 * 8)) * 100 
-        : 0,
-    };
+  if (!employee) {
+    throw new Error("Employee not found");
   }
+
+  // Get all attendance logs for the last 30 days
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+  const logs = await db.attendanceLog.findMany({
+    where: {
+      userId: employeeId,
+      date: { gte: thirtyDaysAgo },
+    },
+  });
+
+  const totalHours = logs.reduce(
+    (sum, log) => sum + (log.totalHours || 0),
+    0
+  );
+  const lateDays = logs.filter((log) => log.isLate).length;
+  const presentDays = logs.filter((log) => log.status === "PRESENT").length;
+
+  // ✅ Sum PAID payouts only
+  const totalPayouts = employee.payouts
+    .filter((p) => p.status === "PAID")
+    .reduce((sum, p) => sum + p.amount, 0);
+
+  const baseSalary = employee.baseSalary || 0;
+
+  return {
+    id: employee.id,
+    name: employee.name,
+    userType: employee.userType,
+    baseSalary,
+    walletBalance: employee.walletBalance,
+    totalPayouts,
+    totalHoursLast30Days: totalHours,
+    lateDaysLast30Days: lateDays,
+    presentDaysLast30Days: presentDays,
+    averageDailyHours: presentDays > 0 ? totalHours / presentDays : 0,
+    efficiencyRate: baseSalary > 0 ? (totalHours / (20 * 8)) * 100 : 0,
+  };
+}
 
   /**
    * Generate payroll report for a period

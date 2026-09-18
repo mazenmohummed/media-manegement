@@ -77,8 +77,16 @@ const AttendanceContext = createContext<AttendanceContextValue | undefined>(
 
 // ─── Provider ───────────────────────────────────────────────────────────
 
-export function AttendanceProvider({ children }: { children: ReactNode }) {
-  const [attendance, setAttendance] = useState<AttendanceLog | null>(null);
+export function AttendanceProvider({
+  children,
+  initialAttendance = null,
+}: {
+  children: ReactNode;
+  initialAttendance?: AttendanceLog | null;
+}) {
+  const [attendance, setAttendance] = useState<AttendanceLog | null>(
+    initialAttendance
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 

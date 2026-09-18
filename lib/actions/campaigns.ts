@@ -19,10 +19,7 @@ export async function createCampaign(data: any) {
       throw new Error('Agency ID not found');
     }
 
-    // Generate campaign number
-    const count = await prisma.campaign.count({
-      where: { agencyId },
-    });
+    const count = await prisma.campaign.count({ where: { agencyId } });
     const campaignNo = `CMP-${String(count + 1).padStart(4, '0')}`;
 
     const campaign = await prisma.campaign.create({
@@ -34,28 +31,22 @@ export async function createCampaign(data: any) {
         currency: data.currency || 'EGP',
         startDate: new Date(data.startDate),
         endDate: data.endDate ? new Date(data.endDate) : undefined,
-        status: data.status as CampaignStatus || 'PLANNED',
-        agencyId: agencyId,
+        status: (data.status as CampaignStatus) || 'PLANNED',
+        agencyId,
         clientId: data.clientId,
       },
       include: {
-        client: {
-          select: {
-            id: true,
-            clientName: true,
-          },
-        },
+        client: { select: { id: true, clientName: true } },
       },
     });
 
-    // Log audit
     await prisma.auditLog.create({
       data: {
         action: 'CREATE',
         entityType: 'CAMPAIGN',
         entityId: campaign.id,
         message: `Created campaign ${campaign.name}`,
-        agencyId: agencyId,
+        agencyId,
         actorId: session.user.id || 'system',
         metadata: {
           campaignNo: campaign.campaignNo,
@@ -85,13 +76,9 @@ export async function updateCampaign(id: string, data: any) {
       throw new Error('Agency ID not found');
     }
 
-    // Verify campaign exists and belongs to agency
-    const existingCampaign = await prisma.campaign.findUnique({
-      where: {
-        id,
-        agencyId,
-        deletedAt: null,
-      },
+    // ✅ findFirst, not findUnique
+    const existingCampaign = await prisma.campaign.findFirst({
+      where: { id, agencyId, deletedAt: null },
     });
 
     if (!existingCampaign) {
@@ -111,27 +98,19 @@ export async function updateCampaign(id: string, data: any) {
         clientId: data.clientId,
       },
       include: {
-        client: {
-          select: {
-            id: true,
-            clientName: true,
-          },
-        },
+        client: { select: { id: true, clientName: true } },
       },
     });
 
-    // Log audit
     await prisma.auditLog.create({
       data: {
         action: 'UPDATE',
         entityType: 'CAMPAIGN',
         entityId: campaign.id,
         message: `Updated campaign ${campaign.name}`,
-        agencyId: agencyId,
+        agencyId,
         actorId: session.user.id || 'system',
-        metadata: {
-          changes: Object.keys(data),
-        },
+        metadata: { changes: Object.keys(data) },
       },
     });
 
@@ -156,27 +135,21 @@ export async function deleteCampaign(id: string) {
       throw new Error('Agency ID not found');
     }
 
-    // Verify campaign exists and belongs to agency
-    const existingCampaign = await prisma.campaign.findUnique({
-      where: {
-        id,
-        agencyId,
-        deletedAt: null,
-      },
+    // ✅ findFirst
+    const existingCampaign = await prisma.campaign.findFirst({
+      where: { id, agencyId, deletedAt: null },
     });
 
     if (!existingCampaign) {
       throw new Error('Campaign not found');
     }
 
-    // Check if campaign has active projects
+    // ✅ many-to-many: filter projects via `campaigns.some`
     const activeProjectCount = await prisma.project.count({
       where: {
-        campaignId: id,
+        campaigns: { some: { id } },
         deletedAt: null,
-        status: {
-          notIn: ['COMPLETED', 'CANCELLED', 'ARCHIVED'],
-        },
+        status: { notIn: ['COMPLETED', 'CANCELLED', 'ARCHIVED'] },
       },
     });
 
@@ -184,20 +157,18 @@ export async function deleteCampaign(id: string) {
       throw new Error('Cannot delete campaign with active projects');
     }
 
-    // Soft delete
     await prisma.campaign.update({
       where: { id },
       data: { deletedAt: new Date() },
     });
 
-    // Log audit
     await prisma.auditLog.create({
       data: {
         action: 'DELETE',
         entityType: 'CAMPAIGN',
         entityId: id,
         message: `Deleted campaign ${existingCampaign.name}`,
-        agencyId: agencyId,
+        agencyId,
         actorId: session.user.id || 'system',
       },
     });
@@ -222,37 +193,23 @@ export async function getCampaign(id: string) {
       throw new Error('Agency ID not found');
     }
 
-    const campaign = await prisma.campaign.findUnique({
-      where: {
-        id,
-        agencyId,
-        deletedAt: null,
-      },
+    // ✅ findFirst
+    const campaign = await prisma.campaign.findFirst({
+      where: { id, agencyId, deletedAt: null },
       include: {
         client: {
-          select: {
-            id: true,
-            clientName: true,
-            clientNo: true,
-          },
+          select: { id: true, clientName: true, clientNo: true },
         },
         projects: {
-          where: {
-            deletedAt: null,
-          },
+          where: { deletedAt: null },
           include: {
             digitalAdCampaigns: {
-              where: {
-                deletedAt: null,
-              },
+              where: { deletedAt: null },
             },
           },
         },
         _count: {
-          select: {
-            projects: true,
-            digitalAdCampaigns: true,
-          },
+          select: { projects: true, digitalAdCampaigns: true },
         },
       },
     });

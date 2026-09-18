@@ -1,4 +1,4 @@
-// lib/approval-gate.ts - Updated with better error handling
+// lib/approval-gate.ts
 import { prisma } from './prisma';
 
 export interface ApprovalCheckResult {
@@ -52,7 +52,6 @@ export async function checkConceptApproval(
     result.errors.push('Concept must be approved before production can begin');
   }
 
-  // Check each asset
   for (const asset of concept.assets) {
     const latestVersion = asset.versions[0];
     if (!latestVersion) {
@@ -68,10 +67,10 @@ export async function checkConceptApproval(
       );
     }
 
-    // Check for any pending revisions
+    // ✅ scalar FK on ReviewLinkAssetApproval is `assetId`
     const pendingRevisions = await prisma.reviewLinkAssetApproval.findFirst({
       where: {
-        creativeAssetId: asset.id,
+        assetId: asset.id,
         status: { in: ['REJECTED', 'REVISIONS_REQUESTED'] },
         revisionTaskId: { not: null },
         revisionTask: {
@@ -88,7 +87,6 @@ export async function checkConceptApproval(
     }
   }
 
-  // Check for any review links that haven't been reviewed
   const unreviewedLinks = await prisma.reviewLink.findFirst({
     where: {
       conceptId,
@@ -100,17 +98,13 @@ export async function checkConceptApproval(
 
   if (unreviewedLinks) {
     result.warnings.push(
-      'There is an active review link that hasn\'t been reviewed yet'
+      "There is an active review link that hasn't been reviewed yet"
     );
   }
 
   return result;
 }
 
-/**
- * Block production actions if concept is not approved
- * Throws an error with detailed message
- */
 export async function validateProductionAccess(
   conceptId: string,
   action: string
@@ -130,14 +124,13 @@ export async function validateProductionAccess(
   }
 
   if (result.warnings.length > 0) {
-    console.warn(`Production warnings for concept ${conceptId}:`, result.warnings);
+    console.warn(
+      `Production warnings for concept ${conceptId}:`,
+      result.warnings
+    );
   }
 }
 
-/**
- * Validate production access for a specific asset
- * Throws an error with detailed message
- */
 export async function validateAssetProductionAccess(
   assetId: string,
   action: string
@@ -157,7 +150,6 @@ export async function validateAssetProductionAccess(
     throw new Error(`Asset not found`);
   }
 
-  // Check if the asset itself is approved
   const latestVersion = asset.versions[0];
   if (!latestVersion) {
     throw new Error(`Asset "${asset.name}" has no versions`);
@@ -169,13 +161,9 @@ export async function validateAssetProductionAccess(
     );
   }
 
-  // Also check the concept
   await validateProductionAccess(asset.conceptId, action);
 }
 
-/**
- * Get detailed approval status for a concept
- */
 export async function getDetailedApprovalStatus(
   conceptId: string
 ): Promise<{

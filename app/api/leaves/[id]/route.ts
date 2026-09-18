@@ -1,61 +1,87 @@
+// app/api/leaves/[id]/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 
 export async function PUT(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> } // Type definition for Next.js async params
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    // 1. Await params before unlocking dynamic properties
-    const resolvedParams = await params;
-    const userId = resolvedParams.id;
+    // 1. Await params
+    const { id: userId } = await params;
 
     const body = await req.json();
-    const { leaveIndex, status } = body; // status comes in as "Approved" or "Rejected"
+    // Prefer leaveId; keep leaveIndex as a legacy fallback if that's what the client sends
+    const { leaveId, leaveIndex, status } = body as {
+      leaveId?: string;
+      leaveIndex?: number;
+      status?: string;
+    };
 
-    if (leaveIndex === undefined || !status) {
+    if (!leaveId && leaveIndex === undefined) {
       return NextResponse.json(
-        { error: "Missing leaf pointer sequence fields" },
+        { error: "Missing leaveId (or leaveIndex)" },
         { status: 400 }
       );
     }
 
-    // 2. Safely find the professional profile document 
+    if (!status) {
+      return NextResponse.json(
+        { error: "Missing status" },
+        { status: 400 }
+      );
+    }
+
+    // 2. Fetch the user and their leaves (ordered so leaveIndex is stable)
     const targetUser = await prisma.user.findUnique({
       where: { id: userId },
-    });
-
-    if (!targetUser) {
-      return NextResponse.json({ error: "User profile not found" }, { status: 404 });
-    }
-
-    // 3. Make a structural copy of the embedded leaves array
-    const structuralLeaves = [...(targetUser.leaves || [])];
-
-    if (!structuralLeaves[leaveIndex]) {
-      return NextResponse.json({ error: "Target leaves index out of bounds" }, { status: 400 });
-    }
-
-    // 4. Update the nested item status safely
-    structuralLeaves[leaveIndex] = {
-      ...structuralLeaves[leaveIndex],
-      status: status, // Matches MongoDB title casing ("Approved" / "Rejected")
-      updatedAt: new Date(),
-    };
-
-    // 5. Commit the array update back to the database
-    const updatedUser = await prisma.user.update({
-      where: { id: userId },
-      data: {
-        leaves: structuralLeaves,
+      include: {
+        leaves: {
+          orderBy: { createdAt: "asc" },
+        },
       },
     });
 
-    return NextResponse.json({ success: true, user: updatedUser });
+    if (!targetUser) {
+      return NextResponse.json(
+        { error: "User profile not found" },
+        { status: 404 }
+      );
+    }
+
+    // 3. Resolve the leave row to update
+    const targetLeave =
+      leaveId != null
+        ? targetUser.leaves.find((l) => l.id === leaveId)
+        : targetUser.leaves[leaveIndex!];
+
+    if (!targetLeave) {
+      return NextResponse.json(
+        { error: "Target leave not found" },
+        { status: 404 }
+      );
+    }
+
+    // 4. Update the Leave row directly
+    const updatedLeave = await prisma.leave.update({
+      where: { id: targetLeave.id },
+      data: {
+        status,
+        approvedBy: status === "Approved" ? userId : targetLeave.approvedBy,
+        // `updatedAt` is `@default(now())` in the schema — not `@updatedAt`.
+        // So we set it manually:
+        updatedAt: new Date(),
+      },
+    });
+
+    return NextResponse.json({ success: true, leave: updatedLeave });
   } catch (error: any) {
     console.error("LEAVE_UPDATE_ERROR:", error);
     return NextResponse.json(
-      { error: "Failed to execute database profile write", details: error.message },
+      {
+        error: "Failed to execute database profile write",
+        details: error.message,
+      },
       { status: 500 }
     );
   }

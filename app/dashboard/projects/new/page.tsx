@@ -71,72 +71,78 @@ export default async function NewProjectPage({ searchParams }: PageProps) {
     : null;
 
   async function createProject(formData: FormData) {
-    "use server";
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.agencyId) throw new Error("Unauthorized");
+  "use server";
+  const session = await getServerSession(authOptions);
+  if (!session?.user?.agencyId) throw new Error("Unauthorized");
 
-    const agencyId = session.user.agencyId;
-    const name = formData.get("name") as string;
-    const projectName = formData.get("projectName") as string;
-    const clientId = formData.get("clientId") as string;
-    const contractId = formData.get("contractId") as string;
-    const campaignId = formData.get("campaignId") as string;
-    const assignedUserId = formData.get("assignedUserId") as string;
-    const currency = (formData.get("currency") as string) || "EGP";
-    const totalValue = parseFloat(formData.get("totalValue") as string) || 0;
-    const targetDeadline = formData.get("targetDeadline") as string;
-    const projectStory = formData.get("projectStory") as string;
-    const status = (formData.get("status") as ProjectStatus) || ProjectStatus.DRAFT;
+  const agencyId = session.user.agencyId;
+  const name = formData.get("name") as string;
+  const projectName = formData.get("projectName") as string;
+  const clientId = formData.get("clientId") as string;
+  const contractId = formData.get("contractId") as string;
+  const campaignId = formData.get("campaignId") as string;
+  const assignedUserId = formData.get("assignedUserId") as string;
+  const currency = (formData.get("currency") as string) || "EGP";
+  const totalValue = parseFloat(formData.get("totalValue") as string) || 0;
+  const targetDeadline = formData.get("targetDeadline") as string;
+  const projectStory = formData.get("projectStory") as string;
+  const status =
+    (formData.get("status") as ProjectStatus) || ProjectStatus.DRAFT;
 
-    if (!name || !clientId) throw new Error("Project name and client are required");
-
-    if (assignedUserId) {
-      const userCheck = await db.user.findFirst({
-        where: { id: assignedUserId, agencyId, isActive: true },
-      });
-      if (!userCheck) throw new Error("Invalid assignee selected");
-    }
-
-    const projectCount = await db.project.count({ where: { agencyId } });
-    const projectNo = `PRJ-${new Date().getFullYear()}-${String(projectCount + 1).padStart(4, "0")}`;
-
-    const project = await db.project.create({
-      data: {
-        projectNo,
-        name,
-        projectName: projectName || name,
-        status,
-        currency,
-        totalValue,
-        agencyId,
-        clientId,
-        contractId: contractId || undefined,
-        campaignId: campaignId || undefined,
-        targetDeadline: targetDeadline ? new Date(targetDeadline) : undefined,
-        projectStory: projectStory || undefined,
-      },
-    });
-
-    if (assignedUserId) {
-      await db.resourceAllocation.create({
-        data: {
-          userId: assignedUserId,
-          projectId: project.id,
-          agencyId: agencyId,
-          startDate: new Date(),
-          allocationPercent: 100.0,
-        },
-      });
-    }
-
-    // Redirect back to campaign if campaignId was provided
-    const redirectPath = campaignId 
-      ? `/dashboard/campaigns/${campaignId}`
-      : `/dashboard/projects/${project.id}`;
-    
-    redirect(redirectPath);
+  if (!name || !clientId) {
+    throw new Error("Project name and client are required");
   }
 
+  if (assignedUserId) {
+    const userCheck = await db.user.findFirst({
+      where: { id: assignedUserId, agencyId, isActive: true },
+    });
+    if (!userCheck) throw new Error("Invalid assignee selected");
+  }
+
+  const projectCount = await db.project.count({ where: { agencyId } });
+  const projectNo = `PRJ-${new Date().getFullYear()}-${String(
+    projectCount + 1
+  ).padStart(4, "0")}`;
+
+  const project = await db.project.create({
+    data: {
+      projectNo,
+      name,
+      projectName: projectName || name,
+      status,
+      currency,
+      totalValue,
+      agencyId,
+      clientId,
+      contractId: contractId || undefined,
+      // ✅ connect via the many-to-many relation
+      campaigns: campaignId
+        ? { connect: [{ id: campaignId }] }
+        : undefined,
+      targetDeadline: targetDeadline ? new Date(targetDeadline) : undefined,
+      projectStory: projectStory || undefined,
+    },
+  });
+
+  if (assignedUserId) {
+    await db.resourceAllocation.create({
+      data: {
+        userId: assignedUserId,
+        projectId: project.id,
+        agencyId,
+        startDate: new Date(),
+        allocationPercent: 100.0,
+      },
+    });
+  }
+
+  const redirectPath = campaignId
+    ? `/dashboard/campaigns/${campaignId}`
+    : `/dashboard/projects/${project.id}`;
+
+  redirect(redirectPath);
+}
   // Helper to get campaign status color
   const getCampaignStatusColor = (status: string) => {
     const colors: Record<string, string> = {

@@ -1,27 +1,24 @@
-import { NextResponse } from "next/server";
-import { qstashClient } from "@/lib/queue/qstash";
+// app/api/jobs/register-cron/route.ts
+import { NextRequest, NextResponse } from 'next/server';
+import { Client } from '@upstash/qstash';
 
-// Unwrapped POST handler for setup
-export async function POST() {
-  try {
-    const appBaseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
-    const destinationUrl = `${appBaseUrl}/api/jobs/heartbeat`;
+export const runtime = 'nodejs';
 
-    const schedule = await qstashClient.schedules.create({
-      destination: destinationUrl,
-      cron: "*/15 * * * *",
-    });
+export async function POST(req: NextRequest) {
+  const qstash = new Client({ token: process.env.QSTASH_TOKEN! });
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL!;
 
-    return NextResponse.json({
-      message: "Scheduled heartbeat cron job registered successfully",
-      scheduleId: schedule.scheduleId,
-      destination: destinationUrl,
-    });
-  } catch (error: any) {
-    console.error("[REGISTER_CRON_ERROR]", error);
-    return NextResponse.json(
-      { error: error?.message || String(error) },
-      { status: 500 }
-    );
-  }
+  // Hourly sync
+  await qstash.schedules.create({
+    destination: `${baseUrl}/api/jobs/sync-agency-files`,
+    cron: '0 * * * *', // every hour
+  });
+
+  // Daily archive at 2 AM UTC
+  await qstash.schedules.create({
+    destination: `${baseUrl}/api/jobs/archive-old-projects`,
+    cron: '0 2 * * *',
+  });
+
+  return NextResponse.json({ success: true });
 }

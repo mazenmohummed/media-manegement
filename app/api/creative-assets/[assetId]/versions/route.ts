@@ -65,7 +65,8 @@ export async function GET(
           select: {
             id: true,
             uploadedSize: true,
-            completedAt: true,
+            completedParts: true,     // ✅ exists
+            updatedAt: true,  
           },
           take: 1,
         },
