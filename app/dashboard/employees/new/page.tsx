@@ -15,25 +15,30 @@ export default async function NewEmployeePage() {
 
   const agencyId = session.user.agencyId;
 
-  // Fetch departments for the dropdown
-  const departments = await db.department.findMany({
-    where: { agencyId, deletedAt: null },
-    select: { id: true, name: true },
-    orderBy: { name: 'asc' },
-  });
-
-  // Check subscription limits
-  const subscription = await db.subscription.findUnique({
-    where: { agencyId },
-    select: { maxUsers: true },
-  });
-
-  const currentUserCount = await db.user.count({
-    where: { agencyId, deletedAt: null },
-  });
+  // ─── Fetch everything we need in parallel ─────────────────────────
+  const [departments, subscription, currentUserCount, agency] =
+    await Promise.all([
+      db.department.findMany({
+        where: { agencyId, deletedAt: null },
+        select: { id: true, name: true },
+        orderBy: { name: 'asc' },
+      }),
+      db.subscription.findUnique({
+        where: { agencyId },
+        select: { maxUsers: true },
+      }),
+      db.user.count({
+        where: { agencyId, deletedAt: null },
+      }),
+      db.agency.findUnique({
+        where: { id: agencyId },
+        select: { defaultCurrency: true },
+      }),
+    ]);
 
   const maxUsers = subscription?.maxUsers ?? 5;
   const canAddUser = currentUserCount < maxUsers;
+  const currency = agency?.defaultCurrency || 'EGP';
 
   return (
     <div className="max-w-3xl mx-auto p-6 space-y-6">
@@ -69,7 +74,7 @@ export default async function NewEmployeePage() {
       ) : (
         <NewEmployeeForm
           departments={departments}
-          agencyCurrency={session.user.defaultCurrency || 'EGP'}
+          agencyCurrency={currency}
         />
       )}
     </div>
