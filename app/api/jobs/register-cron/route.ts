@@ -6,7 +6,7 @@ export const runtime = 'nodejs';
 
 export async function POST(req: NextRequest) {
   const qstash = new Client({ token: process.env.QSTASH_TOKEN! });
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL!;
+  const baseUrl = process.env.APP_URL!;
 
   // Hourly sync
   await qstash.schedules.create({
