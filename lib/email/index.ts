@@ -274,3 +274,54 @@ export async function sendExpirationNotification({
 
   await sendEmail({ to, subject, html });
 }
+
+/**
+ * Send a password reset email
+ */
+export async function sendPasswordResetEmail({
+  to,
+  resetUrl,
+  userName,
+  expiresInMinutes = 60,
+}: {
+  to: string;
+  resetUrl: string;
+  userName?: string | null;
+  expiresInMinutes?: number;
+}): Promise<void> {
+  const subject = 'Reset your password';
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background: #6366F1; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+        .content { background: #f8f9fa; padding: 30px; border-radius: 0 0 8px 8px; }
+        .button { display: inline-block; padding: 12px 24px; background: #6366F1; color: white; text-decoration: none; border-radius: 6px; margin: 16px 0; }
+        .footer { margin-top: 20px; font-size: 12px; color: #6B7280; text-align: center; border-top: 1px solid #e5e7eb; padding-top: 20px; }
+      </style>
+    </head>
+    <body>
+      <div class="header"><h1>Password Reset</h1></div>
+      <div class="content">
+        <p>Hi ${userName || 'there'},</p>
+        <p>We received a request to reset your password. Click below to choose a new one:</p>
+        <p><a href="${resetUrl}" class="button">Reset Password</a></p>
+        <p style="color: #6B7280; font-size: 14px;">
+          This link expires in ${expiresInMinutes} minutes. If you didn't request a reset, you can safely ignore this email.
+        </p>
+        <p style="font-size: 12px; color: #6B7280; word-break: break-all;">
+          If the button doesn't work, paste this into your browser:<br>${resetUrl}
+        </p>
+        <div class="footer">
+          <p>This is an automated message. Please do not reply to this email.</p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  await sendEmail({ to, subject, html });
+}
